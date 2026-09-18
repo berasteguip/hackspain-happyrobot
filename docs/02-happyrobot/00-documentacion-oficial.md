@@ -2,7 +2,7 @@
 
 > **Actualizado:** 2026-09-18 · **Estado:** estable
 > **En una frase:** tenemos un **mirror local completo** de `docs.happyrobot.ai` (que en
-> público está tras un access code) en un worktree de git dentro de este mismo repo.
+> público está tras un access code) commiteado en `main`, dentro de este mismo repo.
 
 ## Dónde está
 
@@ -14,9 +14,12 @@ docs/_inbox/2026-09-18-happyrobot-docs-oficiales/
 API pública v2: 179 paths, 224 operaciones, servidor `https://platform.happyrobot.ai/api/v2`,
 auth `bearerAuth`).
 
-Existe además una copia en el worktree `.claude/worktrees/scrape-happyrobot-docs-949847/`
-(rama `claude/scrape-happyrobot-docs-949847`, commit `79e5164`). **Usa la de `_inbox`**;
-la del worktree es el origen de la captura.
+Está en `main` (commit `02d342b`), así que es navegable sin worktree: se acabó la
+decisión pendiente de si fusionarlo. El worktree `.claude/worktrees/scrape-happyrobot-docs-949847/`
+apunta al mismo commit y ya es redundante; se puede borrar con
+`git worktree remove .claude/worktrees/scrape-happyrobot-docs-949847`.
+
+Para regenerarlo: `HR_DOCS_CODE=<access-code> python3 scripts/scrape_docs.py`.
 
 ## Cómo usarlo
 

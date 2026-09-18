@@ -77,7 +77,8 @@ pieza central de nuestro caso de uso, no un detalle.
 
 ## Developer tools
 
-- **REST API v2**, bearer token. ~205 operaciones / 162 paths. Spec en el mirror
+- **REST API v2**, bearer token. **224 operaciones / 179 paths** (cifra del OpenAPI
+  oficial, 2026-09-18; la estimación previa de ~205/162 salía de apis.io). Spec en el mirror
   (`openapi.json`) y en https://platform.happyrobot.ai/api/v2/docs/json.
 - **Trigger por webhook**: `POST https://platform.happyrobot.ai/hooks/<slug>`. Cualquier
   campo JSON que envíes **se convierte en variable del workflow automáticamente**, sin
