@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "happyrobot": {
+      "url": "https://mcp.platform.eu.happyrobot.ai/workflows/mcp",
+      "oauthScopes": ["mcp:full"],
+      "disabled": false
+    }
+  }
+}

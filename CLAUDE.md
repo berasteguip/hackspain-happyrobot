@@ -7,6 +7,12 @@ La fuente única del contexto del reto es el fichero de steering de abajo; no du
 
 Enunciado íntegro del reto: `docs/reto-happyrobot.md`. Léelo antes de proponer escenario, arquitectura o features.
 
+## Estado del proyecto (leer siempre)
+
+- **Idea principal elegida:** `docs/escenario-incendio.md`. Evacuación conversacional en incendios forestales, B2G (Protección Civil / CECOPI). El agente habla con la población de la zona de evacuación, no solo con los responsables. Toda propuesta se mide contra ese doc y la rúbrica.
+- **Qué expone HappyRobot de verdad:** `docs/plataforma-happyrobot.md` (verificado dentro del workspace del equipo, con marcas [OK] / [?]).
+- **MCP oficial de HappyRobot** configurado en `.mcp.json` (Claude Code) y `.kiro/settings/mcp.json` (Kiro). Requiere autorizar OAuth una vez por máquina con la cuenta del equipo.
+
 ## Convenciones del repo
 
 - Decisiones de proyecto (escenario elegido, arquitectura, qué expone HappyRobot, guion de demo) se registran en `docs/`.
