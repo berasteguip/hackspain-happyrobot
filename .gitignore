@@ -1,0 +1,8 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Config local de agentes (no se comparte)
+.devin/config.local.json
+.devin/mcp_config.local.json

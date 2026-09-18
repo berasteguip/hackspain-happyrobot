@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(docs/**)",
+      "Exec(git status)",
+      "Exec(git diff)",
+      "Exec(git log)"
+    ],
+    "deny": [
+      "Exec(git push --force)",
+      "Exec(rm -rf)"
+    ]
+  }
+}
