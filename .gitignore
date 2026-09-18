@@ -11,4 +11,6 @@
 # Es material del proveedor, que en público está tras un access code: no se
 # publica en este repo (que es público). Se distribuye por privado al equipo.
 # Regenerar: HR_DOCS_CODE=<access-code> python3 scripts/scrape_docs.py
-docs/_inbox/2026-09-18-happyrobot-docs-oficiales/
+docs/_inbox/*happyrobot-docs-oficiales/
+docs/_inbox/*happyrobot-docs*.zip
+happyrobot-docs*.zip
