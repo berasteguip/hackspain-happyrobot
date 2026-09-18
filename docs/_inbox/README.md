@@ -26,4 +26,4 @@ consulta.
 
 | Fecha | Fichero | Origen | Destilado en |
 | --- | --- | --- | --- |
-| 2026-09-18 | [`2026-09-18-happyrobot-docs-oficiales/`](2026-09-18-happyrobot-docs-oficiales/) | `docs.happyrobot.ai` (mirror completo tras access code) + OpenAPI de la API pública | ✅ [`../02-happyrobot/00-documentacion-oficial.md`](../02-happyrobot/00-documentacion-oficial.md) (guía de uso e índice) y [`../02-happyrobot/02-plataforma.md`](../02-happyrobot/02-plataforma.md) (destilado) |
+| 2026-09-18 | `2026-09-18-happyrobot-docs-oficiales/` **(no versionado, ver [`.gitignore`](../../.gitignore))** | `docs.happyrobot.ai` (mirror completo tras access code) + OpenAPI de la API pública | ✅ [`../02-happyrobot/00-documentacion-oficial.md`](../02-happyrobot/00-documentacion-oficial.md) (guía de uso e índice) y [`../02-happyrobot/02-plataforma.md`](../02-happyrobot/02-plataforma.md) (destilado) |

@@ -6,3 +6,9 @@
 # Config local de agentes (no se comparte)
 .devin/config.local.json
 .devin/mcp_config.local.json
+
+# Mirror de la documentación oficial de HappyRobot.
+# Es material del proveedor, que en público está tras un access code: no se
+# publica en este repo (que es público). Se distribuye por privado al equipo.
+# Regenerar: HR_DOCS_CODE=<access-code> python3 scripts/scrape_docs.py
+docs/_inbox/2026-09-18-happyrobot-docs-oficiales/
