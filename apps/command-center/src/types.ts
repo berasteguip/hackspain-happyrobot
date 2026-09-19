@@ -23,6 +23,9 @@ export type Citizen = {
   callDelaySec: number
   outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating'>
   live?: boolean
+  routeId?: string
+  routeProgressM?: number
+  routePhase?: 'access' | 'road'
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
   locationUpdatedAt?: number
   accuracyM?: number

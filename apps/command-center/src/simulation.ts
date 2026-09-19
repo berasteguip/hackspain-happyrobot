@@ -1,8 +1,16 @@
 import { destination, haversineMeters, bearingDeg } from './geo'
+import { nearestOnRoute, positionAt } from './routing'
+import type { Route, RouteIndex } from './routing'
 import { AGENTS } from './scenario'
 import type { CallEvent, Citizen, SafeZone } from './types'
 
 const RING_SEC = 2.4
+/** Tiempo entre el fin de la llamada y la salida de casa. */
+const DEPARTURE_SEC = 6
+/** El reloj de la demo corre acelerado para que un trayecto real quepa en la presentación. */
+const TIME_SCALE = 12
+/** Trayecto a pie desde el punto de partida hasta la carretera más cercana. */
+const ACCESS_SPEED_KMH = 5
 
 export function advanceProtocol(
   citizens: Citizen[],
@@ -61,7 +69,7 @@ export function advanceProtocol(
           answeredAt: Date.now(),
           agent: AGENTS[index % AGENTS.length],
           summary: citizen.outcome === 'tracking'
-            ? 'En el guion de demostración, la persona recibe el aviso y comparte una ubicación dentro de su localidad. No se infiere que haya salido ni se le asigna un destino.'
+            ? 'En el guion de demostración, la persona recibe el aviso, comparte su ubicación y sale hacia el punto de encuentro más cercano por carretera. No es un desplazamiento real.'
             : citizen.outcome === 'informed'
               ? 'En el guion de demostración, la persona recibe el aviso. No se obtiene una nueva ubicación.'
               : 'En el guion de demostración, la persona rechaza compartir su ubicación. Se conserva únicamente la referencia inicial.',
@@ -75,29 +83,127 @@ export function advanceProtocol(
       }
     }
 
+    if (
+      citizen.status === 'tracking' &&
+      elapsedSec >= citizen.callDelaySec + RING_SEC + DEPARTURE_SEC
+    ) {
+      events.push({
+        id: `${citizen.id}-move`,
+        ts: Date.now(),
+        agent: AGENTS[index % AGENTS.length],
+        citizenId: citizen.id,
+        name: citizen.name,
+        detail: 'sale hacia el punto de encuentro · simulación',
+      })
+      return { ...citizen, status: 'evacuating' as const }
+    }
+
     return citizen
   })
 
   return { citizens: next, events: events.slice(-80) }
 }
 
+function hash01(value: string, salt: number) {
+  let acc = salt
+  for (let i = 0; i < value.length; i += 1) acc = (acc * 31 + value.charCodeAt(i)) % 100_003
+  return acc / 100_003
+}
+
+/** Reparte a los que llegan dentro del recinto para que no se apilen en un único píxel. */
+function parkingSpot(zone: SafeZone, id: string): [number, number] {
+  const bearing = hash01(id, 7) * 360
+  const spread = zone.radiusM * 0.8 * Math.sqrt(hash01(id, 733))
+  return destination(zone.lng, zone.lat, bearing, spread)
+}
+
+/** Corredor con el asfalto más cercano a la persona, entre los que llevan a su punto de encuentro. */
+function pickRoute(citizen: Citizen, routes: RouteIndex) {
+  let best: { route: Route; alongM: number; gapM: number } | null = null
+  for (const route of routes.values()) {
+    if (route.zoneId !== citizen.safeZoneId) continue
+    const { alongM, gapM } = nearestOnRoute(route, citizen.lng, citizen.lat)
+    if (!best || gapM < best.gapM) best = { route, alongM, gapM }
+  }
+  return best
+}
+
 export function moveEvacuees(
   citizens: Citizen[],
+  routes: RouteIndex,
   zones: SafeZone[],
   dtSec: number,
 ): Citizen[] {
-  return citizens.map((citizen) => {
+  if (dtSec <= 0) return citizens
+  return citizens.map((citizen): Citizen => {
     if (citizen.live || citizen.status !== 'evacuating') return citizen
     const zone = zones.find((item) => item.id === citizen.safeZoneId)
     if (!zone) return citizen
 
-    const dist = haversineMeters(citizen.lng, citizen.lat, zone.lng, zone.lat)
-    const step = (citizen.speedKmh * 1000 * dtSec) / 3600
-    if (dist <= Math.max(zone.radiusM * 0.45, 30) || step >= dist) {
-      return { ...citizen, lng: zone.lng, lat: zone.lat, status: 'safe' as const }
+    let route = citizen.routeId ? routes.get(citizen.routeId) : undefined
+    let progressM = citizen.routeProgressM ?? 0
+    let phase = citizen.routePhase ?? 'access'
+    if (!route) {
+      const picked = pickRoute(citizen, routes)
+      if (picked) {
+        route = picked.route
+        progressM = picked.alongM
+        phase = 'access'
+      }
     }
-    const brg = bearingDeg(citizen.lng, citizen.lat, zone.lng, zone.lat)
-    const [lng, lat] = destination(citizen.lng, citizen.lat, brg, step)
-    return { ...citizen, lng, lat, locationUpdatedAt: Date.now() }
+
+    // Sin cartografía de rutas (API caída u offline) se mantiene el rumbo directo.
+    if (!route) {
+      const gap = haversineMeters(citizen.lng, citizen.lat, zone.lng, zone.lat)
+      const step = (citizen.speedKmh * 1000 * dtSec * TIME_SCALE) / 3600
+      if (step >= gap) {
+        const [lng, lat] = parkingSpot(zone, citizen.id)
+        return { ...citizen, lng, lat, status: 'safe', locationUpdatedAt: Date.now() }
+      }
+      const bearing = bearingDeg(citizen.lng, citizen.lat, zone.lng, zone.lat)
+      const [lng, lat] = destination(citizen.lng, citizen.lat, bearing, step)
+      return { ...citizen, lng, lat, locationUpdatedAt: Date.now() }
+    }
+
+    if (phase === 'access') {
+      const [targetLng, targetLat] = positionAt(route, progressM)
+      const gap = haversineMeters(citizen.lng, citizen.lat, targetLng, targetLat)
+      const step = (ACCESS_SPEED_KMH * 1000 * dtSec * TIME_SCALE) / 3600
+      const reached = step >= gap
+      const [lng, lat] = reached
+        ? [targetLng, targetLat]
+        : destination(citizen.lng, citizen.lat, bearingDeg(citizen.lng, citizen.lat, targetLng, targetLat), step)
+      return {
+        ...citizen,
+        lng, lat,
+        routeId: route.id,
+        routeProgressM: progressM,
+        routePhase: reached ? 'road' : 'access',
+        locationUpdatedAt: Date.now(),
+      }
+    }
+
+    const nextProgress = progressM + (citizen.speedKmh * 1000 * dtSec * TIME_SCALE) / 3600
+    if (nextProgress >= route.lengthM) {
+      const [lng, lat] = parkingSpot(zone, citizen.id)
+      return {
+        ...citizen,
+        lng, lat,
+        status: 'safe',
+        routeId: route.id,
+        routeProgressM: route.lengthM,
+        routePhase: 'road',
+        locationUpdatedAt: Date.now(),
+      }
+    }
+    const [lng, lat] = positionAt(route, nextProgress)
+    return {
+      ...citizen,
+      lng, lat,
+      routeId: route.id,
+      routeProgressM: nextProgress,
+      routePhase: 'road',
+      locationUpdatedAt: Date.now(),
+    }
   })
 }
