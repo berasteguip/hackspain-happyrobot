@@ -10,7 +10,7 @@ import type { ResponseCenter } from './response'
 import type { DemoNotice } from './response'
 import { ALERT_ACTION_LABEL, SEVERITY_LABEL } from './alerts'
 import type { AlertAction, CommandAlert } from './alerts'
-import { UNIT_LABEL, UNIT_STATUS_LABEL, unitEta } from './units'
+import { UNIT_EMOJI, UNIT_LABEL, UNIT_STATUS_LABEL, unitEta } from './units'
 import type { DispatchUnit, UnitKind } from './units'
 import type { Citizen, SafeZone } from './types'
 
@@ -125,7 +125,7 @@ function windCardinal(deg: number) {
 }
 
 export function DispatchActions({ kinds, disabled, onDispatch }: { kinds: UnitKind[]; disabled?: boolean; onDispatch: (kind: UnitKind) => void }) {
-  return <div className="dispatch-actions">{kinds.map(kind => <button type="button" key={kind} className="dispatch-action" disabled={disabled} onClick={() => onDispatch(kind)}><span className={`unit-chip ${kind}`} aria-hidden="true" /><span>{UNIT_LABEL[kind]}</span></button>)}</div>
+  return <div className="dispatch-actions">{kinds.map(kind => <button type="button" key={kind} className="dispatch-action" disabled={disabled} onClick={() => onDispatch(kind)}><span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI[kind]}</span><span>{UNIT_LABEL[kind]}</span></button>)}</div>
 }
 
 export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFocusUnit }: {
@@ -158,7 +158,7 @@ export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFo
     <div className="cop-list">{units.map(unit => {
       const eta = unitEta(unit)
       return <button type="button" key={unit.id} onClick={() => onFocusUnit(unit.id)}>
-        <span className={`unit-chip ${unit.kind}`} aria-hidden="true" />
+        <span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI[unit.kind]}</span>
         <span><strong>{UNIT_LABEL[unit.kind]} · {unit.target.label}</strong><small>{UNIT_STATUS_LABEL[unit.status]}{eta ? ` · ${eta}` : ''}</small></span>
       </button>
     })}</div>

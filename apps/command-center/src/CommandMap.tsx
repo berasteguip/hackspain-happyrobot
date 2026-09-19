@@ -12,29 +12,22 @@ import type { Exposure } from './fire-model'
 import { CENTER_COLOR } from './response'
 import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
-import { UNIT_COLOR, UNIT_LABEL, UNIT_STATUS_LABEL } from './units'
+import { UNIT_EMOJI, UNIT_LABEL, UNIT_STATUS_LABEL } from './units'
 import type { DispatchUnit } from './units'
 import { WindOverlay } from './WindOverlay'
 
 const PERSON_COLOR = '#459eff'
 
-function vehicleMarker(color: string) {
+function emojiMarker(emoji: string) {
   const canvas = document.createElement('canvas')
-  canvas.width = 72
-  canvas.height = 36
+  canvas.width = 80
+  canvas.height = 80
   const context = canvas.getContext('2d')!
-  context.fillStyle = color
-  context.strokeStyle = '#0a1117'
-  context.lineWidth = 2
-  context.beginPath()
-  context.roundRect(6, 10, 60, 16, 5)
-  context.fill()
-  context.stroke()
-  context.fillStyle = '#101820'
-  context.beginPath()
-  context.roundRect(42, 13, 18, 10, 3)
-  context.fill()
-  return context.getImageData(0, 0, 72, 36)
+  context.font = '52px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
+  context.textAlign = 'center'
+  context.textBaseline = 'middle'
+  context.fillText(emoji, 40, 42)
+  return context.getImageData(0, 0, 80, 80)
 }
 
 function badge(color: string, background: string, paint: (context: CanvasRenderingContext2D) => void) {
@@ -449,10 +442,10 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       map.addSource('units', { type: 'geojson', data: unitsGeo(current.units) })
       for (const kind of ['ambulance', 'police', 'fire'] as const) {
-        map.addImage(`unit-marker-${kind}`, vehicleMarker(UNIT_COLOR[kind]), { pixelRatio: 2 })
+        map.addImage(`unit-marker-${kind}`, emojiMarker(UNIT_EMOJI[kind]), { pixelRatio: 2 })
       }
       map.addLayer({ id: 'unit-point', type: 'symbol', source: 'units', layout: { 'icon-image': ['concat', 'unit-marker-', ['get', 'kind']], 'icon-size': 1, 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
-      map.addLayer({ id: 'unit-label', type: 'symbol', source: 'units', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.9], 'text-anchor': 'top', 'text-allow-overlap': true }, paint: { 'text-color': '#e8f1f6', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
+      map.addLayer({ id: 'unit-label', type: 'symbol', source: 'units', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 2.1], 'text-anchor': 'top', 'text-allow-overlap': true }, paint: { 'text-color': '#e8f1f6', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       patchLayers(map, current.layers, current.selectedId, current.areaIds)
 
       map.on('click', (event) => {
@@ -675,7 +668,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   return (
     <>
       <div ref={rootRef} className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
-      <WindOverlay mapRef={mapRef} enabled={showWind && loaded} directionDeg={windDirection} windKmh={windKmh} />
+      <WindOverlay mapRef={mapRef} enabled={showWind} directionDeg={windDirection} windKmh={windKmh} />
       <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
         <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
         <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>

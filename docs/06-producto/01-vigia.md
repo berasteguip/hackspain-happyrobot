@@ -259,9 +259,11 @@ centros desde el arranque, usar azul para todas las personas y evitar trayectos
 que las acerquen al fuego.
 
 - La app abre con el incendio inicial, sin proyección. La capa de viento muestra
-  trazos animados en la dirección del escenario, adaptados al bearing del mapa.
-  On/off controla solo su visibilidad; ocultar la capa no elimina el viento del
-  cálculo. Con `prefers-reduced-motion` se muestran flechas estáticas.
+  rachas de partículas con estela, en la dirección del escenario y adaptadas al
+  bearing del mapa. Más viento = racha más larga y brillante (referencia visual:
+  firemap.live; no es GFS). On/off controla solo su visibilidad; ocultar la
+  capa no elimina el viento del cálculo. Con `prefers-reduced-motion` las
+  rachas quedan estáticas.
 - El botón calcula/muestra la extensión a +60 min y permite volver al inicio.
   Se mantienen **parámetros ficticios prefijados**, no meteorología en vivo:
   viento hacia SO (225°), 20 km/h, avance base 5 m/min y margen de demo 150 m.
@@ -518,9 +520,10 @@ El despacho de medios (`units.ts`) es otra llamada simulada de HappyRobot:
   carretera, el medio queda en espera.~~ **(obsoleto 2026-09-19 noche: si
   Directions falla o el acceso supera 500 m, el medio usa un tramo recto de
   reserva y entra en `en_route` para que la demo no se quede parada.)**
-- ~~El marcador del mapa es el emoji del medio (🚑 🚓 🚒)~~ **(obsoleto
-  2026-09-19 noche: cápsula de color, sin emoji; el panel usa el mismo chip).**
-  Avanza por la geometría con el mismo reloj acelerado ×12 que las personas.
+- El marcador del medio es el emoji del tipo (🚑 🚓 🚒) en mapa y panel.
+  ~~Cápsula de color~~ y ~~silueta geométrica~~ **obsoletas 2026-09-19
+  noche.** Avanza por la geometría con el mismo reloj acelerado ×12 que las
+  personas.
 
 Sigue sin haber llamadas reales ni contacto con 112. Límite de 12 envíos por
 sesión. Verificación del 2026-09-19: tests de detección, origen de medios,
@@ -572,6 +575,7 @@ Moncloa-Aravaca, OSM way 319941974 — https://www.openstreetmap.org/way/3199419
 
 ## Fuentes
 
+- FireMap.live, referencia visual de rachas de viento (largo/brillo según intensidad; no se usa su GFS) — https://firemap.live/ (consultado 2026-09-19).
 - OpenStreetMap, Hospital Clínico San Carlos (40.4406324, -3.7199109) — https://www.openstreetmap.org/way/394889274 (Nominatim 2026-09-19).
 - Ayuntamiento de Madrid, catálogo de parques de bomberos — https://datos.madrid.es/egob/catalogo/211642-0-bomberos-parques.json (consultado 2026-09-19; Parque 01 Chamberí, Santa Engracia 118, 40.440221, -3.700819).
 - OpenStreetMap, Parque de Bomberos n.º 1 Chamberí — https://www.openstreetmap.org/way/388670230 (Nominatim 2026-09-19; no confirma operatividad).

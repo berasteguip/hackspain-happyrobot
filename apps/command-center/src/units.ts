@@ -9,6 +9,7 @@ export type UnitKind = 'ambulance' | 'police' | 'fire'
 export type UnitStatus = 'requested' | 'en_route' | 'on_scene' | 'hold'
 
 export const UNIT_LABEL: Record<UnitKind, string> = { ambulance: 'Ambulancia', police: 'Patrulla', fire: 'Bomberos' }
+export const UNIT_EMOJI: Record<UnitKind, string> = { ambulance: '🚑', police: '🚓', fire: '🚒' }
 export const UNIT_COLOR: Record<UnitKind, string> = { ambulance: '#f0a6b4', police: '#8fb6f2', fire: '#eea26a' }
 export const UNIT_STATUS_LABEL: Record<UnitStatus, string> = {
   requested: 'Calculando',

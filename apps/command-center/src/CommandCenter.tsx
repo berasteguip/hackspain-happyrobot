@@ -12,7 +12,7 @@ import { planCitizenRoute } from './routing'
 import type { RouteIndex } from './routing'
 import { detectAlerts, initialWatch, mergeAlerts } from './alerts'
 import type { AlertAction, AlertWatch, CommandAlert } from './alerts'
-import { createDispatch, moveUnits, originsFrom, planUnitRoute } from './units'
+import { createDispatch, moveUnits, originsFrom, planUnitRoute, UNIT_EMOJI } from './units'
 import type { DispatchTarget, DispatchUnit, UnitKind } from './units'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
@@ -487,7 +487,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
       </nav>
-      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><span className="center-mark meeting" aria-hidden="true" />Punto de encuentro</span><span><span className="unit-chip ambulance" aria-hidden="true" />Medios</span><span><i className="legend-fire" />Huella térmica</span></div>
+      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><span className="center-mark meeting" aria-hidden="true" />Punto de encuentro</span><span className="legend-units"><span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI.ambulance}</span><span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI.police}</span><span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI.fire}</span>Medios</span><span><i className="legend-fire" />Huella térmica</span></div>
       {panel !== 'cop' && <section className="forecast-summary" aria-label="Propagación"><FireSimBar settings={fireSettings} horizon={horizon} playing={firePlaying} windShifted={windShifted} showWind={showWind} onPlay={playFire} onShiftWind={shiftWind} onReset={resetFire} onWind={toggleWind} /></section>}
       {toasts.length > 0 && panel !== 'alerts' && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" className={`alert-toast ${alert.severity}`} onClick={() => { setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
       {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={panelTitle}>
@@ -571,7 +571,7 @@ const LAYER_MARK: Partial<Record<keyof MapLayers, string>> = {
 }
 
 function LayerMark({ layer, symbol }: { layer: keyof MapLayers; symbol: string }) {
-  if (layer === 'units') return <span className="unit-chip ambulance" aria-hidden="true" />
+  if (layer === 'units') return <span className="legend-units" aria-hidden="true"><span className="unit-emoji">{UNIT_EMOJI.ambulance}</span><span className="unit-emoji">{UNIT_EMOJI.police}</span><span className="unit-emoji">{UNIT_EMOJI.fire}</span></span>
   const mark = LAYER_MARK[layer]
   if (mark) return <span className={`center-mark ${mark}`} aria-hidden="true" />
   return <span className="layer-symbol app-icon" aria-hidden="true">{symbol}</span>
