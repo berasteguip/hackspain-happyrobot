@@ -209,13 +209,16 @@ def minimal_scenario() -> dict:
             },
             {
                 "id": "x-b",
-                "name": "Alcañices (pabellón municipal)",
-                "lat": 41.69306,
-                "lon": -6.34028,
+                # Instalacion, coordenadas y carretera VERIFICADAS en
+                # docs/research/geografia-zona.md. El "pabellon municipal" y la "ZA-P-1508"
+                # que habia aqui antes no existen en la investigacion: eran inventados.
+                "name": "Alcañices (CEIP Virgen de la Salud)",
+                "lat": 41.69887,
+                "lon": -6.34793,
                 "capacity": 250,
                 "occupancy": 0,
                 "status": "open",
-                "access_roads": ["ZA-P-1508"],
+                "access_roads": ["N-122"],
             },
         ],
         "sectors": [

@@ -37,10 +37,22 @@ class NotifyResult:
 
 
 def _webhook_headers() -> dict[str, str]:
-    # El webhook del workflow de HappyRobot se autentica con `x-api-key` (contrato §3).
+    """Cabeceras del POST al workflow de HappyRobot.
+
+    Hay DOS esquemas de autenticación en juego y cruzarlos es un fallo silencioso de 401:
+    HappyRobot usa `Authorization: Bearer sk_live_...` en su plataforma, y `x-api-key` es lo que
+    usa NUESTRA API con quien la llama. Como `HR_WORKFLOW_WEBHOOK` puede apuntar a la plataforma
+    (Bearer) o a un receptor propio de pruebas (x-api-key), mandamos la clave por la vía que
+    corresponde a su forma: si empieza por `sk_`, es de HappyRobot y va como Bearer.
+    NO VERIFICADO qué espera exactamente un webhook trigger suyo → preguntar en el stand
+    (`docs/preguntas-stand-happyrobot.md`). Mientras no se sepa, mandar las dos no rompe nada:
+    un receptor ignora la cabecera que no entiende.
+    """
     key = settings.hr_api_key or settings.hr_shared_secret
     headers = {"Content-Type": "application/json"}
     if key:
+        if key.startswith("sk_"):
+            headers["Authorization"] = f"Bearer {key}"
         headers["x-api-key"] = key
     return headers
 

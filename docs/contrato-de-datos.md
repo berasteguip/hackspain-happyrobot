@@ -80,7 +80,7 @@ rúbrica, así que no es opcional.
   "minutes_to_front": 26.5,
   "priority_score": 0.82,
   "last_instruction": {
-    "text": "Sal por la ZA-P-2434 hacia Tábara. No cojas la N-631.",
+    "text": "Salga por la ZA-P-2434 hacia Tábara. No coja la N-631.",
     "sent_at": "2026-09-19T17:40:05Z", "channel": "sms"
   },
   "consent_position": true,
@@ -100,7 +100,13 @@ dashboard lo dibuja con borde discontinuo. El jurado va a preguntar por esto.
 RGPD, y por tanto categoría especial del art. 9, no dato ordinario. Consecuencia para quien implemente:
 ese campo no se pinta en el mapa junto al nombre sin más, no sale en logs de depuración, y si algún día
 esto fuese producto necesitaría acceso restringido y base jurídica propia documentada. Detalle en
-`docs/escenario-incendio.md` §15.2.
+`docs/escenario-incendio.md` §16.2.
+
+⚠️ **`last_instruction.text` se redacta SIEMPRE en usted**, y en imperativo ("Salga", "No coja"), nunca
+en tuteo. No es cortesía: el agente de voz lee este texto **literalmente** (`say_this` de los guiones de
+`prompts/`), así que un tuteo aquí sale por el altavoz en medio de una llamada institucional a un vecino
+de 70 años. Quien genere instrucciones en `api/planner.py` respeta el registro; quien escriba fixtures,
+también.
 
 `seats_free` son los asientos libres que la persona declara en la llamada. Es el campo que hace posible
 un convoy: sin él, "tiene sitio para dos vecinos" se queda en `notes` y ningún algoritmo lo puede usar.

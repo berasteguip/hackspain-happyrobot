@@ -36,6 +36,7 @@ from models import (
     PatrolStatus,
     Person,
     PersonStatus,
+    PositionSource,
     Route,
     SafeZone,
     SafeZoneStatus,
@@ -810,10 +811,15 @@ def escalate_houses_to_patrol(state, trigger_event_id: str | None = None) -> Dec
     decisions: Decisions = []
     for house in state.houses.values():
         habitantes = [p for p in state.people.values() if p.house_id == house.id]
+        # "Localizado" = o su estado ya no es de desconocido, o hay un punto GPS real. Una posición
+        # `declared` NO cuenta: es justo el caso de "creemos que está en casa" que la patrulla va a
+        # comprobar (si valiera, un vecino diciendo "Josefa está en su casa" sacaría la casa de la
+        # lista sin que nadie la haya visto).
         localizados = [
             p
             for p in habitantes
-            if p.status not in UNKNOWN_STATUSES or (_has_position(p) and p.position_source)
+            if p.status not in UNKNOWN_STATUSES
+            or (_has_position(p) and p.position_source == PositionSource.gps)
         ]
 
         if (
@@ -890,7 +896,9 @@ def assign_patrols(state, trigger_event_id: str | None = None) -> Decisions:
     if not patrullas:
         return decisions
 
-    for house in ranked_no_answer_houses(state):
+    # El puesto se toma de esta misma pasada: `house.priority_rank` puede estar sin refrescar si
+    # la casa acabó en la lista por otra vía, y el motivo lo lee un humano ("puesto None" no vale).
+    for puesto, house in enumerate(ranked_no_answer_houses(state), start=1):
         if house.assigned_patrol_id:
             continue
         if not _has_position(house):
@@ -918,7 +926,7 @@ def assign_patrols(state, trigger_event_id: str | None = None) -> Decisions:
             continue
         razon = (
             f"{patrulla.name or patrulla.id} → {house.address or house.id} "
-            f"(puesto {house.priority_rank} de la lista). {house_reason(house)}"
+            f"(puesto {house.priority_rank or puesto} de la lista). {house_reason(house)}"
         )
         _add(
             decisions,
@@ -1142,7 +1150,8 @@ def build_instruction(state, person: Person) -> dict:
     saludo = f"{nombre}, " if nombre else ""
     por_donde = f"por {road} " if road else ""
     cortadas = _closed_road_names(state)
-    evita = f" No cojas {cortadas[0]}." if cortadas else ""
+    # Usted, como el resto de las frases: el TTS lee esto literalmente (contrato §2.1).
+    evita = f" No coja {cortadas[0]}." if cortadas else ""
     minutos = person.minutes_to_front
 
     if person.status == PersonStatus.safe:

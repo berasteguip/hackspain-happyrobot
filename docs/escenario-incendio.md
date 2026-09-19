@@ -128,7 +128,7 @@ pitch y con lo que quedó sin verificar; **nada marcado "NO VERIFICADO" se dice 
 |---|---|---|
 | Víctimas en incendios españoles al evacuar | ✅ verificado | `research/incendios-espana-datos.md` |
 | ES-Alert: viabilidad de la Capa 0 | ⚠️ corregido, ver §9 | `research/es-alert.md` |
-| Marco legal (RGPD, Protección Civil, AI Act) | ✅ verificado, obliga a §15 | `research/marco-legal.md` |
+| Marco legal (RGPD, Protección Civil, AI Act) | ✅ verificado, obliga a §16 | `research/marco-legal.md` |
 | Modelo de avance del fuego | ✅ verificado, simplificación asumida | `research/modelo-fuego.md` |
 | Rutas con zonas a evitar (¿lo hace Google?) | ⚠️ **no, no lo hace** — corregido en §3 | `research/routing-zonas-evitar.md` |
 | API de HappyRobot y preguntas para el stand | ⚠️ dos límites corregidos en §5 y §10 | `research/happyrobot-api.md` |
@@ -221,7 +221,7 @@ casas va a recibir la pregunta "¿esto es legal?". La respuesta corta es que sí
 precedente europeo que va más lejos que nosotros. Investigación completa con citas y fuentes en
 `docs/research/marco-legal.md`. **Nada de lo marcado aquí como no verificado se dice delante del jurado.**
 
-### 15.1 La respuesta de 30 segundos
+### 16.1 La respuesta de 30 segundos
 
 > El 112 español ya recibe tu posición GPS sin pedirte permiso. Se llama **AML** (Advanced Mobile
 > Location), es obligatorio en todos los smartphones vendidos en el mercado único de la UE desde marzo
@@ -235,7 +235,7 @@ del mercado único. Ojo con el matiz si alguien del jurado es jurista: son dos f
 → 112 frente a Protección Civil → vecino), así que es una analogía funcional muy buena, no una prueba
 de legalidad por sí sola.
 
-### 15.2 Las bases jurídicas (RGPD, todas verificadas con texto literal)
+### 16.2 Las bases jurídicas (RGPD, todas verificadas con texto literal)
 
 | Base | Texto | A qué parte del sistema ampara |
 |---|---|---|
@@ -258,7 +258,7 @@ Dos consecuencias de diseño, no adornos legales:
    interés público e interés vital que el tratamiento original, con la misma finalidad. No hace falta el
    régimen estricto de la directiva penal.
 
-### 15.3 AI Act: el agente se identifica como IA, y eso ya es obligatorio hoy
+### 16.3 AI Act: el agente se identifica como IA, y eso ya es obligatorio hoy
 
 El art. 50.1 del Reglamento (UE) 2024/1689 obliga a que quien interactúa con un sistema de IA lo sepa,
 y el art. 50.5 exige que la información se dé "a más tardar en el momento de la primera interacción".
@@ -275,7 +275,7 @@ aéreos apuntan directamente ahí. Si se confirma, conlleva obligaciones bastant
 diciembre de 2027**, no hoy. O sea: hay margen para hacerlo bien, y el diseño ya empuja en esa dirección
 (supervisión humana en el bucle, `decision_log` con motivo, aprobación humana para lo irreversible).
 
-### 15.4 Lo que NO está verificado (no llevarlo al pitch)
+### 16.4 Lo que NO está verificado (no llevarlo al pitch)
 
 - **El número exacto del artículo de la Ley 11/2022** que obliga a transmitir la localización del
   llamante al 112. Está en el Título III Capítulo III (arts. 56-63) según el preámbulo, pero no hemos

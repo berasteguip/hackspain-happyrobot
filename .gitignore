@@ -25,3 +25,7 @@ engine/logs/
 
 # macOS
 .DS_Store
+
+# Artefactos de tests y empaquetado
+api/tests/.state-test.jsonl
+*.egg-info/

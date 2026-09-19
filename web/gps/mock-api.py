@@ -10,10 +10,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 API_KEY = os.environ.get("MOCK_API_KEY", "dev-secret-mock")
 INSTRUCTIONS = [
-    "Sal por la ZA-P-1508 hacia Tábara. No cojas la N-631.",
+    "Salga por la ZA-P-2434 hacia Tábara. No coja la N-631.",
     "El fuego ha cortado la N-631. Gira a la izquierda en la próxima bifurcación.",
     "Sigue al Seat León blanco de Antonio, es tu coche guía.",
-    "Estás cerca del Polideportivo de Tábara. Sigue todo recto 800 metros.",
+    "Está cerca del Tábara (CRA León Felipe). Sigue todo recto 800 metros.",
 ]
 
 
@@ -70,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
             idx = int(time.time() // 20) % len(INSTRUCTIONS)
             self._json(200, {
                 "instruction": INSTRUCTIONS[idx],
-                "exit_name": "Polideportivo de Tábara",
+                "exit_name": "Tábara (CRA León Felipe)",
                 "route_summary": "7.4 km, 11 min",
                 "convoy": None,
                 "urgency": "media",

@@ -158,7 +158,7 @@ CAMBIO DESDE LAS 17:40
 DECISIONES QUE NECESITO
     ☐ Confirmar prioridad aérea Sector 2
     ☐ Aprobar corte de la N-631 (lo ha reportado un vecino, sin verificar)
-    ☐ El Polideportivo de Tábara está al 78% de capacidad: ¿abrimos la segunda zona?
+    ☐ El Tábara (CRA León Felipe) está al 78% de capacidad: ¿abrimos la segunda zona?
 ```
 
 Cuatro decisiones de diseño en ese formato:
