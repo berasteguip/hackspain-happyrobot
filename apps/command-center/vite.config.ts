@@ -64,6 +64,10 @@ export default defineConfig({
   plugins: [react(), locationApi()],
   server: {
     port: 5173,
+    // Vite rechaza peticiones con un Host que no conoce. Sin esto, el enlace del
+    // SMS abre un "Blocked request" en lugar de /track. Solo subdominios de los
+    // servicios de túnel, no `true`, que abriría el dev server a DNS rebinding.
+    allowedHosts: ['.trycloudflare.com', '.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io', '.loca.lt'],
     proxy: {
       '/firms': {
         target: 'https://firms.modaps.eosdis.nasa.gov',
