@@ -43,7 +43,7 @@ PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth
 # corre en su móvil y cualquier secreto que le pasáramos sería legible en el código fuente. Se
 # asume: quien tenga un enlace puede escribir una posición. El arreglo real es un token por
 # persona en la URL, no un secreto compartido en el cliente.
-PUBLIC_PREFIXES = ("/static", "/gps", "/dashboard", "/assets", "/positions", "/instructions/")
+PUBLIC_PREFIXES = ("/static", "/gps", "/dashboard", "/assets", "/positions", "/instructions/", "/api/locations")
 
 
 @asynccontextmanager
