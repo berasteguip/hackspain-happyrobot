@@ -69,12 +69,14 @@ muestran como desconocidas. El endpoint de desarrollo no autentica identidades y
 no debe exponerse como servicio de seguimiento de producción.
 
 **Revisión visual del fuego (2026-09-19):** el polígono de superficie y su contorno
-anteriores ya no se dibujan. La representación activa es una huella roja de celdas
-sintéticas de ~~100 m~~ **25 m** (refinadas el 2026-09-19), con manchas separadas y huecos interiores, inspirada en la
-captura aportada por el equipo. El tamaño de celda es una decisión visual de la
-demo, no la resolución de un instrumento NASA. La propagación y los puntos térmicos
-quedan ocultos inicialmente; pueden activarse desde Capas. La fuente externa FIRMS
-continúa separada y no se utiliza para inventar superficies quemadas.
+anteriores ya no se dibujan. ~~La representación activa es una huella roja de celdas
+sintéticas de 100 m / 25 m.~~ **Ajuste 2026-09-19 noche:** el avance ya no pinta
+rectángulos ni bandas 30/60/120. El mapa usa un heatmap (humo + brasa + llama) cuya
+intensidad florece unos minutos de simulación alrededor de cada celda, para que el
+frente se lea como fuego y no como teselas. El modelo de exposición y rutas sigue
+siendo la rejilla de `fire-model.ts`; el floreo es solo visual. El tamaño de celda
+es una decisión de la demo, no la resolución de un instrumento NASA. FIRMS sigue
+separada y no inventa superficies quemadas.
 
 El último ajuste visual del 2026-09-19 sustituye las agrupaciones elípticas por una
 masa principal alargada y ramificada con huecos de tamaños variables y fragmentos

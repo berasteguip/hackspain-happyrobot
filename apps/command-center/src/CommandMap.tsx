@@ -7,8 +7,8 @@ import { FIRE_CELL_SIZE_M } from './scenario'
 import type { Incident } from './scenario'
 import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
-import { EXPOSURE_COLOR, EXPOSURE_LABEL } from './fire-model'
-import type { Exposure } from './fire-model'
+import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints } from './fire-model'
+import type { Exposure, FireForecast } from './fire-model'
 import { CENTER_COLOR } from './response'
 import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
@@ -138,8 +138,8 @@ function overviewPadding(width: number) {
 }
 
 const LAYER_IDS: Record<keyof MapLayers, string[]> = {
-  perimeter: ['fire-heat-glow', 'fire-cells-fill'],
-  spread: ['spread-fill', 'spread-hatch', 'spread-edge'],
+  perimeter: ['fire-flame', 'fire-ember'],
+  spread: ['fire-smoke'],
   thermal: ['thermal-core', 'thermal-satellite'],
   citizens: ['people-glow', 'people-dot', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
@@ -161,6 +161,7 @@ type Props = {
   layers: MapLayers
   onSelect: (id: string | null) => void
   projection: FeatureCollection<Polygon>
+  forecast: FireForecast
   zoneExposure: Record<string, Exposure>
   horizon: number
   marginM: number
@@ -195,15 +196,38 @@ function sampleHeat(feature: FeatureCollection<Polygon>['features'][number], hea
   }))
 }
 
-function fireHeatPoints(cells: FeatureCollection<Polygon>, growth: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] }): FeatureCollection<Point> {
+function fireHeatPoints(cells: FeatureCollection<Polygon>, forecast: FireForecast, horizon: number): FeatureCollection<Point> {
   return {
     type: 'FeatureCollection',
     features: [
-      ...cells.features.flatMap(feature => sampleHeat(feature, Number(feature.properties?.heat ?? 0.55), Number(feature.properties?.cellCount) || 1)),
-      ...growth.features.flatMap(feature => sampleHeat(feature, 0.7)),
+      ...cells.features.flatMap(feature => sampleHeat(feature, Number(feature.properties?.heat ?? 0.7), Math.max(2, Number(feature.properties?.cellCount) || 1))),
+      ...forecastHeatPoints(forecast, horizon).features,
     ],
   }
 }
+
+const FIRE_RAMP = [
+  'interpolate', ['linear'], ['heatmap-density'],
+  0, 'rgba(0,0,0,0)',
+  0.12, 'rgba(48,6,4,0)',
+  0.22, 'rgba(92,10,6,0.28)',
+  0.36, 'rgba(168,18,8,0.5)',
+  0.5, 'rgba(226,46,8,0.68)',
+  0.64, 'rgba(255,108,16,0.8)',
+  0.78, 'rgba(255,176,42,0.88)',
+  0.9, 'rgba(255,226,120,0.94)',
+  1, 'rgba(255,248,210,0.98)',
+] as const
+
+const SMOKE_RAMP = [
+  'interpolate', ['linear'], ['heatmap-density'],
+  0, 'rgba(0,0,0,0)',
+  0.15, 'rgba(36,8,4,0)',
+  0.3, 'rgba(70,14,8,0.18)',
+  0.5, 'rgba(120,22,10,0.32)',
+  0.72, 'rgba(168,36,12,0.4)',
+  1, 'rgba(196,54,16,0.22)',
+] as const
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
   return {
@@ -294,7 +318,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, units, onUnitSelect, fireCells, centers, incident }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, units, onUnitSelect, fireCells, centers, incident }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -304,14 +328,14 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
   const suppressClickRef = useRef(false)
   useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds, units })
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
   onCenterSelectRef.current = onCenterSelect
   onUnitSelectRef.current = onUnitSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds, units }
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -329,6 +353,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     map.addControl(new mapboxgl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left')
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
     map.on('error', (event) => setMapError(event.error.message || 'No se ha podido cargar la cartografía.'))
+    let flame = 0
 
     const onLoad = () => {
       const current = dataRef.current
@@ -336,47 +361,35 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('satellite-base', { type: 'raster', url: 'mapbox://mapbox.satellite', tileSize: 256 })
       map.addLayer({ id: 'satellite-base', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.12, 'raster-brightness-max': 0.95 } }, firstLabel)
 
-      const hatch = new Uint8Array(8 * 8 * 4)
-      for (let y = 0; y < 8; y += 1) {
-        for (let x = 0; x < 8; x += 1) {
-          const offset = (y * 8 + x) * 4
-          hatch.set([210, 166, 99, (x + y) % 8 < 2 ? 85 : 0], offset)
-        }
-      }
-      map.addImage('spread-pattern', { width: 8, height: 8, data: hatch })
-      map.addSource('spread', { type: 'geojson', data: current.projection, buffer: 0 })
-      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': ['match', ['get', 'band'], 30, '#c41c10', 60, '#f24a0d', '#ff8a14'], 'fill-opacity': 0.22 } })
-      map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.12 } })
-      map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#ff7a18', 'line-width': 1, 'line-opacity': 0.28, 'line-dasharray': [3, 3] } })
-
-      map.addSource('fire-cells', { type: 'geojson', data: fireCells, buffer: 0, tolerance: 0 })
+      map.addSource('fire-heat', { type: 'geojson', data: fireHeatPoints(fireCells, current.forecast, current.horizon) })
       map.addLayer({
-        id: 'fire-cells-fill', type: 'fill', source: 'fire-cells',
+        id: 'fire-smoke', type: 'heatmap', source: 'fire-heat',
         paint: {
-          'fill-color': ['interpolate', ['linear'], ['get', 'heat'], 0.08, '#3a0a0c', 0.45, '#c41c10', 0.8, '#ff7a14', 1, '#ffd56a'],
-          'fill-opacity': ['interpolate', ['linear'], ['get', 'heat'], 0.08, 0.12, 1, 0.28],
-          'fill-antialias': true,
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'heat'], 0, 0.12, 1, 0.55],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 11, 0.42, 15, 0.72],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 11, 28, 13, 52, 15, 78, 16, 96],
+          'heatmap-opacity': 0.72,
+          'heatmap-color': [...SMOKE_RAMP],
         },
       }, firstLabel)
-      map.addSource('fire-heat', { type: 'geojson', data: fireHeatPoints(fireCells, current.projection) })
       map.addLayer({
-        id: 'fire-heat-glow', type: 'heatmap', source: 'fire-heat',
+        id: 'fire-ember', type: 'heatmap', source: 'fire-heat',
         paint: {
-          'heatmap-weight': ['interpolate', ['linear'], ['get', 'heat'], 0, 0.18, 1, 0.75],
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'heat'], 0, 0.2, 1, 0.82],
           'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 11, 0.55, 15, 0.95],
-          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 11, 16, 13, 28, 15, 42, 16, 52],
-          'heatmap-opacity': 0.88,
-          'heatmap-color': [
-            'interpolate', ['linear'], ['heatmap-density'],
-            0, 'rgba(0,0,0,0)',
-            0.08, 'rgba(70,10,8,0)',
-            0.18, 'rgba(110,16,10,0.22)',
-            0.32, 'rgba(196,28,12,0.4)',
-            0.48, 'rgba(242,80,14,0.58)',
-            0.66, 'rgba(255,150,30,0.72)',
-            0.84, 'rgba(255,214,90,0.82)',
-            1, 'rgba(255,246,200,0.9)',
-          ],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 11, 18, 13, 34, 15, 52, 16, 64],
+          'heatmap-opacity': 0.9,
+          'heatmap-color': [...FIRE_RAMP],
+        },
+      }, firstLabel)
+      map.addLayer({
+        id: 'fire-flame', type: 'heatmap', source: 'fire-heat',
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'heat'], 0, 0.08, 1, 0.7],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 11, 0.48, 15, 0.88],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 11, 10, 13, 18, 15, 26, 16, 32],
+          'heatmap-opacity': 0.95,
+          'heatmap-color': [...FIRE_RAMP],
         },
       }, firstLabel)
 
@@ -515,7 +528,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map)
           return
         }
-        const cell = map.queryRenderedFeatures(event.point, { layers: ['fire-cells-fill', 'fire-heat-glow'] })[0]
+        const cell = map.queryRenderedFeatures(event.point, { layers: ['fire-flame', 'fire-ember', 'fire-smoke'] })[0]
         if (cell) {
           const content = document.createElement('div')
           const title = document.createElement('strong')
@@ -533,15 +546,25 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'fire-heat-glow', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
         map.getCanvas().style.cursor = interactionRef.current.drawingArea ? 'crosshair' : features.length ? 'pointer' : ''
       })
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
+      const pulse = () => {
+        if (!map.getLayer('fire-ember')) return
+        const beat = reduced.matches ? 1 : 0.93 + Math.sin(performance.now() / 380) * 0.08 + Math.sin(performance.now() / 170) * 0.04
+        map.setPaintProperty('fire-ember', 'heatmap-intensity', ['interpolate', ['linear'], ['zoom'], 11, 0.55 * beat, 15, 0.95 * beat])
+        map.setPaintProperty('fire-flame', 'heatmap-intensity', ['interpolate', ['linear'], ['zoom'], 11, 0.48 * beat, 15, 0.88 * beat])
+        flame = requestAnimationFrame(pulse)
+      }
+      flame = requestAnimationFrame(pulse)
       setLoaded(true)
     }
     map.on('load', onLoad)
     const resize = new ResizeObserver(() => map.resize())
     resize.observe(rootRef.current)
     return () => {
+      cancelAnimationFrame(flame)
       resize.disconnect()
       popup.remove()
       map.remove()
@@ -564,11 +587,10 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   useEffect(() => {
     const map = mapRef.current
     if (!loaded || !map) return
-    source(map, 'spread')?.setData(projection)
-    source(map, 'fire-heat')?.setData(fireHeatPoints(fireCells, projection))
+    source(map, 'fire-heat')?.setData(fireHeatPoints(fireCells, forecast, horizon))
     source(map, 'zones')?.setData(zonesGeo(zones, zoneExposure))
     source(map, 'zones-area')?.setData(zoneAreas(zones, zoneExposure))
-  }, [loaded, projection, fireCells, zones, zoneExposure])
+  }, [loaded, forecast, horizon, fireCells, zones, zoneExposure])
 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'refuge-route')?.setData(routeGeo(route))
