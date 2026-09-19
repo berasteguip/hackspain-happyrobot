@@ -31,7 +31,7 @@ export function WindOverlay({ mapRef, enabled, directionDeg, windKmh }: {
       return {
         position: [point.lng, point.lat], age: initial ? Math.random() * lifetime : 0, lifetime,
         speed: 0.75 + Math.random() * 0.5, length: 0.65 + Math.random() * 0.6,
-        opacity: 0.18 + Math.random() * 0.34, width: 0.7 + Math.random() * 0.6,
+        opacity: 0.55 + Math.random() * 0.35, width: 1.2 + Math.random() * 0.8,
       }
     }
     const draw = (time: number, advance = false) => {
@@ -63,9 +63,9 @@ export function WindOverlay({ mapRef, enabled, directionDeg, windKmh }: {
         if (alpha < 0.008) continue
         const tail = map.project(destination(...particle.position, directionDeg + 180, style.trailPx * metersPerPixel * particle.length))
         const gradient = context.createLinearGradient(tail.x, tail.y, head.x, head.y)
-        gradient.addColorStop(0, 'rgba(210, 222, 229, 0)')
-        gradient.addColorStop(0.7, `rgba(210, 222, 229, ${alpha * 0.55})`)
-        gradient.addColorStop(1, `rgba(232, 240, 243, ${alpha})`)
+        gradient.addColorStop(0, 'rgba(225, 238, 246, 0)')
+        gradient.addColorStop(0.35, `rgba(225, 238, 246, ${alpha * 0.65})`)
+        gradient.addColorStop(1, `rgba(248, 252, 255, ${alpha})`)
         context.strokeStyle = gradient
         context.lineWidth = particle.width
         context.beginPath()
