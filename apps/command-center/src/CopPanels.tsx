@@ -9,29 +9,25 @@ import { CENTER_LABEL, CENTER_SYMBOL, createNotice, NOTICE_LABEL, RESPONSE_CENTE
 import type { DemoNotice } from './response'
 import type { Citizen } from './types'
 
-export function FireControls({ settings, onSettings, horizon, onHorizon, marginM, onMargin, forecast, onFocus }: {
-  settings: FireSettings; onSettings: (value: FireSettings) => void
-  horizon: number; onHorizon: (value: number) => void
-  marginM: number; onMargin: (value: number) => void
+export function FireControls({ settings, horizon, onSimulate, onReset, showWind, onWind, marginM, forecast, onFocus }: {
+  settings: FireSettings; horizon: number; onSimulate: () => void; onReset: () => void
+  showWind: boolean; onWind: () => void; marginM: number
   forecast: FireForecast; onFocus: (point: { lng: number; lat: number }) => void
 }) {
   return <div className="cop-content">
-    <p className="eyebrow">ESCENARIO CONFIGURABLE · NO ES UN PRONÓSTICO</p>
-    <p className="fine">La huella inicial permanece. El avance se expande sobre una cuadrícula de 100 m, favoreciendo la dirección del viento. No modela terreno, combustible, humedad ni saltos de fuego.</p>
-    <label className="control-label">Horizonte desde el inicio <strong>+{horizon} min</strong><input aria-label="Horizonte en minutos" type="range" min="0" max="120" step="15" value={horizon} onChange={e => onHorizon(Number(e.target.value))} /></label>
-    <div className="time-presets">{[0, 15, 30, 60, 120].map(value => <button type="button" key={value} aria-pressed={horizon === value} onClick={() => onHorizon(value)}>{value ? `+${value} min` : 'Inicio'}</button>)}</div>
-    <label className="control-label">Viento hacia<select value={settings.windTowardDeg} onChange={e => onSettings({ ...settings, windTowardDeg: Number(e.target.value) })}>{[[0, 'Norte'], [45, 'Nordeste'], [90, 'Este'], [135, 'Sudeste'], [180, 'Sur'], [225, 'Sudoeste'], [270, 'Oeste'], [315, 'Noroeste']].map(([value, label]) => <option key={value} value={value}>{label} · {value}°</option>)}</select></label>
-    <label className="control-label">Velocidad de viento ficticia <strong>{settings.windKmh} km/h</strong><input aria-label="Velocidad del viento" type="range" min="0" max="60" step="5" value={settings.windKmh} onChange={e => onSettings({ ...settings, windKmh: Number(e.target.value) })} /></label>
-    <label className="control-label">Avance base del fuego <strong>{settings.spreadMPerMin} m/min</strong><input aria-label="Avance base del fuego" type="range" min="0" max="20" step="1" value={settings.spreadMPerMin} onChange={e => onSettings({ ...settings, spreadMPerMin: Number(e.target.value) })} /></label>
-    <label className="control-label">Margen de proximidad de demo <strong>{marginM} m</strong><input aria-label="Margen de proximidad" type="range" min="50" max="500" step="50" value={marginM} onChange={e => onMargin(Number(e.target.value))} /></label>
-    <p className="fine">«Hacia» indica el destino del viento, no su procedencia meteorológica. El viento solo aplica un sesgo gráfico al avance base. El margen no es una distancia de seguridad oficial.</p>
+    <p className="eyebrow">VIENTO Y EVOLUCIÓN · DEMO</p>
+    <p className="fine">Viento del escenario hacia el sudoeste · {settings.windKmh} km/h. Las partículas muestran su dirección sobre el mapa.</p>
+    <button type="button" className="wind-toggle" role="switch" aria-checked={showWind} onClick={onWind}>Mostrar viento · {showWind ? 'ON' : 'OFF'}</button>
+    <button type="button" className="cop-primary" onClick={onSimulate}>Simular incendio dentro de 1 hora</button>
+    {horizon > 0 && <button type="button" className="cop-secondary" onClick={onReset}>Volver al incendio inicial</button>}
+    <p className="fine" role="status">{horizon ? 'Mostrando la posible extensión a +1 hora.' : 'Mostrando el incendio inicial.'} El botón utiliza el viento del escenario; ocultar las partículas no cambia el cálculo.</p>
     <h3>Exposición de los puntos de encuentro</h3>
     <div className="cop-list">{SAFE_ZONES.map(zone => {
       const exposure = exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)
-      return <button type="button" key={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small><small>{Number.isFinite(exposure.minute) ? `Margen alcanzado a +${Math.ceil(exposure.minute)} min · sim.` : 'Sin alcance calculado hasta +120 min'}</small></span></button>
+      return <button type="button" key={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
     })}</div>
-    <p className="detail-warning">Rojo: huella inicial o proximidad. Ámbar: exposición dentro del horizonte elegido. Azul: sin afectación calculada, no seguridad confirmada. El análisis sigue activo aunque ocultes la capa.</p>
-    <p className="fine">El reloj de las llamadas es independiente. Los desplazamientos ficticios se detienen ante un destino o un siguiente tramo expuesto, o si no hay corredor disponible; no se redirigen automáticamente. La comparación de rutas de cada persona sirve para revisión del mando.</p>
+    <p className="detail-warning">Simulación ilustrativa, no pronóstico. Viento prefijado, no meteorología en vivo; no modela terreno, combustible ni humedad. Azul no significa seguridad confirmada.</p>
+    <p className="fine">La selección de rutas evalúa siempre la próxima hora, aunque se muestre el incendio inicial. Si no hay una salida que evite acercarse al fuego, no se inicia un desplazamiento ficticio.</p>
   </div>
 }
 
@@ -66,11 +62,11 @@ export function RefugeRoutesPanel({ citizen, token, forecast, horizon, marginM, 
     <p className="fine">Consulta externa que consume cuota. Duración del proveedor + accesos aproximados a pie (máximo 100 m por extremo). No usa tráfico en vivo.</p>
     <p role="status" className="fine">{stale ? 'La posición o el modo ha cambiado. Vuelve a calcular.' : state}</p>
     {!stale && result && <>
-      <p className="fine">{ranked.rejected} alternativas descartadas por exposición o por superar 120 min. {result.failed > 0 && `${result.failed} destinos no pudieron consultarse; comparación parcial.`} {result.unsuitable > 0 && `${result.unsuitable} respuestas sin geometría o acceso admisible.`}</p>
+      <p className="fine">{ranked.rejected} alternativas descartadas por exposición, acercamiento al fuego o por superar 120 min. {result.failed > 0 && `${result.failed} destinos no pudieron consultarse; comparación parcial.`} {result.unsuitable > 0 && `${result.unsuitable} respuestas sin geometría o acceso admisible.`}</p>
       {!ranked.routes.length && <p className="need-note">Sin ruta admisible entre las alternativas obtenidas. Requiere revisión humana; no se inventa un recorrido.</p>}
       <div className="cop-list">{ranked.routes.map((route, i) => <button type="button" key={route.id} aria-pressed={active?.id === route.id} onClick={() => setChosen(route.id)}><span className="route-number">{i + 1}</span><span><strong>{SAFE_ZONES.find(zone => zone.id === route.zoneId)?.name}</strong><small>{Math.ceil(route.durationSec / 60)} min estimados · {(route.distanceM / 1000).toFixed(1)} km</small><small>{i === 0 ? 'Menor tiempo entre las consultadas' : 'Alternativa'} · acceso aprox. {Math.round(route.accessM)} m</small></span></button>)}</div>
     </>}
-    <p className="detail-warning">Filtro conservador hasta el mayor valor entre el horizonte elegido y la duración del trayecto. No garantiza una evacuación segura ni confirma carreteras abiertas.</p>
+    <p className="detail-warning">Filtro conservador de al menos una hora, ampliado si el trayecto dura más. Se excluyen destinos más cercanos al fuego y recorridos que se aproximen a su huella. No garantiza una evacuación segura ni confirma carreteras abiertas.</p>
   </section>
 }
 

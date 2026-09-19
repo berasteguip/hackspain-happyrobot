@@ -7,6 +7,7 @@ export type CitizenStatus =
   | 'evacuating'
   | 'safe'
   | 'refused'
+  | 'assistance'
 
 export type Citizen = {
   id: string
@@ -21,11 +22,12 @@ export type Citizen = {
   safeZoneId: string
   speedKmh: number
   callDelaySec: number
-  outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating'>
+  outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating' | 'assistance'>
   live?: boolean
   routeId?: string
   routeProgressM?: number
   routePhase?: 'access' | 'road'
+  routeHoldReason?: string
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
   locationUpdatedAt?: number
   accuracyM?: number

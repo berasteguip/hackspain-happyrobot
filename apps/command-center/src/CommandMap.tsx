@@ -10,11 +10,18 @@ import { EXPOSURE_COLOR, EXPOSURE_LABEL } from './fire-model'
 import type { Exposure } from './fire-model'
 import { CENTER_SYMBOL, RESPONSE_CENTERS } from './response'
 import type { RefugeRoute } from './routing'
+import { WindOverlay } from './WindOverlay'
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: '#aebdc9', ringing: '#f5cb6b', no_answer: '#ff9a5e',
-  informed: '#cfdcea', tracking: '#5fd8ff', evacuating: '#5fd8ff',
-  safe: '#4de3a6', refused: '#9aa7b3',
+const PERSON_COLOR = '#459eff'
+
+function overviewBounds() {
+  const bounds = new mapboxgl.LngLatBounds([-5.164, 40.191], [-5.06, 40.279])
+  RESPONSE_CENTERS.forEach(center => bounds.extend([center.lng, center.lat]))
+  return new mapboxgl.LngLatBounds([bounds.getWest() - 0.01, bounds.getSouth() - 0.01], [bounds.getEast() + 0.01, bounds.getNorth() + 0.01])
+}
+
+function overviewPadding(width: number) {
+  return width < 680 ? { top: 290, bottom: 175, left: 35, right: 45 } : { top: 130, bottom: 175, left: 340, right: 100 }
 }
 
 const LAYER_IDS: Record<keyof MapLayers, string[]> = {
@@ -43,8 +50,11 @@ type Props = {
   horizon: number
   marginM: number
   route: RefugeRoute | null
-  focusTarget: { lng: number; lat: number } | null
+  focusTarget: { lng: number; lat: number; zoom?: number } | null
   onCenterSelect: (id: string) => void
+  showWind: boolean
+  windDirection: number
+  windKmh: number
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
@@ -120,7 +130,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -140,7 +150,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       container: rootRef.current,
       accessToken: token,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: INCIDENT.center, zoom: rootRef.current.clientWidth < 680 ? 12.1 : INCIDENT.zoom, pitch: 0, bearing: 0,
+      bounds: overviewBounds(), fitBoundsOptions: { padding: overviewPadding(rootRef.current.clientWidth), maxZoom: INCIDENT.zoom, duration: 0 }, pitch: 0, bearing: 0,
       attributionControl: false,
     })
     mapRef.current = map
@@ -242,17 +252,17 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('people', { type: 'geojson', data: citizensGeo(current.citizens) })
       map.addLayer({ id: 'people-glow', type: 'circle', source: 'people', paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.6, 11, 3.6, 14, 6, 17, 8.5],
-        'circle-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#9aa7b3'],
-        'circle-opacity': ['case', ['get', 'reference'], 0.06, 0.22],
+        'circle-color': PERSON_COLOR,
+        'circle-opacity': 0.22,
         'circle-blur': 0.9,
       } })
       map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 1.3, 11, 2, 14, 3.4, 17, 4.6],
-        'circle-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#9aa7b3'],
-        'circle-opacity': ['case', ['get', 'reference'], 0.3, 1],
+        'circle-color': PERSON_COLOR,
+        'circle-opacity': 1,
         'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 1, 17, 1.3],
         'circle-stroke-color': '#0a1117',
-        'circle-stroke-opacity': ['case', ['get', 'reference'], 0.25, 0.85],
+        'circle-stroke-opacity': 0.85,
       } })
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
@@ -377,7 +387,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
 
   useEffect(() => {
-    if (loaded && focusTarget) mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: 14, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 850 })
+    if (loaded && focusTarget) mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: focusTarget.zoom ?? 14, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 850 })
   }, [loaded, focusTarget])
 
   useEffect(() => {
@@ -393,14 +403,15 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   return (
     <>
       <div ref={rootRef} className="map-root" aria-label="Mapa de situación de Gredos" />
+      <WindOverlay mapRef={mapRef} enabled={showWind && loaded} directionDeg={windDirection} windKmh={windKmh} />
       <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
         <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
         <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
         <span className="toolbar-divider" />
-        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.164, 40.191], [-5.06, 40.279]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Encuadrar</button>
+        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.164, 40.191], [-5.06, 40.279]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Centrar incendio</button>
         {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
         {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
-        <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(INCIDENT.center, INCIDENT.center); RESPONSE_CENTERS.forEach(center => bounds.extend([center.lng, center.lat])); mapRef.current?.fitBounds(bounds, { padding: 100, duration: 800 }) }}>Ver centros</button>
+        <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
       {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" onClick={() => setMapError('')}>Cerrar aviso</button></div>}

@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CommandMap } from './CommandMap'
 import { fetchFirmsSpain } from './firms'
-import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS } from './scenario'
+import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
 import { buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
 import type { FireSettings } from './fire-model'
 import { FireControls, RefugeRoutesPanel, ResponsePanel } from './CopPanels'
 import { RESPONSE_CENTERS } from './response'
 import type { DemoNotice } from './response'
 import type { RefugeRoute } from './routing'
-import { loadCorridorRoutes, resolveGroupZones } from './routing'
+import { assignEvacuationRoutes, loadCorridorRoutes } from './routing'
 import type { RouteIndex } from './routing'
 import { advanceProtocol, moveEvacuees } from './simulation'
 import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers } from './types'
@@ -16,7 +16,7 @@ import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers } from './ty
 const STATUS_LABEL: Record<Citizen['status'], string> = {
   pending: 'Sin contactar', ringing: 'En llamada', no_answer: 'Sin respuesta',
   informed: 'Aviso recibido', tracking: 'Ubicación compartida', evacuating: 'En tránsito · sim.',
-  safe: 'En punto de encuentro · sim.', refused: 'No comparte ubicación',
+  safe: 'En punto de encuentro · sim.', refused: 'No comparte ubicación', assistance: 'Ruta pendiente de revisión',
 }
 const LOCATION_LABEL = {
   reference: 'Referencia residencial aproximada', simulation: 'Ubicación compartida · demo',
@@ -55,11 +55,12 @@ export function CommandCenter({ token }: { token: string }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [panel, setPanel] = useState<'people' | 'layers' | 'cop' | 'centers' | null>(null)
-  const [fireSettings, setFireSettings] = useState<FireSettings>({ windTowardDeg: 225, windKmh: 20, spreadMPerMin: 5 })
-  const [horizon, setHorizon] = useState(30)
-  const [marginM, setMarginM] = useState(150)
+  const [fireSettings] = useState<FireSettings>({ windTowardDeg: 225, windKmh: 20, spreadMPerMin: 5 })
+  const [horizon, setHorizon] = useState(0)
+  const [showWind, setShowWind] = useState(false)
+  const marginM = 150
   const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null)
-  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number } | null>(null)
+  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number; zoom?: number } | null>(null)
   const [mapRoute, setMapRoute] = useState<RefugeRoute | null>(null)
   const [notices, setNotices] = useState<DemoNotice[]>([])
   const forecast = useMemo(() => buildFireForecast(SCENARIO_FIRE_CELLS, fireSettings), [fireSettings])
@@ -76,6 +77,8 @@ export function CommandCenter({ token }: { token: string }) {
   const elapsedRef = useRef(0)
   const peopleButtonRef = useRef<HTMLButtonElement>(null)
   const layersButtonRef = useRef<HTMLButtonElement>(null)
+  const copButtonRef = useRef<HTMLButtonElement>(null)
+  const centersButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { citizensRef.current = citizens }, [citizens])
 
   useEffect(() => {
@@ -87,7 +90,9 @@ export function CommandCenter({ token }: { token: string }) {
       if (event.key !== 'Escape') return
       setSelectedId(null)
       setPanel(null)
-      if (panel === 'layers') layersButtonRef.current?.focus()
+      if (panel === 'cop') copButtonRef.current?.focus()
+      else if (panel === 'centers') centersButtonRef.current?.focus()
+      else if (panel === 'layers') layersButtonRef.current?.focus()
       else peopleButtonRef.current?.focus()
     }
     window.addEventListener('keydown', close)
@@ -111,20 +116,15 @@ export function CommandCenter({ token }: { token: string }) {
       .then((routes) => {
         if (controller.signal.aborted) return
         routesRef.current = routes
-        const byGroup = resolveGroupZones(routes)
-        if (!byGroup.size) return
         setCitizens((current) => {
-          const next = current.map((citizen) => {
-            const zoneId = citizen.locality ? byGroup.get(citizen.locality) : undefined
-            return !citizen.live && zoneId && zoneId !== citizen.safeZoneId ? { ...citizen, safeZoneId: zoneId } : citizen
-          })
+          const next = assignEvacuationRoutes(current, routes, SAFE_ZONES, forecast, marginM)
           citizensRef.current = next
           return next
         })
       })
       .catch(() => { routesRef.current = new Map() })
     return () => controller.abort()
-  }, [token])
+  }, [token, forecast, marginM])
   useEffect(() => {
     if (!protocolOn) return
     const started = performance.now()
@@ -141,9 +141,11 @@ export function CommandCenter({ token }: { token: string }) {
         const previous = advanced.citizens[index]
         if (next === previous || previous.live) return next
         const zone = SAFE_ZONES.find(item => item.id === next.safeZoneId)
-        const hasRoad = [...routesRef.current.values()].some(route => route.zoneId === next.safeZoneId)
-        const exposed = !zone || exposureAt(risk.forecast, zone.lng, zone.lat, risk.horizon, risk.marginM + zone.radiusM).level !== 'clear'
-        return !hasRoad || exposed || routeBlocked(risk.forecast, [[previous.lng, previous.lat], [next.lng, next.lat]], risk.horizon, risk.marginM) ? previous : next
+        const road = next.routeId ? routesRef.current.get(next.routeId) : undefined
+        const hasRoad = road?.zoneId === next.safeZoneId && road?.group === next.locality
+        const throughMinute = Math.max(60, risk.horizon)
+        const exposed = !zone || exposureAt(risk.forecast, zone.lng, zone.lat, throughMinute, risk.marginM + zone.radiusM).level !== 'clear'
+        return !hasRoad || exposed || routeBlocked(risk.forecast, [[previous.lng, previous.lat], [next.lng, next.lat]], throughMinute, risk.marginM) ? { ...previous, status: 'assistance' as const, routeHoldReason: 'Recorrido detenido por exposición o falta de ruta. Pendiente de revisión del mando.' } : next
       })
       citizensRef.current = moved
       setCitizens(moved)
@@ -180,7 +182,7 @@ export function CommandCenter({ token }: { token: string }) {
   const selected = citizens.find((citizen) => citizen.id === selectedId) ?? null
   const filtered = citizens.filter((citizen) => {
     const text = `${citizen.name} ${citizen.phone} ${citizen.id} ${citizen.locality} ${STATUS_LABEL[citizen.status]}`.toLowerCase()
-    return text.includes(query.toLowerCase()) && (filter === 'all' || (filter === 'outside' ? citizen.resident === false : citizen.status === 'no_answer'))
+    return text.includes(query.toLowerCase()) && (filter === 'all' || (filter === 'outside' ? citizen.resident === false : citizen.status === filter))
   })
   const selectCitizen = (id: string | null) => {
     setSelectedId(id)
@@ -199,8 +201,13 @@ export function CommandCenter({ token }: { token: string }) {
   }
   const panelTitle = selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : panel === 'cop' ? 'Simulación del incendio' : panel === 'centers' ? 'Centros y coordinación' : 'Personas'
   const scenarioLabel = `Escenario +${horizon} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
+  const simulateFire = () => { setHorizon(60); setLayers(previous => ({ ...previous, spread: true })); setFocusTarget({ lng: INCIDENT.center[0], lat: INCIDENT.center[1], zoom: 12 }) }
+  const resetFire = () => setHorizon(0)
+  const toggleWind = () => setShowWind(value => !value)
   const closePanel = () => {
-    if (panel === 'layers') layersButtonRef.current?.focus()
+    if (panel === 'cop') copButtonRef.current?.focus()
+    else if (panel === 'centers') centersButtonRef.current?.focus()
+    else if (panel === 'layers') layersButtonRef.current?.focus()
     else peopleButtonRef.current?.focus()
     setSelectedId(null)
     setPanel(null)
@@ -209,23 +216,23 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className="map-app">
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} />
+        <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} />
       </main>
       <header className="floating-brand">
         <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">Sierra de Gredos</span><span className="demo-badge">DEMO</span>
       </header>
       <nav className="floating-actions" aria-label="Herramientas del mapa">
-        <button type="button" aria-label="Simulación del incendio" className={panel === 'cop' ? 'active' : ''} aria-expanded={panel === 'cop'} aria-controls="map-panel" onClick={() => togglePanel('cop')}><Icon name="layers" /><span>Propagación</span></button>
-        <button type="button" aria-label="Centros y coordinación" className={panel === 'centers' ? 'active' : ''} aria-expanded={panel === 'centers'} aria-controls="map-panel" onClick={() => togglePanel('centers')}><Icon name="people" /><span>Centros</span></button>
+        <button ref={copButtonRef} type="button" aria-label="Simulación del incendio" className={panel === 'cop' ? 'active' : ''} aria-expanded={panel === 'cop'} aria-controls="map-panel" onClick={() => togglePanel('cop')}><Icon name="layers" /><span>Propagación</span></button>
+        <button ref={centersButtonRef} type="button" aria-label="Centros y coordinación" className={panel === 'centers' ? 'active' : ''} aria-expanded={panel === 'centers'} aria-controls="map-panel" onClick={() => togglePanel('centers')}><Icon name="people" /><span>Centros</span></button>
         <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
       </nav>
-      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point hollow" />Referencia residencial</span><span><i className="legend-point" />Ubicación compartida</span><span><i className="legend-zone" />Punto de encuentro</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
-      <button type="button" className="forecast-summary" onClick={() => togglePanel('cop')} aria-label="Configurar escenario de propagación"><span className="eyebrow">PROPAGACIÓN · ESCENARIO</span><strong>Inicio → +{horizon} min</strong><span>Viento hacia {['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][fireSettings.windTowardDeg / 45]} · {fireSettings.windKmh} km/h</span><small>No es un pronóstico</small></button>
+      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point" />Personas · origen en la ficha</span><span><i className="legend-zone" />Punto de encuentro</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
+      <section className="forecast-summary" aria-label="Viento y simulación rápida"><div className="wind-heading"><span><span className="eyebrow">VIENTO · DEMO</span><strong>Hacia SO · {fireSettings.windKmh} km/h</strong></span><button type="button" className="wind-toggle" role="switch" aria-label="Mostrar viento en el mapa" aria-checked={showWind} onClick={toggleWind}>{showWind ? 'ON' : 'OFF'}</button></div><button type="button" className="cop-primary" onClick={simulateFire}>Simular incendio dentro de 1 hora</button>{horizon > 0 && <button type="button" className="cop-secondary" onClick={resetFire}>Volver al incendio inicial</button>}<small role="status">{horizon ? 'Posible extensión a +1 h · no es un pronóstico' : 'Incendio inicial · viento prefijado del escenario'}</small></section>
       {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={panelTitle}>
         <div className="floating-panel-heading"><h2>{panelTitle}</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
-        <div className="floating-panel-body">
-          {selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} /></> : panel === 'cop' ? <FireControls settings={fireSettings} onSettings={setFireSettings} horizon={horizon} onHorizon={setHorizon} marginM={marginM} onMargin={setMarginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} /> : panel === 'centers' ? <ResponsePanel selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} /> : panel === 'layers' ? (
+        <div className="floating-panel-body" key={selected?.id ?? panel}>
+          {selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} onSimulate={simulateFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} /> : panel === 'centers' ? <ResponsePanel selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} /> : panel === 'layers' ? (
             <div className="layer-content">
               {LAYER_OPTIONS.map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><span className={`layer-symbol ${layer.symbol}`} aria-hidden="true" /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}
               <details className="source-details"><summary>Fuente externa · NASA FIRMS</summary><label className="source-toggle"><span>Mostrar detecciones satélite</span><input type="checkbox" checked={showFirms} onChange={(event) => { setShowFirms(event.target.checked); if (event.target.checked) { setFirmsState('Consultando detecciones…'); setLayers((previous) => ({ ...previous, thermal: true })) } }} /></label><p className="fine" role="status">{firmsState}</p><p className="fine">No son datos en tiempo real ni delimitan un incendio.</p></details>
@@ -234,7 +241,7 @@ export function CommandCenter({ token }: { token: string }) {
           ) : (
             <>
               <label className="search-label"><span className="sr-only">Buscar persona o localidad</span><input autoFocus className="search" placeholder="Nombre, localidad o ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-              <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todas'], ['outside', 'Fuera del núcleo'], ['no_answer', 'Sin respuesta']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
+              <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todas'], ['outside', 'Fuera del núcleo'], ['no_answer', 'Sin respuesta'], ['assistance', 'Revisión de ruta']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
               <div className="list-summary"><span>{filtered.length} personas</span><span>{counts.located} ubicaciones compartidas</span></div>
               <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.status} ${citizen.locationSource === 'reference' ? 'reference-dot' : ''}`} /><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
               {!filtered.length && <div className="empty-state"><strong>No hay coincidencias</strong><button type="button" onClick={() => { setFilter('all'); setQuery('') }}>Limpiar filtros</button></div>}
@@ -265,6 +272,8 @@ function PersonDetail({ citizen, events, now, onClose }: { citizen: Citizen; eve
       <button type="button" className="back-button" onClick={onClose}>‹ Todas las personas</button>
       <div className="person-title"><span className="person-avatar">{citizen.name.split(' ').slice(0, 2).map((word) => word[0]).join('')}</span><div><span className="eyebrow">{citizen.id} / {citizen.live ? 'SESIÓN COMPARTIDA' : 'FICHA DEMO'}</span><h2>{citizen.name}</h2></div></div>
       <div className="person-badges"><span className={`status-badge ${citizen.status}`}>{STATUS_LABEL[citizen.status]}</span>{citizen.resident === false && <span className="status-badge">Fuera del núcleo</span>}</div>
+      {citizen.status === 'assistance' && <p className="need-note">{citizen.routeHoldReason}</p>}
+      {!citizen.live && citizen.routeId && <p className="fine">Destino de demo: {SAFE_ZONES.find(zone => zone.id === citizen.safeZoneId)?.name}. Recorrido filtrado por exposición y alejamiento, no validado operativamente.</p>}
       <section className="detail-section"><h3>Localización</h3>
         <div className={`location-card ${reference || stale ? 'uncertain' : ''}`}><strong>{LOCATION_LABEL[locationSource]}</strong><span className="coordinates">{Math.abs(citizen.lat).toFixed(5)}° {citizen.lat >= 0 ? 'N' : 'S'} / {Math.abs(citizen.lng).toFixed(5)}° {citizen.lng < 0 ? 'O' : 'E'}</span><span>{locationAge(citizen.locationUpdatedAt, now)}{stale ? ' · DESACTUALIZADA' : ''}</span></div>
         <dl className="detail-fields"><div><dt>Precisión reportada</dt><dd>{citizen.accuracyM !== undefined ? `${Math.round(citizen.accuracyM)} m` : 'No disponible'}</dd></div><div><dt>Origen</dt><dd>{citizen.live ? locationSource === 'gps' ? 'Navegador del ciudadano' : 'Sesión compartida' : 'Escenario sintético'}</dd></div><div><dt>Localidad / entorno</dt><dd>{citizen.locality ?? 'Sin información'}</dd></div></dl>
@@ -293,6 +302,7 @@ function mergePings(current: Citizen[], pings: LocationPing[]): Citizen[] {
       lng: ping.lng, lat: ping.lat, status: 'tracking' as const, live: true,
       locationSource: ping.source === 'gps' ? 'gps' as const : ping.source === 'simulation' ? 'simulation' as const : 'unknown' as const,
       locationUpdatedAt: ping.ts, accuracyM: ping.accuracyM,
+      safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: undefined,
     }
     if (index >= 0) {
       const previous = next[index]

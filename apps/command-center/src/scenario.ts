@@ -1,5 +1,5 @@
 import type { FeatureCollection, Polygon } from 'geojson'
-import { destination, haversineMeters, nearestZone } from './geo'
+import { destination, haversineMeters } from './geo'
 import type { Corridor } from './routing'
 import type { Citizen, FireSpot, RiskArea, SafeZone } from './types'
 
@@ -235,7 +235,7 @@ function person(index: number, lng: number, lat: number, locality: string, resid
     lng, lat, locality, resident,
     status: resident ? 'pending' : 'tracking',
     vulnerable: index % 17 === 0,
-    safeZoneId: nearestZone(lng, lat, SAFE_ZONES).zone.id,
+    safeZoneId: '',
     speedKmh: 26 + (index % 7) * 4,
     callDelaySec: 1 + (index % 48) * 1.4,
     outcome: index % 11 === 7 ? 'no_answer' : index % 13 === 9 ? 'refused' : index % 7 === 4 ? 'informed' : 'tracking',
@@ -272,15 +272,15 @@ function closestZones(lng: number, lat: number, count: number) {
 
 /**
  * Cada corredor se resuelve contra la API de Directions para que las personas
- * avancen por carretera y no en línea recta sobre el monte. Se piden los dos
- * puntos de encuentro más próximos porque en este valle la distancia por
+ * avancen por carretera y no en línea recta sobre el monte. Se consultan todos los
+ * puntos de encuentro del escenario porque en este valle la distancia por
  * carretera y la distancia en línea recta no coinciden.
  */
 export const EVACUATION_CORRIDORS: Corridor[] = (() => {
   const bearings = [30, 150, 270]
   const corridors: Corridor[] = []
   for (const settlement of SETTLEMENTS) {
-    for (const zone of closestZones(settlement.lng, settlement.lat, 2)) {
+    for (const zone of closestZones(settlement.lng, settlement.lat, SAFE_ZONES.length)) {
       for (const bearing of bearings) {
         corridors.push({
           id: `${settlement.name}-${zone.id}-${bearing}`,
@@ -293,7 +293,7 @@ export const EVACUATION_CORRIDORS: Corridor[] = (() => {
     }
   }
   for (const [lng, lat, locality] of OUTSIDE_LOCATIONS) {
-    for (const zone of closestZones(lng, lat, 2)) {
+    for (const zone of closestZones(lng, lat, SAFE_ZONES.length)) {
       corridors.push({
         id: `${locality}-${lng.toFixed(4)}-${zone.id}`,
         group: locality,

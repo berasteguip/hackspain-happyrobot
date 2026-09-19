@@ -69,7 +69,7 @@ export function advanceProtocol(
           answeredAt: Date.now(),
           agent: AGENTS[index % AGENTS.length],
           summary: citizen.outcome === 'tracking'
-            ? 'En el guion de demostración, la persona recibe el aviso, comparte su ubicación y sale hacia el punto de encuentro más cercano por carretera. No es un desplazamiento real.'
+            ? 'En el guion de demostración, la persona recibe el aviso y comparte su ubicación. Solo se simula la salida si hay un recorrido validado que no la acerque al fuego. No es un desplazamiento real.'
             : citizen.outcome === 'informed'
               ? 'En el guion de demostración, la persona recibe el aviso. No se obtiene una nueva ubicación.'
               : 'En el guion de demostración, la persona rechaza compartir su ubicación. Se conserva únicamente la referencia inicial.',
@@ -87,6 +87,7 @@ export function advanceProtocol(
       citizen.status === 'tracking' &&
       elapsedSec >= citizen.callDelaySec + RING_SEC + DEPARTURE_SEC
     ) {
+      if (!citizen.routeId || !citizen.safeZoneId) return { ...citizen, status: 'assistance', routeHoldReason: citizen.routeHoldReason ?? 'Esperando un recorrido validado. No se inicia el desplazamiento.' }
       events.push({
         id: `${citizen.id}-move`,
         ts: Date.now(),
@@ -121,7 +122,7 @@ function parkingSpot(zone: SafeZone, id: string): [number, number] {
 function pickRoute(citizen: Citizen, routes: RouteIndex) {
   let best: { route: Route; alongM: number; gapM: number } | null = null
   for (const route of routes.values()) {
-    if (route.zoneId !== citizen.safeZoneId) continue
+    if (route.id !== citizen.routeId || route.zoneId !== citizen.safeZoneId || route.group !== citizen.locality) continue
     const { alongM, gapM } = nearestOnRoute(route, citizen.lng, citizen.lat)
     if (!best || gapM < best.gapM) best = { route, alongM, gapM }
   }
@@ -138,7 +139,7 @@ export function moveEvacuees(
   return citizens.map((citizen): Citizen => {
     if (citizen.live || citizen.status !== 'evacuating') return citizen
     const zone = zones.find((item) => item.id === citizen.safeZoneId)
-    if (!zone) return citizen
+    if (!zone) return { ...citizen, status: 'assistance', routeHoldReason: 'Sin destino validado. Pendiente de revisión del mando.' }
 
     let route = citizen.routeId ? routes.get(citizen.routeId) : undefined
     let progressM = citizen.routeProgressM ?? 0
@@ -152,17 +153,9 @@ export function moveEvacuees(
       }
     }
 
-    // Sin cartografía de rutas (API caída u offline) se mantiene el rumbo directo.
-    if (!route) {
-      const gap = haversineMeters(citizen.lng, citizen.lat, zone.lng, zone.lat)
-      const step = (citizen.speedKmh * 1000 * dtSec * TIME_SCALE) / 3600
-      if (step >= gap) {
-        const [lng, lat] = parkingSpot(zone, citizen.id)
-        return { ...citizen, lng, lat, status: 'safe', locationUpdatedAt: Date.now() }
-      }
-      const bearing = bearingDeg(citizen.lng, citizen.lat, zone.lng, zone.lat)
-      const [lng, lat] = destination(citizen.lng, citizen.lat, bearing, step)
-      return { ...citizen, lng, lat, locationUpdatedAt: Date.now() }
+    // Sin cartografía de rutas (API caída u offline) se mantiene la posición.
+    if (!route || route.zoneId !== citizen.safeZoneId || route.group !== citizen.locality) {
+      return { ...citizen, status: 'assistance', routeHoldReason: 'Sin recorrido validado para esta persona. Pendiente de revisión del mando.' }
     }
 
     if (phase === 'access') {

@@ -8,6 +8,7 @@ export type FireForecast = {
   lngScale: number
   cellSizeM: number
   cells: Map<string, Cell>
+  initialCells: Cell[]
 }
 export const MAX_FORECAST_MIN = 120
 export const EXPOSURE_LABEL = { danger: 'Peligro en el escenario', warning: 'Exposición futura simulada', clear: 'Sin afectación calculada', unknown: 'Sin evaluación' }
@@ -68,6 +69,7 @@ export function buildFireForecast(footprint: FeatureCollection<Polygon>, setting
       }
     }
   }
+  const initialCells = [...cells.values()]
   if (spreadMPerMin > 0) {
     const angle = windTowardDeg * Math.PI / 180
     const steps = [-1, 0, 1].flatMap(y => [-1, 0, 1].filter(x => x || y).map(x => {
@@ -91,7 +93,7 @@ export function buildFireForecast(footprint: FeatureCollection<Polygon>, setting
       }
     }
   }
-  return { origin, lngScale, cellSizeM, cells }
+  return { origin, lngScale, cellSizeM, cells, initialCells }
 }
 
 export function forecastGeo(forecast: FireForecast, horizon: number): FeatureCollection<Polygon> {
@@ -155,6 +157,24 @@ function intersectsBox(ax: number, ay: number, bx: number, by: number, west: num
   return true
 }
 
+export function initialFireClearance(forecast: FireForecast, lng: number, lat: number) {
+  const px = (lng - forecast.origin[0]) * forecast.lngScale
+  const py = (lat - forecast.origin[1]) * 111320
+  const size = forecast.cellSizeM
+  let clearance = Infinity
+  for (const { x, y } of forecast.initialCells) {
+    clearance = Math.min(clearance, Math.max(x * size - px, px - (x + 1) * size, y * size - py, py - (y + 1) * size, 0))
+  }
+  return clearance
+}
+
+export function routeApproachesFire(forecast: FireForecast, coordinates: [number, number][]) {
+  if (coordinates.length < 2) return true
+  const start = initialFireClearance(forecast, ...coordinates[0])
+  const end = initialFireClearance(forecast, ...coordinates[coordinates.length - 1])
+  return !Number.isFinite(start) || end + 1 < start || routeBlocked(forecast, coordinates, 0, Math.max(0, start - forecast.cellSizeM))
+}
+
 export function routeBlocked(forecast: FireForecast, coordinates: [number, number][], horizon: number, marginM: number) {
   if (!forecast.cells.size || coordinates.length < 2) return true
   const points = coordinates.map(([lng, lat]) => [(lng - forecast.origin[0]) * forecast.lngScale, (lat - forecast.origin[1]) * 111320])
@@ -163,6 +183,10 @@ export function routeBlocked(forecast: FireForecast, coordinates: [number, numbe
     const [ax, ay] = points[i - 1]
     const [bx, by] = points[i]
     if (![ax, ay, bx, by].every(Number.isFinite)) return true
+    if (horizon === 0 && marginM >= size) {
+      if (forecast.initialCells.some(({ x, y }) => intersectsBox(ax, ay, bx, by, x * size - marginM, y * size - marginM, (x + 1) * size + marginM, (y + 1) * size + marginM))) return true
+      continue
+    }
     for (let y = Math.floor((Math.min(ay, by) - marginM) / size); y <= Math.floor((Math.max(ay, by) + marginM) / size); y += 1) {
       for (let x = Math.floor((Math.min(ax, bx) - marginM) / size); x <= Math.floor((Math.max(ax, bx) + marginM) / size); x += 1) {
         const cell = forecast.cells.get(key(x, y))

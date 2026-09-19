@@ -164,12 +164,146 @@ movimiento simulado. No se ha validado visualmente el mapa en navegador.
   preparar un aviso y ordenar un despliegue son operaciones diferentes.
 
 Fuentes consultadas para esta investigación: referencias siguientes y revisión de
-`scenario.ts` y `routing.ts` el 2026-09-19. No hay nuevas capas COP implementadas
+`scenario.ts` y `routing.ts` el 2026-09-19. **Estado anterior, sustituido por la
+implementación descrita abajo (2026-09-19):** ~~No hay nuevas capas COP implementadas
 como resultado de esta investigación; las coordenadas de los centros están pendientes
-de verificación antes de incorporarlas al mapa.
+de verificación antes de incorporarlas al mapa.~~
+
+## COP configurable y coordinación de demo — 2026-09-19
+
+**Interfaz y asignación de rutas parcialmente obsoletas (2026-09-19):** los sliders,
+el horizonte manual y la asignación previa se sustituyen por la revisión «Viento
+visible y evacuación coherente» de abajo. Se conserva esta descripción como historial.
+
+El equipo elige **simulación configurable** y **avisos solo en interfaz** el
+2026-09-19. No se integra meteorología real ni se envían comunicaciones externas.
+
+- **Propagación:** `fire-model.ts` rasteriza conservadoramente los rectángulos de la
+  huella sintética en celdas de 100 m y calcula tiempos de llegada por expansión a
+  ocho vecinos hasta 120 minutos. La huella inicial de 25 m sigue visible; no se
+  traslada ni se sustituye por observaciones FIRMS. La antigua `SPREAD_AREA` fija
+  queda conservada en código, pero ya no es la capa dibujada.
+- **Parámetros ficticios:** viento de 0–60 km/h, dirección **hacia** la que sopla
+  (no la procedencia meteorológica), avance base de 0–20 m/min y horizonte
+  0–120 min. El multiplicador direccional es `1 + viento/20 × max(0, cos(ángulo))`.
+  Es una regla gráfica, no una relación física validada entre viento y fuego.
+  No contempla combustible, humedad, pendiente, supresión ni saltos de fuego.
+- **Exposición:** rojo para huella inicial/proximidad, ámbar si el margen se alcanza
+  dentro del horizonte, azul si no hay afectación calculada y gris sin evaluación.
+  El margen configurable de 50–500 m y los radios de los recintos son de demo,
+  no distancias oficiales de seguridad. El análisis no se desactiva al ocultar capas.
+- **Rutas:** en la ficha de una persona se solicita a Mapbox una comparación en
+  vehículo o a pie hacia los tres puntos, con alternativas. Se ordena por duración
+  del proveedor más accesos aproximados a pie a 4 km/h, limitados a 100 m en cada
+  extremo. No se consulta tráfico en vivo. Se comprueban segmentos completos y
+  destinos contra la huella expandida y su margen, hasta el mayor horizonte entre
+  el seleccionado y la duración del viaje; recorridos superiores a 120 min quedan
+  fuera de cobertura. No se inventan rutas cuando falla el proveedor.
+- La comparación muestra fallos parciales y se invalida visualmente al cambiar el
+  modo o desplazarse el origen más de 50 m. Las consultas se cancelan al reemplazarlas
+  o cerrar la ficha y tienen un timeout de 12 s. Un recorrido no afectado por esta
+  geometría no equivale a una ruta segura ni a una carretera abierta.
+- El simulador previo de llamadas conserva su reloj independiente y sus destinos;
+  los movimientos se frenan ante destinos/tramos expuestos o sin corredor. Las rutas
+  seleccionadas en el COP son para revisión, no órdenes automáticas de evacuación.
+- **Centros:** se incorporan el Centro de Salud de Arenas de San Pedro, el Hospital
+  Nuestra Señora del Prado y el Parque de Bomberos de Talavera de la Reina. Son una
+  selección documentada, no un inventario completo ni una asignación territorial.
+  Sus coordenadas son centros aproximados de recintos de OpenStreetMap, no accesos
+  de emergencia. SACYL/SESCAM corroboran los centros sanitarios; el parque se apoya
+  en cartografía OSM. Dotaciones, camas, disponibilidad y competencia no verificadas.
+  Ramacastañas no se posiciona a partir del centroide del pueblo.
+- **Avisos:** borrador revisable → envío simulado → acuse simulado, siempre por
+  acción explícita del operador. Incluyen una instantánea textual del escenario;
+  permanecen solo en memoria (máximo 50). No incluyen destinos telefónicos ni de
+  email, no afirman que haya heridos y no ejecutan dispatch. Las solicitudes a
+  bomberos indican un sector a valorar, no una posición de mitigación validada.
+
+Fuentes: implementación en [fire-model.ts](../../apps/command-center/src/fire-model.ts),
+[routing.ts](../../apps/command-center/src/routing.ts),
+[response.ts](../../apps/command-center/src/response.ts),
+[CopPanels.tsx](../../apps/command-center/src/CopPanels.tsx) y los componentes de mapa
+citados abajo (revisados 2026-09-19). Tests automatizados locales en
+[cop.test.mjs](../../apps/command-center/cop.test.mjs), ejecutables mediante `npm test`;
+no requieren tokens ni llamadas a proveedores. Build y lint: `npm run build`,
+`npm run lint` desde `apps/command-center`.
+
+Verificación final del 2026-09-19: **13 tests pasan**, build correcto y lint sin
+avisos; continúa el aviso de tamaño del bundle de Mapbox. Prueba de interacción
+con Chrome headless y Playwright 1.55.1, en viewports 1440×1000 y 390×844:
+propagación, exposición de refugios, comparación y ausencia de rutas, avisos a
+centros sanitarios/bomberos, conservación de la bandeja al cambiar de panel,
+reinicio de scroll y foco con Escape. Las respuestas cartográficas y de Directions
+se sustituyeron por mocks; no valida disponibilidad, tiempos ni recorridos reales
+del proveedor. No se realizaron comunicaciones a centros.
+
+## Viento visible y evacuación coherente — revisión 2026-09-19
+
+Petición del equipo del 2026-09-19: sustituir los controles manuales por una capa
+visual de viento on/off y un botón «Simular incendio dentro de 1 hora», mostrar los
+centros desde el arranque, usar azul para todas las personas y evitar trayectos
+que las acerquen al fuego.
+
+- La app abre con el incendio inicial, sin proyección. La capa de viento muestra
+  trazos animados en la dirección del escenario, adaptados al bearing del mapa.
+  On/off controla solo su visibilidad; ocultar la capa no elimina el viento del
+  cálculo. Con `prefers-reduced-motion` se muestran flechas estáticas.
+- El botón calcula/muestra la extensión a +60 min y permite volver al inicio.
+  Se mantienen **parámetros ficticios prefijados**, no meteorología en vivo:
+  viento hacia SO (225°), 20 km/h, avance base 5 m/min y margen de demo 150 m.
+  La fórmula, discretización y límites del modelo anterior siguen aplicando.
+- El encuadre inicial abarca el incendio, población, refugios y los centros de
+  Arenas/Talavera, sin modificar coordenadas para acercarlos artificialmente.
+  «Centrar incendio» recupera el detalle y «Ver todo» el encuadre general.
+  Al simular +1 h se centra automáticamente el área del incendio para ver la
+  proyección; «Ver todo» vuelve a incluir los centros distantes.
+- Todas las personas usan el mismo azul opaco, tanto en mapa como en lista.
+  Fuente, antigüedad y estado permanecen en las fichas y filtros; el color ya no
+  codifica el contacto ni convierte una referencia residencial en un GPS.
+- Causa comprobada del movimiento incoherente: el simulador asignaba destinos por
+  distancia, descartaba alternativas antes de evaluar exposición y podía escoger
+  corredores de otra localidad. Además, conservaba un fallback de movimiento
+  directo sin carretera. Dos tests reprodujeron recomendaciones hacia el fuego
+  y movimiento sin ruta antes de corregirlos.
+- Ahora se consultan los tres refugios (72 corredores potenciales) y se conserva
+  la duración del proveedor. Tanto comparación manual como asignación automática
+  aplican el filtro de exposición durante **al menos la próxima hora**, aunque la
+  proyección esté oculta, y rechazan destinos más cercanos a la huella inicial.
+- El filtro de alejamiento usa la distancia al margen cuadrado de las celdas
+  iniciales. Rechaza acercamientos del recorrido superiores a una celda (100 m),
+  tolerancia de discretización de demo, no criterio operativo. La asignación
+  requiere corredores de la localidad, acceso inicial de hasta 100 m y una ruta
+  concreta por persona; las geometrías se comprueban completas antes de salir.
+- La simulación sigue exclusivamente esa ruta. Sin alternativa admisible, sin
+  proveedor o con un recorrido incoherente, conserva la posición y muestra
+  **«Ruta pendiente de revisión»** con el motivo. No fuerza una evacuación para
+  completar la animación ni inventa nuevos refugios. Las sesiones GPS quedan
+  excluidas de la asignación y del movimiento ficticios.
+
+Fuentes: solicitud del equipo y revisión local del 2026-09-19 de
+[WindOverlay.tsx](../../apps/command-center/src/WindOverlay.tsx),
+[CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[routing.ts](../../apps/command-center/src/routing.ts),
+[simulation.ts](../../apps/command-center/src/simulation.ts),
+[fire-model.ts](../../apps/command-center/src/fire-model.ts) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs).
+
+Verificación de esta revisión, 2026-09-19: **18 tests pasan**, build correcto,
+lint sin avisos y `git diff --check` limpio. En navegador con proveedores mockeados
+se comprueban el encuadre inicial de todos los centros en desktop/móvil, azul
+uniforme, animación on/off, reduced motion, proyección a +1 h/reset y ausencia de
+sliders. Tras avanzar 75 segundos de llamadas en el navegador, los contactos de
+El Arenal sin ruta admisible permanecen en su posición, sin desplazarse hacia el
+fuego. No se han validado aquí carreteras ni meteorología reales.
 
 ## Fuentes
 
+- OpenStreetMap, recinto sanitario de Arenas (40.2116975, -5.0855068) — https://www.openstreetmap.org/way/992325099 (localizado con Nominatim el 2026-09-19).
+- SESCAM, Hospital Nuestra Señora del Prado — https://sanidad.castillalamancha.es/ciudadanos/centros/hospital-nuestra-senora-del-prado (consultado 2026-09-19).
+- OpenStreetMap, hospital de Talavera (39.9646542, -4.8073831) — https://www.openstreetmap.org/way/668566543 (localizado con Nominatim el 2026-09-19).
+- OpenStreetMap, parque de bomberos de Talavera (39.9552966, -4.8151033) — https://www.openstreetmap.org/way/645765574 (localizado con Nominatim el 2026-09-19; no confirma operatividad).
+- Datos cartográficos de centros: © OpenStreetMap contributors, ODbL — https://www.openstreetmap.org/copyright (atribución incluida en el mapa).
 - USDA Forest Service, FARSITE — modelos de propagación, combustible y terreno — https://research.fs.usda.gov/sites/default/files/2024-01/firelab-finney_and_andrews_1999_fmn_v59_i2_pp13-15.pdf (extracto localizado 2026-09-19).
 - Mapbox Directions API — perfiles, alternativas y duración — https://docs.mapbox.com/api/navigation/directions/ (consultado 2026-09-19).
 - SACYL, Centro de Salud de Arenas de San Pedro — https://www.saludcastillayleon.es/CAAvila/es/area-influencia/z-b-s-arenas-san-pedro (consultado 2026-09-19).
