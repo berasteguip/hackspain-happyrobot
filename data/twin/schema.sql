@@ -179,3 +179,70 @@ select v.*,
        s.reason                  as support_reason
 from v_person_location v
 left join support_need s on s.person_id = v.person_id;
+
+-- ---------------------------------------------------------------------------
+-- 8. source — el vocabulario de QUIÉN afirma algo.
+--    Tabla y no enum porque lleva tres cosas que una lista de strings no da:
+--    `label` es lo que el agente PRONUNCIA al citar («los bomberos»), de modo
+--    que la cita no la improvise el modelo; `rank` resuelve contradicciones sin
+--    un CASE repetido en cada consulta (menor gana); y `default_validity_min`
+--    fija cuánto dura fiable un dato según quién lo dice, en vez de pedirle al
+--    modelo un número inventado en cada llamada.
+--    Es el MISMO vocabulario que usa `official_contact.source_id`: la llave que
+--    dice quién afirma algo es la que dice a quién se le pregunta.
+-- ---------------------------------------------------------------------------
+create table source (
+  id                   text primary key,     -- 'bomberos'
+  label                text not null,        -- 'los bomberos'
+  rank                 int4 not null,        -- menor = gana ante contradicción
+  is_official          bool not null,        -- cambia cómo lo dice el agente
+  default_validity_min int4                  -- NULL = no caduca
+);
+
+-- ---------------------------------------------------------------------------
+-- 9. official_contact — a quién se puede llamar, y sobre todo a quién NO.
+--
+--    DOS COLUMNAS DE TELÉFONO, y la diferencia es de seguridad, no de formato:
+--      · phone_public  el número real y publicado del organismo. El agente lo
+--                      DICE en voz alta para que lo marque el vecino. Nunca lo
+--                      marca el sistema.
+--      · phone_sim     un número del rango reservado. Es lo ÚNICO marcable, y
+--                      la CHECK de abajo hace imposible meter ahí un número de
+--                      verdad. No es disciplina: la base lo rechaza.
+--
+--    `name` es el ORGANISMO, nunca una persona: «Cuartel de la Guardia Civil de
+--    Tábara», no el móvil del sargento. `listed_public` es la afirmación
+--    explícita de que ese número está publicado, y sin ella la fila no entra.
+-- ---------------------------------------------------------------------------
+create table official_contact (
+  id              text primary key,
+  source_id       text not null references source(id),
+  scope           text not null,              -- nacional | autonomico | municipal | local
+  municipality_id text references municipality(id),
+  locality_id     text references locality(id),
+  name            text not null,
+  phone_public    text,                       -- sin formato E.164 forzado: '112' es válido
+  phone_sim       text,
+  listed_public   bool not null default true,
+  notes           text,
+  constraint phone_sim_reservado
+    check (phone_sim is null or phone_sim like '+3460099%')
+);
+create index official_contact_muni_idx     on official_contact (source_id, municipality_id);
+create index official_contact_locality_idx on official_contact (source_id, locality_id);
+
+-- v_contact_lookup: lo que devuelve `buscar_contacto`. NO expone `phone_sim`;
+-- solo dice si el sistema puede marcar (`dialable`) o si únicamente puede dar
+-- el número para que lo marque la persona.
+create view v_contact_lookup as
+select oc.id,
+       oc.source_id,
+       s.label                      as source_label,
+       oc.name,
+       oc.phone_public,
+       (oc.phone_sim is not null)   as dialable,
+       oc.scope,
+       oc.municipality_id,
+       oc.locality_id
+from official_contact oc
+join source s on s.id = oc.source_id;

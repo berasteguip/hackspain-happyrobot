@@ -27,6 +27,12 @@ def _bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "si", "sí", "on"}
 
 
+def _phones(name: str) -> frozenset[str]:
+    """Lista de teléfonos separados por coma. Vacía si no está puesta — y vacía significa
+    exactamente eso: nadie es marcable de verdad."""
+    return frozenset(p.strip() for p in os.getenv(name, "").split(",") if p.strip())
+
+
 def _float(name: str, default: float) -> float:
     try:
         return float(os.getenv(name, "") or default)
@@ -50,6 +56,14 @@ class Settings:
 
     # La bandera que impide llamar a 120 teléfonos de verdad por accidente.
     allow_real_calls: bool = field(default_factory=lambda: _bool("ALLOW_REAL_CALLS", False))
+    # ...y el segundo cerrojo, que es el que de verdad protege: `ALLOW_REAL_CALLS` es global, así
+    # que en el momento de la demo se enciende para todo el sistema a la vez. Solo los números de
+    # esta lista se marcan de verdad; cualquier otro se simula aunque la bandera esté encendida.
+    # Van aquí y no en el repo porque son móviles reales del equipo, y el contrato de datos §1
+    # prohíbe versionar un teléfono fuera del rango reservado.
+    real_call_allowlist: frozenset[str] = field(
+        default_factory=lambda: _phones("REAL_CALL_ALLOWLIST")
+    )
 
     # --- Escenario y persistencia -----------------------------------------
     scenario: str = field(default_factory=lambda: os.getenv("SCENARIO", "sierra-culebra"))

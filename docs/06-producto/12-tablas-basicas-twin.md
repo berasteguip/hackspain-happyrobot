@@ -212,6 +212,55 @@ Tábara sale con cero casas y está bien: es el destino, no un origen. Tiene fil
 que más se nombra por teléfono («¿cabe alguien ya en Tábara?») y sin `locality_id` esa pregunta no
 se podría colgar de nada en el log.
 
+## 11. Contactos oficiales: el agente dice el número, no lo marca
+
+Hay dos capacidades distintas que se estaban confundiendo en una sola, y solo una de las dos
+marca un teléfono:
+
+| | Quién marca | Riesgo | Tabla |
+| --- | --- | --- | --- |
+| **Dar el contacto** — «el 112 es el 112, llame usted» | la persona | ninguno | `phone_public` |
+| **Llamar a un tercero** — el sistema marca y vuelve con la respuesta | el sistema | marcar un cuartel real | `phone_sim` |
+
+La primera es lo que hace un operador de Protección Civil de verdad, y es útil. La segunda, contra
+un organismo público y sin autorización, no se hace. Por eso son dos columnas y no una, y por eso
+la columna marcable lleva una `CHECK` que **la base hace cumplir**:
+
+```sql
+constraint phone_sim_reservado check (phone_sim is null or phone_sim like '+3460099%')
+```
+
+Comprobado: insertar `+34980123456` (un prefijo real de Zamora) en `phone_sim` devuelve error. No
+depende de que nadie se acuerde a las cuatro de la mañana.
+
+`v_contact_lookup` es lo que devuelve la tool `buscar_contacto`: **no expone `phone_sim`**, solo un
+booleano `dialable` que dice si el sistema puede marcar o si únicamente puede dar el número.
+
+### El segundo cerrojo, en `api/`
+
+El freno que ya existía, `ALLOW_REAL_CALLS`, es **global**: en la demo se enciende para hacer 3-4
+llamadas de voz reales (decisión 002) y en ese mismo instante quedarían marcables los 120 vecinos
+y cualquier organismo de esta tabla. No protege justo cuando hace falta.
+
+Se añade `REAL_CALL_ALLOWLIST` en `api/settings.py`: una lista explícita de números marcables.
+Para que salga una llamada de verdad hacen falta **los dos**: bandera encendida **y** número en la
+lista. Vacía = nadie, aunque la bandera esté a `true`. Va en `.env` y no en el repo porque son
+móviles reales del equipo, y el contrato §1 prohíbe versionar un teléfono fuera del rango reservado.
+
+Dos tests nuevos en `api/tests/test_notify.py` lo fijan, y uno de ellos es literalmente el caso
+temido: bandera encendida, `+34980123456` de un cuartel, y no sale ni una petición.
+
+### Qué hay cargado hoy
+
+`source` con 11 filas (el vocabulario) y `official_contact` con **una**: el 112, cuyo número es
+público, corto y universal. El resto llega de la base de contactos que se está descargando aparte.
+Cuando llegue: los números van a `phone_public`, `phone_sim` se queda `NULL` mientras no exista
+una contraparte simulada, y `name` es el organismo — nunca el móvil de una persona con nombre.
+
+`municipality.ine_code` sigue vacío a propósito y es el puente natural con esa base: casi cualquier
+dataset oficial español viene con código INE, y así el join no depende de comparar nombres con
+tildes.
+
 ## Fuentes
 
 - Jerarquía municipio/pedanía, poblaciones INE y coordenadas: [`../03-dominio-crisis/05-geografia-sierra-culebra.md`](../03-dominio-crisis/05-geografia-sierra-culebra.md) §1 y §4.

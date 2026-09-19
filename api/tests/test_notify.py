@@ -1,8 +1,12 @@
-"""El freno de mano: sin `ALLOW_REAL_CALLS=true` NADIE recibe una llamada de verdad.
+"""El freno de mano: hacen falta DOS cerrojos para que salga una llamada de verdad.
 
 Un bucle del planner sobre 120 vecinos con teléfonos reales detrás es el peor fallo posible de
 este proyecto, así que la regla se prueba por los dos lados: que apagado no sale ni una petición
 HTTP, y que encendido sí sale (para que el test no pase por casualidad porque la red esté muerta).
+
+El segundo cerrojo es `REAL_CALL_ALLOWLIST`, y existe porque el primero es **global**: en la demo
+se enciende `ALLOW_REAL_CALLS` para hacer 3-4 llamadas reales y en ese mismo instante quedarían
+marcables los 120 vecinos y cualquier teléfono de un organismo público.
 """
 
 from __future__ import annotations
@@ -30,6 +34,12 @@ def cliente_espia():
 
 def _persona() -> Person:
     return Person(id="p-tel", name="Antonio Prieto", phone="+34600992001")
+
+
+def _abrir_los_dos_cerrojos(monkeypatch, *, telefono: str = "+34600992001") -> None:
+    """Enciende la bandera Y mete el número en la lista blanca. Hacen falta los dos."""
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "real_call_allowlist", frozenset({telefono}))
 
 
 def test_sin_la_variable_de_entorno_no_se_llama_a_nadie(state, cliente_espia):
@@ -98,7 +108,7 @@ def test_con_la_variable_encendida_si_sale_la_peticion(state, cliente_espia, mon
     Sin este test, el de arriba pasaría igual con un `notify` roto que no llamara nunca.
     """
     cliente, enviadas = cliente_espia
-    monkeypatch.setattr(settings, "allow_real_calls", True)
+    _abrir_los_dos_cerrojos(monkeypatch)
     monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
     monkeypatch.setattr(settings, "hr_api_key", "clave-de-test")
 
@@ -121,7 +131,7 @@ def test_una_clave_de_happyrobot_va_como_bearer(state, cliente_espia, monkeypatc
     NUESTRA API. Cruzarlos da un 401 silencioso en medio de la demo, así que la clave se manda por
     la vía que le corresponde a su forma."""
     cliente, enviadas = cliente_espia
-    monkeypatch.setattr(settings, "allow_real_calls", True)
+    _abrir_los_dos_cerrojos(monkeypatch)
     monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
     monkeypatch.setattr(settings, "hr_api_key", "sk_live_falsa")
 
@@ -137,7 +147,7 @@ def test_una_clave_de_happyrobot_va_como_bearer(state, cliente_espia, monkeypatc
 
 def test_sin_webhook_configurado_falla_pero_no_explota(state, cliente_espia, monkeypatch):
     cliente, enviadas = cliente_espia
-    monkeypatch.setattr(settings, "allow_real_calls", True)
+    _abrir_los_dos_cerrojos(monkeypatch)
     monkeypatch.setattr(settings, "hr_workflow_webhook", "")
 
     persona = _persona()
@@ -149,3 +159,43 @@ def test_sin_webhook_configurado_falla_pero_no_explota(state, cliente_espia, mon
     assert "HR_WORKFLOW_WEBHOOK" in resultado.detail
     # y el fallo también se registra: el mando tiene que ver que no se pudo avisar
     assert "FALLÓ" in state.decision_log[-1].reason
+
+
+def test_con_la_bandera_encendida_pero_fuera_de_la_lista_blanca_no_se_marca(
+    state, cliente_espia, monkeypatch
+):
+    """El caso de la demo: la bandera está encendida para llamar a 3-4 móviles del equipo, y
+    justo entonces el planner recorre 120 vecinos y una lista de organismos públicos.
+
+    Ninguno de ellos está en la lista blanca, así que ninguno se marca. Este test es el que
+    impide que el sistema llame a un cuartel de la Guardia Civil en mitad del pitch.
+    """
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "real_call_allowlist", frozenset({"+34600990001"}))
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
+
+    cuartel = Person(id="p-cuartel", name="Guardia Civil Tábara", phone="+34980123456")
+    state.people[cuartel.id] = cuartel
+    resultado = notify.place_call(cuartel, "consultar si la ZA-P-2434 sigue abierta", state, client=cliente)
+
+    assert enviadas == [], "se marcó un número que no estaba en la lista blanca"
+    assert resultado.simulated is True
+    assert resultado.ok is True, "simulado devuelve éxito: el planner no debe bloquearse"
+    assert "REAL_CALL_ALLOWLIST" in resultado.detail
+    assert "simulada" in state.decision_log[-1].reason
+
+
+def test_la_lista_blanca_vacia_no_marca_a_nadie(state, cliente_espia, monkeypatch):
+    """Por defecto seguro: encender la bandera sin rellenar la lista no llama a nadie."""
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "real_call_allowlist", frozenset())
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
+
+    persona = _persona()
+    state.people[persona.id] = persona
+    resultado = notify.place_call(persona, "prueba", state, client=cliente)
+
+    assert enviadas == []
+    assert resultado.simulated is True
