@@ -18,6 +18,7 @@ import type { DispatchTarget, DispatchUnit, UnitKind } from './units'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
 import {
   CALL_STATE_LABEL, CALL_STATE_OPEN, DispatchFailed, dispatchCircle, fetchCalls, fetchRoster,
+  TRIAGE_COLOR, TRIAGE_LABEL,
   readOperatorKey, saveOperatorKey,
 } from './crisisApi'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
@@ -39,7 +40,7 @@ function citizenFromRoster(row: RosterEntry, index: number): Citizen {
     lat: row.lat as number,
     locality: row.locality || row.address || 'Escenario de la API',
     resident: true,
-    status: row.call_state === 'answered' ? 'informed' : 'pending',
+    status: statusFromRoster(row),
     vulnerable: row.vulnerable,
     safeZoneId: '',
     speedKmh: 26 + (index % 7) * 4,
@@ -48,6 +49,30 @@ function citizenFromRoster(row: RosterEntry, index: number): Citizen {
     locationSource: row.location_source === 'gps' ? 'gps' : 'reference',
     callState: row.call_state ?? undefined,
     dialable: row.dialable,
+    triage: triageFromRoster(row),
+  }
+}
+
+/**
+ * Qué se enseña del estado de alguien. Manda lo último que se sabe de la llamada, y lo último
+ * suele ser el triaje: una observación llega aunque nadie haya rodeado un círculo en el mapa
+ * —el agente puede haber llamado desde su propio workflow— y entonces no hay fila en el tablero
+ * de llamadas de la que deducir nada.
+ */
+function statusFromRoster(row: RosterEntry): Citizen['status'] {
+  if (row.status === 'no_answer') return 'no_answer'
+  if (row.triage_level && row.triage_level !== 'unknown') return 'informed'
+  return row.call_state === 'answered' ? 'informed' : 'pending'
+}
+
+/** El veredicto del agente, si es que alguien ha hablado ya con esta persona. */
+function triageFromRoster(row: RosterEntry): Citizen['triage'] {
+  if (!row.triage_level) return undefined
+  return {
+    level: row.triage_level,
+    reason: row.triage_reason,
+    confidence: row.triage_confidence,
+    at: row.triage_at,
   }
 }
 
@@ -276,23 +301,46 @@ export function CommandCenter({ token }: { token: string }) {
     }, 100)
     return () => window.clearInterval(timer)
   }, [protocolOn, scenario.safeZones])
-  // El censo de la API manda sobre el de `scenario.ts` en cuanto responde.
+  // El censo de la API manda sobre el de `scenario.ts` en cuanto responde, y después se
+  // relee en bucle: es por donde entra el veredicto del agente cuando cuelga una llamada
+  // (`POST /calls/observation` → `triage_level`). Sin este refresco el mapa se queda con la
+  // foto del arranque y el color nunca cambia aunque el agente haya hablado con medio pueblo.
   useEffect(() => {
     let cancelled = false
-    void fetchRoster().then((rows) => {
+    let primera = true
+    const cargar = async () => {
+      const rows = await fetchRoster()
       if (cancelled || !rows || !rows.length) return
-      const desdeApi = rows.map(citizenFromRoster)
-      citizensRef.current = desdeApi
-      setCitizens(desdeApi)
-      setApiRoster(true)
-      const centro = desdeApi.reduce(
-        (acc, c) => ({ lng: acc.lng + c.lng / desdeApi.length, lat: acc.lat + c.lat / desdeApi.length }),
-        { lng: 0, lat: 0 },
-      )
-      setFocusTarget({ ...centro, zoom: 14 })
-    })
-    return () => { cancelled = true }
-  }, [])
+      if (primera) {
+        primera = false
+        const desdeApi = rows.map(citizenFromRoster)
+        citizensRef.current = desdeApi
+        setCitizens(desdeApi)
+        setApiRoster(true)
+        const centro = desdeApi.reduce(
+          (acc, c) => ({ lng: acc.lng + c.lng / desdeApi.length, lat: acc.lat + c.lat / desdeApi.length }),
+          { lng: 0, lat: 0 },
+        )
+        setFocusTarget({ ...centro, zoom: 14 })
+        return
+      }
+      // En los refrescos solo entra el triaje. La posición la manda `/api/locations` y quien
+      // comparte GPS ya está en `tracking`: pisar eso aquí haría parpadear el mapa cada cuatro
+      // segundos y borraría la trayectoria que el operador está mirando.
+      const porId = new Map(rows.map((row) => [row.id, row]))
+      updatePopulation((current) => current.map((citizen) => {
+        const fila = porId.get(citizen.id)
+        const triage = fila && triageFromRoster(fila)
+        if (!fila || !triage || triage.at === citizen.triage?.at) return citizen
+        // Quien comparte GPS se queda en `tracking`: eso lo sabe el mapa mejor que el roster.
+        const status = citizen.live ? citizen.status : statusFromRoster(fila)
+        return { ...citizen, triage, callState: fila.call_state ?? citizen.callState, status }
+      }))
+    }
+    void cargar()
+    const id = window.setInterval(() => void cargar(), 4000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [updatePopulation])
 
   // El tablero de la ráfaga viva: se refresca hasta que no quede ninguna llamada abierta.
   useEffect(() => {
@@ -638,7 +686,7 @@ export function CommandCenter({ token }: { token: string }) {
               <label className="search-label"><span className="sr-only">Buscar persona o localidad</span><input className="search" placeholder="Nombre, localidad o ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
               <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todas'], ['outside', 'Fuera del núcleo'], ['no_answer', 'Sin respuesta'], ['assistance', 'Revisión de ruta']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
               <div className="list-summary"><span>{filtered.length} {filtered.length === 1 ? 'persona' : 'personas'}</span><span>{counts.located} ubicaciones compartidas</span></div>
-              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.call ? 'answered' : citizen.status}`} /><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
+              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.call ? 'answered' : citizen.status}`} style={citizen.triage ? { background: TRIAGE_COLOR[citizen.triage.level] } : undefined} /><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.triage ? TRIAGE_LABEL[citizen.triage.level] : citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
               {!filtered.length && <div className="empty-state"><strong>No hay coincidencias</strong><button type="button" onClick={() => { setFilter('all'); setQuery('') }}>Limpiar filtros</button></div>}
             </>
           )}
@@ -766,6 +814,17 @@ function PersonDetail({ citizen, events, now, onClose, onDispatch, unitLimit, zo
         <div className={`location-card ${reference || stale ? 'uncertain' : ''}`}><strong>{LOCATION_LABEL[locationSource]}</strong><span className="coordinates">{Math.abs(citizen.lat).toFixed(5)}° {citizen.lat >= 0 ? 'N' : 'S'} / {Math.abs(citizen.lng).toFixed(5)}° {citizen.lng < 0 ? 'O' : 'E'}</span><span>{locationAge(citizen.locationUpdatedAt, now)}{stale ? ' · desactualizada' : ''}</span></div>
         <dl className="detail-fields"><div><dt>Precisión</dt><dd>{citizen.accuracyM !== undefined ? `${Math.round(citizen.accuracyM)} m` : 'No disponible'}</dd></div><div><dt>Origen</dt><dd>{citizen.live ? locationSource === 'gps' ? 'Dispositivo' : 'Sesión compartida' : 'Registro'}</dd></div></dl>
       </section>
+      {citizen.triage && (
+        <section className="detail-section"><h3>Triaje del agente</h3>
+          {/* Lo único de esta ficha que sale de haber hablado con la persona. El resto —posición,
+              exposición, ruta— lo calcula la geometría, y por eso puede estar equivocado. */}
+          <div className="location-card" style={{ borderColor: TRIAGE_COLOR[citizen.triage.level] }}>
+            <strong style={{ color: TRIAGE_COLOR[citizen.triage.level] }}>{TRIAGE_LABEL[citizen.triage.level]}</strong>
+            <span>{citizen.triage.reason || 'El agente no dejó motivo.'}</span>
+            <span>{citizen.triage.at ? `Cerrado ${formatClock(new Date(citizen.triage.at))}` : ''}{citizen.triage.confidence ? ` · confianza ${citizen.triage.confidence}` : ''}</span>
+          </div>
+        </section>
+      )}
       <section className="detail-section"><h3>Última llamada</h3>
         <div className="call-summary"><p>{citizen.call?.summary ?? (citizen.callState ? CALL_STATE_LABEL[citizen.callState] : 'Sin llamada registrada')}</p></div>
         {citizen.call?.needs.map((need) => <p className="need-note" key={need}>{need}</p>)}

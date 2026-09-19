@@ -282,7 +282,7 @@ compartido con HappyRobot. Sin auth no se puede aceptar webhooks de la plataform
 | GET | `/instructions/{person_id}` | **tool del agente de voz**: `{instruction, exit_name, route_summary, convoy, urgency, minutes_to_front, say_this}`. `say_this` es la frase literal, ya redactada, para que el TTS no improvise en algo que puede matar a alguien. |
 | GET | `/health` | `{ok: true, state_version, people_count, uptime_s}` |
 | GET | `/calls?batch_id=&active=` | tablero de llamadas: un `CallRun` por intento (`{id, person_id, phone, state, run_id, batch_id, detail, started_at, updated_at}`) |
-| GET | `/api/roster` | **público, sin `x-api-key`**: el censo que Vigía pinta y rodea (`{id, name, phone, lng, lat, locality, vulnerable, dialable, status, call_state}`). El teléfono va **enmascarado** (`··· 011`): lo lee el navegador del operador, que no tiene clave. |
+| GET | `/api/roster` | **público, sin `x-api-key`**: el censo que Vigía pinta y rodea (`{id, name, phone, lng, lat, locality, vulnerable, dialable, status, call_state, triage_level, triage_reason, triage_confidence, triage_at}`). El teléfono va **enmascarado** (`··· 011`): lo lee el navegador del operador, que no tiene clave. |
 | GET | `/api/locations` | **público**: solo quien está compartiendo posición. Puente para Vigía. |
 
 ### Escritura
@@ -295,6 +295,7 @@ compartido con HappyRobot. Sin auth no se puede aceptar webhooks de la plataform
 | POST | `/events/exit-threatened` | `{exit_id, reason}` | motor de escenario |
 | POST | `/positions` | `{person_id, lat, lon, accuracy_m, t}` | página GPS (cada 5 s) |
 | POST | `/calls/outcome` | ver abajo | workflow de HappyRobot (AI Extract) |
+| POST | `/calls/observation` | ver abajo | **el nodo `Observación` del workflow, al colgar.** Envoltorio de `/calls/outcome` que además guarda el color del triaje. |
 | POST | `/calls/started` | `{person_id, run_id, direction}` | HappyRobot |
 | POST | `/calls/dispatch` | `{person_ids[] \| lat+lon+radius_m, reason, operator, force}` | **Vigía, al soltar el círculo.** Lanza una llamada independiente por persona, en paralelo, y devuelve el tablero de la ráfaga con el motivo de cada descarte. |
 | POST | `/human/override` | `{subject_type, subject_id, field, value, reason, operator}` | dashboard |
@@ -360,6 +361,46 @@ Dos detalles de implementación que este endpoint **tiene** que cumplir:
 - **Un `answered: false` también escribe.** Sube `call_attempts`, mueve el `status` por la máquina de
   estados del §2.1 y deja entrada en el log. El silencio es información, y es la que alimenta la lista
   de la patrulla.
+
+#### `POST /calls/observation` — el camino de vuelta del agente
+
+El otro sentido de `/calls/dispatch`. La app dispara la llamada y hasta aquí el círculo se cerraba
+a medias: el AI Extract del agente clasificaba a la persona en rojo/naranja/amarillo/verde **dentro
+de HappyRobot** y ese veredicto no salía de la plataforma. Un nodo `Webhook POST` colgado del nodo
+`Observación` lo postea aquí al colgar.
+
+Los nombres llegan **en español** porque son los del nodo tal y como está desplegado. No se
+renombran en la plataforma para no tocar un workflow en vivo: se aceptan como alias y el contrato
+sigue en inglés puertas adentro (`level`, `declared_zone`, `call_result`... también valen).
+
+```json
+{
+  "person_id": "p-001", "phone": "+34600990012",
+  "run_id": "run_abc123", "run_url": "https://platform.eu.happyrobot.ai/...",
+  "duration_s": "96", "prior_level": "amarillo",
+  "nivel": "rojo", "zona_declarada": "Camino del Horno", "tipo_lugar": "exterior",
+  "llamas": "true", "discrepancia": "prior_bajo_obs_alta", "confianza": "alta",
+  "resultado": "completada", "nota_libre": "Está fuera de casa con dos niños y no tiene coche."
+}
+```
+
+Tres cosas que este endpoint **tiene** que cumplir:
+
+- **Todo llega como texto.** El cuerpo del nodo webhook es una plantilla JSON: un campo vacío viaja
+  como `""` y un booleano como `"true"`. Un `""` donde se espera un entero no puede ser un 422 —
+  sería perder la única información que teníamos de esa persona por un campo que no importaba.
+  (Verificado el 19 sep 2026: la plataforma **sí** escapa las comillas del texto libre al sustituir
+  variables dentro de un `body.raw` con `contentType: application/json`.)
+- **No sustituye a `/calls/outcome`: lo envuelve.** Primero se aplica lo que la llamada dejó por el
+  camino de siempre —contestó o no, intentos, estado de la casa, cola de la patrulla— y después se
+  escribe el triaje. Una observación no inventa un segundo mecanismo de llamadas.
+- **`triage.level` y `minutes_to_front` son cosas distintas y conviven.** El segundo es geometría y
+  sigue ordenando la cola (§4); el primero es lo que una persona dijo por teléfono, y es lo que
+  tiñe el punto en el mapa. Cuando discrepan (`prior_bajo_obs_alta`) esa es justo la información
+  que ningún sensor tenía.
+
+`GET /api/roster` expone el resultado como `triage_level` / `triage_reason` / `triage_confidence` /
+`triage_at`, que es por donde el puesto de mando lo lee y colorea.
 
 ### Respuesta estándar de escritura
 
