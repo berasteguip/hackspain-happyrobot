@@ -402,6 +402,9 @@ def test_una_observacion_de_llamada_no_contestada_no_inventa_conversacion(client
     persona = client.get("/people/p-003").json()
     assert persona["status"] == "no_answer", "sin interlocutor no hay contacto"
     assert persona["triage"]["level"] == "unknown", "un nivel vacío no se inventa"
+    # «confianza baja» sin interlocutor sonaría a que el agente dudó de algo que nadie dijo.
+    assert "nadie descolgó" in persona["triage"]["reason"]
+    assert "confianza" not in persona["triage"]["reason"]
 
 
 def test_los_campos_vacios_del_extract_no_tumban_la_peticion(client):
@@ -432,3 +435,30 @@ def test_una_observacion_de_alguien_desconocido_crea_la_ficha(client):
     )
     assert r.status_code == 200
     assert client.get("/people/p-nueva").json()["triage"]["level"] == "green"
+
+
+def test_una_llamada_sin_nada_resenable_tambien_deja_motivo(client):
+    """Una ficha que dice «el agente no dejó motivo» se lee como que algo falló.
+
+    Lo normal es lo contrario: la llamada fue bien y no había nada que corrigiera el mapa. Eso
+    también es información —significa no volver a mirar esta ficha— y tiene que estar escrito.
+    """
+    client.post("/reset")
+    client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-002",
+            "nivel": "verde",
+            "discrepancia": "ninguna",
+            "confianza": "alta",
+            "resultado": "completada",
+        },
+    )
+    motivo = client.get("/people/p-002").json()["triage"]["reason"]
+    assert motivo, "el motivo nunca vuelve vacío"
+    assert "confirma lo que traía el mapa" in motivo
+
+    # Y si ni siquiera hubo comparación, se dice eso otro en vez de afirmar una confirmación.
+    client.post("/calls/observation", json={"PERSONA_ID": "p-004", "nivel": "verde"})
+    otro = client.get("/people/p-004").json()["triage"]["reason"]
+    assert otro and "confirma" not in otro

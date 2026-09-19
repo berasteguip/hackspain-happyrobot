@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 import dispatcher
 import planner
 from models import (
+    NO_CONTACT_RESULTS,
     TERMINAL_CALL_STATES,
     Actor,
     CallDispatch,
@@ -482,7 +483,18 @@ def _record_triage(person: Person, obs: CallObservation) -> DecisionLogEntry | N
 
 
 def _triage_reason(obs: CallObservation, previo: TriageLevel) -> str:
-    """La frase que lee el mando. Nada de score: por qué esa persona está de ese color."""
+    """La frase que lee el mando. Nada de score: por qué esa persona está de ese color.
+
+    **Nunca vuelve vacía.** Una ficha que dice «el agente no dejó motivo» se lee como que algo
+    falló, cuando lo normal es justo lo contrario: que la llamada fue bien y no había nada que
+    corrigiera el mapa. Eso también es información —significa no volver a mirar esta ficha— y
+    tiene que estar escrito, no deducirse de un hueco.
+    """
+    # Que nadie descuelgue no es un triaje de nada: sin interlocutor, el resto de campos del
+    # extract son ruido, y «confianza baja» aquí sonaría a que el agente dudó de algo.
+    if (obs.call_result or "").strip().lower() in NO_CONTACT_RESULTS:
+        return "nadie descolgó: no hay triaje, solo el intento"
+
     partes: list[str] = []
     if obs.declared_zone:
         partes.append(f"dice estar en «{obs.declared_zone}»")
@@ -502,9 +514,15 @@ def _triage_reason(obs: CallObservation, previo: TriageLevel) -> str:
         partes.append("la llamada se cortó a medias")
     if (obs.confidence or "").strip().lower() == "baja":
         partes.append("el agente no las tiene todas consigo (confianza baja)")
-    if not partes and obs.notes:
+    if partes:
+        return "; ".join(partes)
+    if obs.notes:
         return obs.notes.strip()
-    return "; ".join(partes)
+    # Sin nada reseñable. Que el agente haya comparado y no encontrado diferencia es un
+    # resultado, y se dice; si ni siquiera hubo comparación, se dice eso otro.
+    if (obs.discrepancy or "").strip().lower() == "ninguna":
+        return "la llamada confirma lo que traía el mapa"
+    return "la llamada no añadió nada que el mapa no supiera"
 
 
 @router.post("/calls/started", response_model=WriteResponse)
