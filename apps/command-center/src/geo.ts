@@ -1,3 +1,6 @@
+import type { FeatureCollection, Polygon } from 'geojson'
+import type { Coordinate } from './types'
+
 const R = 6_371_000
 
 export function toRad(deg: number) {
@@ -95,4 +98,80 @@ export function nearestZone<T extends { lng: number; lat: number }>(
     }
   }
   return { zone: best, distanceM: bestD }
+}
+
+export function routeLength(coordinates: Coordinate[]) {
+  return coordinates.slice(1).reduce((distance, point, index) => distance + haversineMeters(...coordinates[index], ...point), 0)
+}
+
+export function positionAlongRoute(coordinates: Coordinate[], distanceM: number): Coordinate {
+  if (!coordinates.length) throw new Error('Empty route')
+  let remaining = Math.max(0, distanceM)
+  for (let i = 1; i < coordinates.length; i += 1) {
+    const start = coordinates[i - 1]
+    const end = coordinates[i]
+    const length = haversineMeters(...start, ...end)
+    if (length > 0 && remaining < length) {
+      const t = remaining / length
+      return [start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t]
+    }
+    remaining -= length
+  }
+  return [...coordinates[coordinates.length - 1]]
+}
+
+export function createFireChecker(fire: FeatureCollection<Polygon>, marginM = 35) {
+  type Box = { minX: number; maxX: number; minY: number; maxY: number }
+  const project = ([lng, lat]: Coordinate): Coordinate => [lng * 111_320 * Math.cos(toRad(40.24)), lat * 111_320]
+  const buckets = new Map<string, Box[]>()
+  const bucketSize = 150
+  for (const feature of fire.features) {
+    const ring = feature.geometry.coordinates[0].map((point) => project(point as Coordinate))
+    const box = {
+      minX: Math.min(...ring.map(([x]) => x)) - marginM,
+      maxX: Math.max(...ring.map(([x]) => x)) + marginM,
+      minY: Math.min(...ring.map(([, y]) => y)) - marginM,
+      maxY: Math.max(...ring.map(([, y]) => y)) + marginM,
+    }
+    for (let x = Math.floor(box.minX / bucketSize); x <= Math.floor(box.maxX / bucketSize); x += 1) {
+      for (let y = Math.floor(box.minY / bucketSize); y <= Math.floor(box.maxY / bucketSize); y += 1) {
+        const key = `${x}:${y}`
+        const list = buckets.get(key) ?? []
+        list.push(box)
+        buckets.set(key, list)
+      }
+    }
+  }
+  const intersects = (a: Coordinate, b: Coordinate, box: Box) => {
+    let enter = 0
+    let exit = 1
+    for (const [origin, delta, min, max] of [[a[0], b[0] - a[0], box.minX, box.maxX], [a[1], b[1] - a[1], box.minY, box.maxY]]) {
+      if (Math.abs(delta) < 1e-9) { if (origin < min || origin > max) return false; continue }
+      const t1 = (min - origin) / delta
+      const t2 = (max - origin) / delta
+      enter = Math.max(enter, Math.min(t1, t2))
+      exit = Math.min(exit, Math.max(t1, t2))
+      if (enter > exit) return false
+    }
+    return true
+  }
+  return (coordinates: Coordinate[]) => {
+    const points = coordinates.map(project)
+    if (points.length === 1) points.push(points[0])
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1]
+      const b = points[i]
+      const checked = new Set<Box>()
+      for (let x = Math.floor(Math.min(a[0], b[0]) / bucketSize); x <= Math.floor(Math.max(a[0], b[0]) / bucketSize); x += 1) {
+        for (let y = Math.floor(Math.min(a[1], b[1]) / bucketSize); y <= Math.floor(Math.max(a[1], b[1]) / bucketSize); y += 1) {
+          for (const box of buckets.get(`${x}:${y}`) ?? []) {
+            if (checked.has(box)) continue
+            checked.add(box)
+            if (intersects(a, b, box)) return true
+          }
+        }
+      }
+    }
+    return false
+  }
 }

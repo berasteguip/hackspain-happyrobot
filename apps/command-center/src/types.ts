@@ -7,6 +7,33 @@ export type CitizenStatus =
   | 'evacuating'
   | 'safe'
   | 'refused'
+  | 'routing'
+  | 'preparing'
+  | 'assistance'
+
+export type Coordinate = [number, number]
+
+export type TravelGroup = {
+  adults: number
+  children: number
+  olderAdults: number
+  mobility: 'walking' | 'assisted' | 'vehicle' | 'pickup'
+  preparationSec: number
+}
+
+export type RouteOption = {
+  zoneId: string
+  coordinates: Coordinate[]
+  distanceM: number
+  accessM: number
+  profile: 'walking' | 'driving'
+}
+
+export type Journey = RouteOption & {
+  distanceTravelledM: number
+  departureAt: number
+  arrivedAt?: number
+}
 
 export type Citizen = {
   id: string
@@ -21,13 +48,19 @@ export type Citizen = {
   safeZoneId: string
   speedKmh: number
   callDelaySec: number
-  outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating'>
+  outcome: 'tracking' | 'informed' | 'no_answer' | 'refused'
   live?: boolean
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
   locationUpdatedAt?: number
   accuracyM?: number
   locality?: string
   resident?: boolean
+  group?: TravelGroup
+  journey?: Journey
+  routeOptions?: RouteOption[]
+  routeState?: 'loading' | 'ready' | 'error'
+  assistanceReason?: string
+  confirmedAt?: number
   household?: { name: string; situation: string; source: string }[]
   call?: {
     answeredAt: number
@@ -64,6 +97,11 @@ export type SafeZone = {
   lat: number
   radiusM: number
   capacity: number
+  code: string
+  services: string[]
+  description: string
+  sourceUrl: string
+  accessible: boolean
 }
 
 export type FireSpot = {

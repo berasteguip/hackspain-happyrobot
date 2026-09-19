@@ -1,5 +1,5 @@
 import type { FeatureCollection, Polygon } from 'geojson'
-import type { Citizen, FireSpot, RiskArea, SafeZone } from './types'
+import type { Citizen, FireSpot, RiskArea, SafeZone, TravelGroup } from './types'
 
 export const INCIDENT = {
   code: 'AV-GRD-2026-0919',
@@ -13,28 +13,25 @@ export const INCIDENT = {
 
 export const SAFE_ZONES: SafeZone[] = [
   {
-    id: 'z-arenas',
-    name: 'Pabellón municipal · Arenas de San Pedro',
-    lng: -5.0874,
-    lat: 40.2042,
-    radiusM: 160,
-    capacity: 420,
+    id: 'z-dehesa', code: 'PE-01', name: 'La Dehesa · Guisando',
+    lng: -5.140945, lat: 40.220682, radiusM: 24, capacity: 100,
+    services: ['Recepción', 'Ayuda básica', 'Transporte'], accessible: true,
+    description: 'Aparcamiento publicado por el Ayuntamiento, al sur del núcleo. Punto de recepción y transporte propuesto solo para la demo; aforo y servicios ficticios.',
+    sourceUrl: 'https://guisando.net/servicios-publicos/aparcamientos',
   },
   {
-    id: 'z-candeleda',
-    name: 'Recinto ferial · Candeleda',
-    lng: -5.2416,
-    lat: 40.1568,
-    radiusM: 180,
-    capacity: 350,
+    id: 'z-risquillo', code: 'PE-02', name: 'El Risquillo · Guisando',
+    lng: -5.144282, lat: 40.221327, radiusM: 20, capacity: 90,
+    services: ['Recepción', 'Ayuda básica'], accessible: true,
+    description: 'Aparcamiento junto a la Casa del Parque, publicado por el Ayuntamiento. Punto secundario de la demo, no un refugio oficial ni una garantía de seguridad.',
+    sourceUrl: 'https://guisando.net/servicios-publicos/aparcamientos',
   },
   {
-    id: 'z-mombeltran',
-    name: 'Campo de fútbol · Mombeltrán',
-    lng: -5.0208,
-    lat: 40.2574,
-    radiusM: 140,
-    capacity: 220,
+    id: 'z-arenas', code: 'PE-03', name: 'Jesús Navarro · Arenas',
+    lng: -5.0930363, lat: 40.2126907, radiusM: 35, capacity: 650,
+    services: ['Cobijo', 'Ayuda básica', 'Transporte'], accessible: true,
+    description: 'Polideportivo municipal de C/ Obispo, 1. Se propone como centro de acogida de la demo. Disponibilidad, accesibilidad operativa y aforo requieren validación real.',
+    sourceUrl: 'https://arenasdesanpedro.es/concejalias/deportes/polideportivo-jesus-navarro/',
   },
 ]
 
@@ -68,7 +65,7 @@ export const SCENARIO_FIRES: FireSpot[] = [
   { id: 'f12', lng: -5.141, lat: 40.232, frp: 48.4, confidence: 'nominal', source: 'scenario', acquiredAt: '01:24' },
 ]
 
-export const FIRE_CELL_SIZE_M = 25
+export const FIRE_CELL_SIZE_M = 5
 
 export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
   const west = -5.185
@@ -89,6 +86,7 @@ export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
     [[51, 44], [54, 43], [55, 45], [53, 47], [51, 46]],
     [[85, 36], [88, 36], [89, 38], [87, 40], [85, 39]],
     [[93, 46], [96, 45], [97, 48], [95, 49], [94, 48]],
+    [[31, 15], [35, 16], [39, 14], [41, 12], [43, 11], [43, 9], [42, 8], [42, 6.8], [40.4, 6.8], [39.3, 7.8], [37.5, 8.3], [37, 10], [35, 10.6], [33, 12]],
   ]
   const gaps: [number, number][][] = [
     [[9, 13], [12, 13], [12, 15], [14, 15], [14, 17], [11, 17], [11, 19], [9, 18]],
@@ -112,26 +110,44 @@ export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
     const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
     return value - Math.floor(value)
   }
+  const withBounds = (rings: [number, number][][]) => rings.map((ring) => ({
+    ring,
+    minX: Math.min(...ring.map(([x]) => x)), maxX: Math.max(...ring.map(([x]) => x)),
+    minY: Math.min(...ring.map(([, y]) => y)), maxY: Math.max(...ring.map(([, y]) => y)),
+  }))
+  const regions = withBounds(footprints)
+  const holes = withBounds(gaps)
+  const contains = (x: number, y: number, areas: ReturnType<typeof withBounds>) => areas.some((area) => (
+    x >= area.minX && x <= area.maxX && y >= area.minY && y <= area.maxY && inside(x, y, area.ring)
+  ))
+  const guisandoX = (-5.1395 - west) * metersPerLng
+  const guisandoY = (40.2223 - south) * 111_320
   const occupied = (column: number, row: number) => {
-    const x = (column + 0.5) * FIRE_CELL_SIZE_M / 91
-    const y = (row + 0.5) * FIRE_CELL_SIZE_M / 100
+    const east = (column + 0.5) * FIRE_CELL_SIZE_M
+    const north = (row + 0.5) * FIRE_CELL_SIZE_M
+    if (Math.hypot(east - guisandoX, north - guisandoY) < 220 + FIRE_CELL_SIZE_M * Math.SQRT1_2) return false
+    const x = east / 91
+    const y = north / 100
     const wx = x + 0.65 * Math.sin(y * 1.7) + 0.3 * Math.sin(x * 3.1 + y)
     const wy = y + 0.65 * Math.sin(x * 1.35) + 0.35 * Math.cos(y * 2.7 - x)
+    const covered = contains(wx, wy, regions)
+    if (covered && contains(wx, wy, holes)) return false
     const tileX = Math.floor(x / 2.1)
     const tileY = Math.floor(y / 1.8)
     const localX = x / 2.1 - tileX
     const localY = y / 1.8 - tileY
+    const value = noise(tileX, tileY)
+    if (!covered) {
+      const fringe = value > 0.76 && localX > 0.27 && localX < 0.74 && localY > 0.23 && localY < 0.75
+      return fringe && [[1.4, 0], [-1.4, 0], [0, 1.4], [0, -1.4]].some(([ox, oy]) => contains(wx + ox, wy + oy, regions))
+    }
+    if (value <= 0.85) return true
     const holeX = localX - 0.25 - 0.5 * noise(tileX + 17, tileY)
     const holeY = localY - 0.25 - 0.5 * noise(tileX, tileY + 31)
     const holeWidth = 0.1 + 0.2 * noise(tileX + 9, tileY + 4)
     const holeHeight = 0.08 + 0.22 * noise(tileX + 2, tileY + 8)
-    const fragmented = noise(tileX, tileY) > 0.85
-      && Math.abs(holeX + 0.07 * Math.sin(localY * 14 + tileX)) < holeWidth
-      && Math.abs(holeY + 0.06 * Math.cos(localX * 17 + tileY)) < holeHeight
-    const covered = footprints.some((ring) => inside(wx, wy, ring))
-    if (covered) return !fragmented && !gaps.some((ring) => inside(wx, wy, ring))
-    const fringe = noise(tileX, tileY) > 0.76 && localX > 0.27 && localX < 0.74 && localY > 0.23 && localY < 0.75
-    return fringe && [[1.4, 0], [-1.4, 0], [0, 1.4], [0, -1.4]].some(([ox, oy]) => footprints.some((ring) => inside(wx + ox, wy + oy, ring)))
+    return Math.abs(holeX + 0.07 * Math.sin(localY * 14 + tileX)) >= holeWidth
+      || Math.abs(holeY + 0.06 * Math.cos(localX * 17 + tileY)) >= holeHeight
   }
   const features: FeatureCollection<Polygon>['features'] = []
   for (let row = 0; row < rows; row += 1) {
@@ -205,16 +221,27 @@ export const SETTLEMENTS = [
 const NAMES = ['Carmen', 'Antonio', 'María', 'José', 'Elena', 'Pedro', 'Isabel', 'Luis', 'Rosa', 'Miguel', 'Pilar', 'Francisco', 'Ana', 'Javier', 'Teresa', 'Raúl', 'Lucía', 'Manuel', 'Sofía', 'Diego']
 const SURNAMES = ['López', 'Ruiz', 'Fernández', 'Prieto', 'Navarro', 'Sánchez', 'Martín', 'Ortega', 'Jiménez', 'Soto', 'Gómez', 'Herrera', 'Cruz', 'Molina', 'Blanco']
 
+const GROUP_PROFILES: (TravelGroup & { speedKmh: number })[] = [
+  { adults: 1, children: 0, olderAdults: 0, mobility: 'walking', preparationSec: 30, speedKmh: 4.5 },
+  { adults: 2, children: 1, olderAdults: 0, mobility: 'walking', preparationSec: 70, speedKmh: 3.2 },
+  { adults: 1, children: 0, olderAdults: 1, mobility: 'assisted', preparationSec: 90, speedKmh: 2.1 },
+  { adults: 2, children: 2, olderAdults: 1, mobility: 'assisted', preparationSec: 110, speedKmh: 2.6 },
+  { adults: 3, children: 2, olderAdults: 0, mobility: 'vehicle', preparationSec: 80, speedKmh: 18 },
+  { adults: 1, children: 0, olderAdults: 1, mobility: 'pickup', preparationSec: 0, speedKmh: 0 },
+  { adults: 2, children: 0, olderAdults: 0, mobility: 'walking', preparationSec: 45, speedKmh: 4 },
+]
+
 function person(index: number, lng: number, lat: number, locality: string, resident: boolean): Citizen {
+  const { speedKmh, ...group } = GROUP_PROFILES[index % GROUP_PROFILES.length]
   return {
     id: `c-${String(index + 1).padStart(2, '0')}`,
     name: `${NAMES[index % NAMES.length]} ${SURNAMES[Math.floor(index / NAMES.length) % SURNAMES.length]}`,
     phone: `demo-${String(index + 1).padStart(3, '0')}`,
-    lng, lat, locality, resident,
+    lng, lat, locality, resident, group, originLng: lng, originLat: lat,
     status: resident ? 'pending' : 'tracking',
-    vulnerable: index % 17 === 0,
-    safeZoneId: '', speedKmh: 0,
-    callDelaySec: 1 + (index % 48) * 1.4,
+    vulnerable: group.mobility === 'assisted' || group.mobility === 'pickup',
+    safeZoneId: '', speedKmh,
+    callDelaySec: 6 + (index % 48) * 3,
     outcome: index % 11 === 7 ? 'no_answer' : index % 13 === 9 ? 'refused' : index % 7 === 4 ? 'informed' : 'tracking',
     locationSource: resident ? 'reference' : 'simulation',
     locationUpdatedAt: resident ? undefined : Date.now(),
