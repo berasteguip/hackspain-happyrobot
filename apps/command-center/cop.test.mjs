@@ -25,6 +25,7 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
   const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test' }))
   for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Avisos', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
+  assert.ok(html.includes('<span class="brand-symbol" aria-hidden="true">R</span><strong>router</strong>'))
   assert.ok(html.includes('Simulación local'))
   assert.ok(html.includes('campaign-dock'))
   assert.ok(!html.includes('class="forecast-summary"'))

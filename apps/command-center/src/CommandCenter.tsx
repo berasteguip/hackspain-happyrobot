@@ -679,7 +679,7 @@ export function CommandCenter({ token }: { token: string }) {
         <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
       <header className="floating-brand">
-        <div className="brand-row"><span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong></div>
+        <div className="brand-row"><span className="brand-symbol" aria-hidden="true">R</span><strong>router</strong></div>
         <span className="brand-divider" aria-hidden="true" />
         <button ref={incidentButtonRef} type="button" className="incident-trigger" aria-label="Cambiar escenario" aria-expanded={panel === 'incidents'} aria-controls="map-panel" onClick={() => togglePanel('incidents')}>
           <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${apiRoster ? 'connected' : ''}`} aria-hidden="true" />{apiRoster ? 'API conectada' : 'Escenario de demo'} · {apiRoster ? placeName : scenario.incident.area}</small></span><Icon name="chevron" />
