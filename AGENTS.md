@@ -86,7 +86,9 @@ Empieza por `llms.txt` (índice completo). Guía de uso y páginas clave en
 ## 7. Estado del código y del producto (actualizado 2026-09-19)
 
 Léelo entero antes de tocar `apps/command-center`. Resume decisiones ya tomadas con el
-equipo; no las reabras sin hablarlo.
+equipo; no las reabras sin hablarlo. La arquitectura objetivo (cinco capas, dos bucles,
+contratos) y el hueco entre ella y el código está en
+[`docs/06-producto/02-pipeline-evacuacion.md`](docs/06-producto/02-pipeline-evacuacion.md).
 
 ### 7.1 Ramas
 
