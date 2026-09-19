@@ -11,7 +11,40 @@ import type { RefugeRoute } from './routing'
 import { planCitizenRoute } from './routing'
 import type { RouteIndex } from './routing'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
+import {
+  CALL_STATE_LABEL, CALL_STATE_OPEN, DispatchFailed, dispatchCircle, fetchCalls, fetchRoster,
+  readOperatorKey, saveOperatorKey,
+} from './crisisApi'
+import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers } from './types'
+
+/**
+ * El censo que sirve la API (`/api/roster`) sustituye al de `scenario.ts` en cuanto responde.
+ *
+ * Sin backend, Vigía sigue pintando su población de Gredos y su campaña sigue siendo local:
+ * eso es lo que se enseña cuando no hay API levantada. Con backend, los puntos del mapa son
+ * las personas que la API puede llamar de verdad, y rodearlas significa marcar sus teléfonos.
+ */
+function citizenFromRoster(row: RosterEntry, index: number): Citizen {
+  return {
+    id: row.id,
+    name: row.name || row.id,
+    phone: row.phone || '',
+    lng: row.lng as number,
+    lat: row.lat as number,
+    locality: row.locality || row.address || 'Escenario de la API',
+    resident: true,
+    status: row.call_state === 'answered' ? 'informed' : 'pending',
+    vulnerable: row.vulnerable,
+    safeZoneId: '',
+    speedKmh: 26 + (index % 7) * 4,
+    callDelaySec: 1 + (index % 48) * 1.4,
+    outcome: 'tracking',
+    locationSource: row.location_source === 'gps' ? 'gps' : 'reference',
+    callState: row.call_state ?? undefined,
+    dialable: row.dialable,
+  }
+}
 
 const STATUS_LABEL: Record<Citizen['status'], string> = {
   pending: 'Sin contactar', ringing: 'En llamada', no_answer: 'Sin respuesta',
@@ -54,6 +87,14 @@ export function CommandCenter({ token }: { token: string }) {
   const [areaIds, setAreaIds] = useState<string[]>([])
   const [drawingArea, setDrawingArea] = useState(false)
   const [campaignIds, setCampaignIds] = useState<string[]>([])
+  // --- modo "llamadas reales": el círculo se manda a la API y ella dispara HappyRobot ---
+  const [liveMode, setLiveMode] = useState(false)
+  const [operatorKey, setOperatorKey] = useState(() => readOperatorKey())
+  const [liveBatch, setLiveBatch] = useState<{ id: string; skipped: DispatchResultSkip[] } | null>(null)
+  const [liveCalls, setLiveCalls] = useState<CallRun[]>([])
+  const [dispatchError, setDispatchError] = useState('')
+  const [dispatching, setDispatching] = useState(false)
+  const [apiRoster, setApiRoster] = useState(false)
   const campaignRef = useRef<ReadonlySet<string>>(new Set())
   const campaignSet = useMemo(() => new Set(campaignIds), [campaignIds])
   const [planningCount, setPlanningCount] = useState(0)
@@ -187,6 +228,52 @@ export function CommandCenter({ token }: { token: string }) {
     }, 100)
     return () => window.clearInterval(timer)
   }, [protocolOn])
+  // El censo de la API manda sobre el de `scenario.ts` en cuanto responde.
+  useEffect(() => {
+    let cancelled = false
+    void fetchRoster().then((rows) => {
+      if (cancelled || !rows || !rows.length) return
+      const desdeApi = rows.map(citizenFromRoster)
+      citizensRef.current = desdeApi
+      setCitizens(desdeApi)
+      setApiRoster(true)
+      const centro = desdeApi.reduce(
+        (acc, c) => ({ lng: acc.lng + c.lng / desdeApi.length, lat: acc.lat + c.lat / desdeApi.length }),
+        { lng: 0, lat: 0 },
+      )
+      setFocusTarget({ ...centro, zoom: 14 })
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // El tablero de la ráfaga viva: se refresca hasta que no quede ninguna llamada abierta.
+  useEffect(() => {
+    if (!liveBatch) return
+    let cancelled = false
+    const poll = async () => {
+      const rows = await fetchCalls(operatorKey, liveBatch.id)
+      if (cancelled || !rows) return
+      setLiveCalls(rows)
+      const porPersona = new Map(rows.map((row) => [row.person_id, row]))
+      updatePopulation((current) => current.map((citizen) => {
+        const call = porPersona.get(citizen.id)
+        if (!call || citizen.callState === call.state) return citizen
+        return {
+          ...citizen,
+          callState: call.state,
+          status: call.state === 'answered' ? 'informed'
+            : call.state === 'no_answer' ? 'no_answer'
+            : CALL_STATE_OPEN.includes(call.state) ? 'ringing'
+            : citizen.status,
+        }
+      }))
+      if (!rows.some((row) => CALL_STATE_OPEN.includes(row.state))) window.clearInterval(id)
+    }
+    const id = window.setInterval(() => void poll(), 1500)
+    void poll()
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [liveBatch, operatorKey, updatePopulation])
+
   useEffect(() => {
     let cancelled = false
     const poll = async () => {
@@ -206,6 +293,24 @@ export function CommandCenter({ token }: { token: string }) {
   }, [])
 
   const fires = useMemo(() => showFirms ? [...SCENARIO_FIRES, ...firms] : SCENARIO_FIRES, [showFirms, firms])
+  /** Centro del censo que sirve la API. `null` mientras Vigía siga con su población local. */
+  const rosterCenter = useMemo(() => {
+    if (!apiRoster || !citizens.length) return null
+    return {
+      lng: citizens.reduce((total, citizen) => total + citizen.lng, 0) / citizens.length,
+      lat: citizens.reduce((total, citizen) => total + citizen.lat, 0) / citizens.length,
+    }
+  }, [apiRoster, citizens])
+  /** El rótulo de la cabecera miente si el censo ya no es el de Gredos. */
+  const placeName = useMemo(() => {
+    if (!apiRoster) return 'Sierra de Gredos'
+    const porLocalidad = new Map<string, number>()
+    for (const citizen of citizens) {
+      const clave = citizen.locality ?? ''
+      if (clave) porLocalidad.set(clave, (porLocalidad.get(clave) ?? 0) + 1)
+    }
+    return [...porLocalidad.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Escenario de la API'
+  }, [apiRoster, citizens])
   const counts = useMemo(() => ({
     total: citizens.length,
     answered: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.call).length,
@@ -233,7 +338,29 @@ export function CommandCenter({ token }: { token: string }) {
     setDrawingArea(true)
     setLayers(previous => ({ ...previous, citizens: true, references: true }))
   }
+  /** Modo real: el círculo va a la API y vuelve un tablero de llamadas de verdad. */
+  const launchLiveCampaign = async () => {
+    if (drawingArea || !callArea || dispatching) return
+    setDispatching(true)
+    setDispatchError('')
+    try {
+      const resultado = await dispatchCircle(operatorKey, callArea, { operator: 'puesto de mando' })
+      setLiveBatch({ id: resultado.batch_id, skipped: resultado.skipped_detail })
+      setLiveCalls(resultado.calls)
+      setCampaignIds(resultado.calls.map((call) => call.person_id))
+      campaignRef.current = new Set(resultado.calls.map((call) => call.person_id))
+      if (!resultado.dispatched) {
+        setDispatchError('Nadie en esta zona se puede llamar ahora mismo. Mira el detalle de abajo.')
+      }
+    } catch (error) {
+      setDispatchError(error instanceof DispatchFailed ? error.message : 'Fallo inesperado al lanzar las llamadas.')
+    } finally {
+      setDispatching(false)
+    }
+  }
+
   const launchAreaCampaign = () => {
+    if (liveMode) { void launchLiveCampaign(); return }
     if (drawingArea || !callArea) return
     const campaign = prepareAreaCampaign(citizensRef.current, areaIds, elapsedRef.current, campaignRef.current)
     if (!campaign.addedIds.length) return
@@ -288,7 +415,7 @@ export function CommandCenter({ token }: { token: string }) {
         <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} />
       </main>
       <header className="floating-brand">
-        <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">Sierra de Gredos</span><span className="demo-badge">DEMO</span>
+        <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">{placeName}</span><span className="demo-badge">DEMO</span>
       </header>
       <nav className="floating-actions" aria-label="Herramientas del mapa">
         <button type="button" aria-label="Dibujar zona de llamadas" aria-pressed={drawingArea} className={drawingArea ? 'active' : ''} onClick={beginArea}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="12" cy="12" r="8" strokeDasharray="3 2" /><path d="M12 8v8M8 12h8" /></svg><span>Zona</span></button>
@@ -320,20 +447,64 @@ export function CommandCenter({ token }: { token: string }) {
         </div>
       </aside>}
       <section className="simulation-dock campaign-dock" aria-label="Campaña de llamadas por zona">
-        <div className="campaign-heading"><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas seleccionadas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><small>HappyRobot · simulación local</small></div>
+        <div className="campaign-heading"><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas seleccionadas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><small>{liveMode ? `HappyRobot · llamadas reales${apiRoster ? '' : ' · SIN censo de la API'}` : 'HappyRobot · simulación local'}</small></div>
+        <label className="row live-toggle"><input type="checkbox" checked={liveMode} onChange={(event) => { setLiveMode(event.target.checked); setDispatchError('') }} />Llamar de verdad por HappyRobot</label>
+        {liveMode && <label className="search-label"><span className="sr-only">Clave de operador</span><input className="search" type="password" autoComplete="off" placeholder="Clave de operador (HR_SHARED_SECRET)" value={operatorKey} onChange={(event) => { setOperatorKey(event.target.value); saveOperatorKey(event.target.value) }} /></label>}
+        {liveMode && <p className="fine">Se manda el círculo a la API de crisis y es ella quien dispara HappyRobot. Los cerrojos <code>ALLOW_REAL_CALLS</code> y <code>CALL_ALLOWLIST</code> siguen mandando: un punto que no esté en la lista aparecerá como bloqueado.</p>}
         {drawingArea && <p className="fine">Pulsa en el centro y arrastra hasta el borde. Mínimo 50 m. Escape cancela.</p>}
         <div className="campaign-actions">
-          <button type="button" className="cop-primary" onClick={callArea && !drawingArea ? launchAreaCampaign : beginArea} disabled={Boolean(callArea && !drawingArea && !callableCount)}>{callArea && !drawingArea ? callableCount ? `Llamar a ${callableCount} seleccionados · demo` : 'Sin contactos nuevos' : 'Dibujar zona'}</button>
+          <button type="button" className="cop-primary" onClick={callArea && !drawingArea ? launchAreaCampaign : beginArea} disabled={dispatching || Boolean(callArea && !drawingArea && (liveMode ? !areaIds.length : !callableCount))}>{!callArea || drawingArea ? 'Dibujar zona' : dispatching ? 'Lanzando llamadas…' : liveMode ? areaIds.length ? `Llamar a ${areaIds.length} seleccionados · REAL` : 'Nadie dentro del círculo' : callableCount ? `Llamar a ${callableCount} seleccionados · demo` : 'Sin contactos nuevos'}</button>
           {(callArea || drawingArea) && <button type="button" className="cop-secondary" onClick={() => { setDrawingArea(false); updateArea(null) }}>Borrar selección</button>}
-          {campaignRunning && <button type="button" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} />{protocolOn ? 'Pausar' : 'Reanudar'}</button>}
+          {!liveMode && campaignRunning && <button type="button" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} />{protocolOn ? 'Pausar' : 'Reanudar'}</button>}
         </div>
-        {!callArea && <button type="button" className="cop-secondary" onClick={() => finishArea({ lng: INCIDENT.center[0], lat: INCIDENT.center[1], radiusM: 3000 })}>Usar entorno del incendio · 3 km</button>}
-        {callArea && !callableCount && !drawingArea && <p className="fine" role="status">No hay nuevos contactos pendientes en esta selección. Puedes dibujar otra zona; las sesiones GPS quedan excluidas.</p>}
-        {campaignIds.length > 0 && <div className="campaign-stats" role="status"><span><strong>{counts.answered}</strong>/{campaignIds.length} respondidas</span><span>{counts.moving} en movimiento</span><span>{counts.silent} sin respuesta</span>{counts.waiting > 0 && <span>{counts.waiting} sin ruta</span>}</div>}
-        {planningCount > 0 && <p className="fine" role="status">Calculando {planningCount} rutas individuales desde la posición de los contactos…</p>}
-        {counts.waiting > 0 && <><p className="fine" role="status">{citizens.find(citizen => campaignSet.has(citizen.id) && citizen.status === 'assistance')?.routeHoldReason}</p><button type="button" className="cop-secondary" onClick={retryRoutes}>Reintentar rutas pendientes</button></>}
+        {!callArea && <button type="button" className="cop-secondary" onClick={() => finishArea({ ...(rosterCenter ?? { lng: INCIDENT.center[0], lat: INCIDENT.center[1] }), radiusM: rosterCenter ? 1000 : 3000 })}>{rosterCenter ? 'Usar todo el censo · 1 km' : 'Usar entorno del incendio · 3 km'}</button>}
+        {!liveMode && callArea && !callableCount && !drawingArea && <p className="fine" role="status">No hay nuevos contactos pendientes en esta selección. Puedes dibujar otra zona; las sesiones GPS quedan excluidas.</p>}
+        {dispatchError && <p className="fine" role="alert">{dispatchError}</p>}
+        {liveBatch && <CallBoard calls={liveCalls} skipped={liveBatch.skipped} onSelect={selectCitizen} />}
+        {!liveMode && campaignIds.length > 0 && <div className="campaign-stats" role="status"><span><strong>{counts.answered}</strong>/{campaignIds.length} respondidas</span><span>{counts.moving} en movimiento</span><span>{counts.silent} sin respuesta</span>{counts.waiting > 0 && <span>{counts.waiting} sin ruta</span>}</div>}
+        {!liveMode && planningCount > 0 && <p className="fine" role="status">Calculando {planningCount} rutas individuales desde la posición de los contactos…</p>}
+        {!liveMode && counts.waiting > 0 && <><p className="fine" role="status">{citizens.find(citizen => campaignSet.has(citizen.id) && citizen.status === 'assistance')?.routeHoldReason}</p><button type="button" className="cop-secondary" onClick={retryRoutes}>Reintentar rutas pendientes</button></>}
       </section>
       <div className="map-disclaimer">Demo · sin llamadas reales · hospital y bomberos reubicados · propagación ilustrativa</div>
+    </div>
+  )
+}
+
+/**
+ * El tablero de la ráfaga: una fila por llamada, con su estado y su motivo.
+ *
+ * Los descartados van abajo y con su razón porque son la mitad interesante: un círculo del
+ * que solo suenan cuatro de dieciocho teléfonos tiene que poder explicarse sin abrir un log.
+ */
+function CallBoard({ calls, skipped, onSelect }: { calls: CallRun[]; skipped: DispatchResultSkip[]; onSelect: (id: string) => void }) {
+  const porEstado = calls.reduce<Record<string, number>>((acc, call) => ({ ...acc, [call.state]: (acc[call.state] ?? 0) + 1 }), {})
+  const abiertas = calls.filter((call) => CALL_STATE_OPEN.includes(call.state)).length
+  return (
+    <div className="call-board">
+      <div className="campaign-stats" role="status">
+        <span><strong>{calls.length}</strong> llamadas lanzadas</span>
+        {abiertas > 0 && <span>{abiertas} en curso</span>}
+        {Object.entries(porEstado).filter(([estado]) => !CALL_STATE_OPEN.includes(estado as CallStateName)).map(([estado, total]) => (
+          <span key={estado}>{total} × {CALL_STATE_LABEL[estado as CallStateName]}</span>
+        ))}
+      </div>
+      <ul className="people">
+        {calls.map((call) => (
+          <li key={call.id}>
+            <button type="button" onClick={() => onSelect(call.person_id)}>
+              <span className={`dot ${call.state === 'answered' ? 'answered' : call.state === 'no_answer' ? 'no_answer' : 'pending'}`} />
+              <span className="person-row-copy"><strong>{call.name || call.person_id}</strong><em>{call.detail || CALL_STATE_LABEL[call.state]}</em></span>
+              <span className="person-row-meta"><span>{CALL_STATE_LABEL[call.state]}</span></span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {skipped.length > 0 && (
+        <details className="source-details">
+          <summary>{skipped.length} dentro del círculo sin llamar</summary>
+          <ul className="people">{skipped.map((item) => <li key={item.person_id}><button type="button" onClick={() => onSelect(item.person_id)}><span className="person-row-copy"><strong>{item.name || item.person_id}</strong><em>{item.reason}</em></span></button></li>)}</ul>
+        </details>
+      )}
     </div>
   )
 }

@@ -12,11 +12,17 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
+import dispatcher
 import planner
 from models import (
+    TERMINAL_CALL_STATES,
     Actor,
+    CallDispatch,
+    CallDispatchResponse,
     CallOutcome,
+    CallRun,
     CallStarted,
+    CallState,
     DecisionType,
     House,
     HouseStatus,
@@ -89,6 +95,8 @@ def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     house = state.houses.get(person.house_id or "")
     ex = outcome.extracted
     ahora = utcnow_iso()
+
+    _close_call_run(outcome, person)
 
     if not outcome.answered:
         decisiones.extend(_no_answer(person, house, outcome))
@@ -380,6 +388,9 @@ def post_call_started(body: CallStarted) -> WriteResponse:
     person = state.people.get(body.person_id)
     if person is None:
         raise HTTPException(status_code=404, detail=f"persona {body.person_id} desconocida")
+    call = state.call_by_run_id(body.run_id) or state.active_call(person.id)
+    if call is not None and call.state not in {CallState.answered, CallState.no_answer}:
+        state.set_call_state(call.id, CallState.ringing, run_id=body.run_id)
     direccion = "entrante" if (body.direction or "outbound") == "inbound" else "saliente"
     entrada = state.mutate(
         f"Llamada {direccion} en curso con {person.name or person.id}"
@@ -407,3 +418,75 @@ def post_call_started(body: CallStarted) -> WriteResponse:
         if sub:
             decisiones.append(sub)
     return write_response(decisiones, event="call-started")
+
+
+def _close_call_run(outcome: CallOutcome, person: Person) -> None:
+    """Cierra el intento que originó esta llamada, si lo encontramos.
+
+    Se busca primero por `run_id` —el id que HappyRobot nos devolvió al arrancar el run— y solo
+    si no hay, por la persona. Ese orden importa cuando dos intentos de la misma ráfaga se
+    solapan: sin `run_id` cerraríamos el intento equivocado y el tablero mentiría.
+
+    El respaldo mira el ÚLTIMO intento, no solo uno vivo. Con `ALLOW_REAL_CALLS=false` el intento
+    nace ya `simulated` (nadie descolgó nada), y sin este respaldo el resultado que manda el
+    simulador —o el propio HappyRobot en un ensayo sin `run_id`— no cerraría ninguna fila: el
+    tablero se quedaría lleno de llamadas que contestaron y siguen pintadas como "simulada".
+    """
+    call = state.call_by_run_id(outcome.run_id)
+    if call is None:
+        ultimo = state.last_call(person.id)
+        # Un intento ya resuelto no se reabre: su resultado lo escribió otra llamada.
+        if ultimo is not None and ultimo.state not in {CallState.answered, CallState.no_answer}:
+            call = ultimo
+    if call is None:
+        return
+    state.set_call_state(
+        call.id,
+        CallState.answered if outcome.answered else CallState.no_answer,
+        run_id=outcome.run_id,
+        answered=outcome.answered,
+        detail=outcome.agent_notes,
+    )
+
+
+@router.post("/calls/dispatch", response_model=CallDispatchResponse)
+def post_call_dispatch(body: CallDispatch) -> CallDispatchResponse:
+    """Rodear una zona en el mapa → una llamada independiente por cada persona dentro.
+
+    Acepta las dos formas: `person_ids` explícito (lo que usa `curl` y los tests) o el círculo
+    `lat`/`lon`/`radius_m` que dibuja Vigía. Devuelve el tablero completo de la ráfaga, con el
+    motivo de cada descarte, para que el operador vea de un vistazo por qué un punto que rodeó
+    no ha sonado.
+    """
+    try:
+        batch_id, intentos, descartados, decisiones = dispatcher.dispatch(state, body)
+    except dispatcher.DispatchError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Una llamada lanzada cambia las condiciones del plan (intentos, estados): se repasa.
+    if intentos:
+        decisiones = list(decisiones) + planner.run_planner(
+            state, trigger_event_id=state.last_event_id
+        )
+    return CallDispatchResponse(
+        ok=True,
+        state_version=state.state_version,
+        batch_id=batch_id,
+        requested=len(intentos) + len(descartados),
+        dispatched=len(intentos),
+        skipped=len(descartados),
+        calls=intentos,
+        skipped_detail=descartados,
+        decisions=[d.model_dump(mode="json") for d in decisiones if d is not None],
+    )
+
+
+@router.get("/calls", response_model=list[CallRun])
+def get_calls(batch_id: str | None = None, active: bool = False) -> list[CallRun]:
+    """El tablero de llamadas. `batch_id` acota a una ráfaga; `active=true`, a las vivas."""
+    filas = list(state.calls.values())
+    if batch_id:
+        filas = [c for c in filas if c.batch_id == batch_id]
+    if active:
+        filas = [c for c in filas if c.state not in TERMINAL_CALL_STATES]
+    return sorted(filas, key=lambda c: c.started_at, reverse=True)

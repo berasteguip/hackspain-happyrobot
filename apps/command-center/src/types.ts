@@ -1,3 +1,14 @@
+/** Estado del INTENTO de llamada que sirve la API (`CallState` en `api/models.py`). */
+export type CallStateName =
+  | 'queued'
+  | 'dialing'
+  | 'ringing'
+  | 'answered'
+  | 'no_answer'
+  | 'failed'
+  | 'blocked'
+  | 'simulated'
+
 export type CitizenStatus =
   | 'pending'
   | 'ringing'
@@ -30,6 +41,10 @@ export type Citizen = {
   routePhase?: 'access' | 'road'
   routeHoldReason?: string
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
+  /** Estado del INTENTO de llamada real (viene de la API), distinto de `status`. */
+  callState?: CallStateName
+  /** ¿Sonaría el teléfono, o lo pararía el cerrojo de la API? */
+  dialable?: boolean
   locationUpdatedAt?: number
   accuracyM?: number
   locality?: string

@@ -6,8 +6,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 
+import notify
 import planner
-from models import HouseStatus, PersonStatus, PositionSource
+from models import HouseStatus, PersonStatus, PositionSource, RosterEntry
 from priority import (
     explain_score,
     house_margin_min,
@@ -65,6 +66,52 @@ def _epoch_ms(iso: str | None) -> int | None:
         return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
     except ValueError:
         return None
+
+
+@router.get("/api/roster", response_model=list[RosterEntry])
+def api_roster() -> list[RosterEntry]:
+    """El censo que Vigía pinta y rodea: TODA la gente del escenario, no solo la localizada.
+
+    `/api/locations` solo devuelve a quien está compartiendo posición, que es lo correcto para
+    no pintar 120 domicilios como si fueran gente localizada. Pero para **rodear un círculo y
+    llamar** hace falta lo contrario: los puntos que todavía no han contestado son justo los
+    que hay que llamar. Por eso son dos endpoints y no uno.
+
+    **El teléfono no sale entero.** Este endpoint es público (Vigía corre en el navegador de
+    alguien, sin clave), así que devolver la lista completa de móviles del escenario sería
+    publicarla. Va la cola enmascarada, que es lo único que el operador necesita para
+    distinguir dos fichas, y `dialable`, que le dice si ese punto sonaría o lo pararía el
+    cerrojo. Marcar de verdad exige `x-api-key` y ocurre en `POST /calls/dispatch`.
+    """
+    filas: list[RosterEntry] = []
+    for person in state.people.values():
+        casa = state.houses.get(person.house_id or "")
+        ultima = state.last_call(person.id)
+        filas.append(
+            RosterEntry(
+                id=person.id,
+                name=person.name or person.id,
+                phone=_mask_phone(person.phone),
+                lng=person.lon,  # Vigía usa `lng`; el contrato, `lon`
+                lat=person.lat,
+                locality=(casa.village if casa else None) or state.scenario,
+                address=casa.address if casa else None,
+                vulnerable=bool(casa.vulnerable) if casa else False,
+                dialable=bool(person.phone) and notify.phone_allowed(person.phone),
+                status=person.status,
+                call_state=ultima.state if ultima else None,
+                location_source=person.position_source,
+            )
+        )
+    return sorted(filas, key=lambda f: f.id)
+
+
+def _mask_phone(phone: str | None) -> str | None:
+    """`+34600990001` → `··· 001`. Suficiente para no confundir dos fichas, inútil para marcar."""
+    if not phone:
+        return None
+    cola = "".join(ch for ch in phone if ch.isdigit())[-3:]
+    return f"··· {cola}" if cola else None
 
 
 @router.get("/health")

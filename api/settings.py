@@ -34,6 +34,43 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+def _int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _phone_map(name: str) -> dict[str, str]:
+    """`p-001:+34600112233,p-002:+34600445566` → `{"p-001": "+34600112233", ...}`.
+
+    Existe para que **ningún teléfono real entre en el repo**. El escenario se comitea con
+    números del rango reservado y los de verdad se inyectan desde `.env`, que no se comitea.
+    El repo es público: un móvil en un fichero versionado se queda en el historial de git para
+    siempre, y normalmente no es tuyo el móvil que publicas.
+    """
+    mapa: dict[str, str] = {}
+    for trozo in (os.getenv(name, "") or "").split(","):
+        if ":" not in trozo:
+            continue
+        pid, _, tel = trozo.partition(":")
+        limpio = "".join(ch for ch in tel if ch.isdigit() or ch == "+")
+        if pid.strip() and limpio:
+            mapa[pid.strip()] = limpio
+    return mapa
+
+
+def _phone_set(name: str) -> set[str]:
+    """Lista de teléfonos separada por comas → conjunto en E.164 sin espacios ni guiones."""
+    raw = os.getenv(name, "") or ""
+    limpio = {
+        "".join(ch for ch in trozo if ch.isdigit() or ch == "+")
+        for trozo in raw.split(",")
+        if trozo.strip()
+    }
+    return {t for t in limpio if t}
+
+
 @dataclass
 class Settings:
     # --- HappyRobot / auth -------------------------------------------------
@@ -48,8 +85,40 @@ class Settings:
     )
     public_base_url: str = field(default_factory=lambda: os.getenv("PUBLIC_BASE_URL", ""))
 
+    hr_workflow_id: str = field(default_factory=lambda: os.getenv("HR_WORKFLOW_ID", ""))
+
     # La bandera que impide llamar a 120 teléfonos de verdad por accidente.
     allow_real_calls: bool = field(default_factory=lambda: _bool("ALLOW_REAL_CALLS", False))
+
+    # --- Reparto de llamadas ------------------------------------------------------------
+    # Segundo cerrojo, y el que de verdad protege durante los ensayos: aunque
+    # `ALLOW_REAL_CALLS` esté en true, solo se marcan los teléfonos de esta lista. Vacía =
+    # sin lista blanca, se marca lo que diga el escenario (que es lo que hace falta el día
+    # de la demo, con el dataset sintético cargado).
+    call_allowlist: set[str] = field(default_factory=lambda: _phone_set("CALL_ALLOWLIST"))
+    # `p-001:+34...,p-002:+34...` — sustituye el teléfono de esas personas al cargar el
+    # escenario. Los móviles reales de los ensayos viven aquí, nunca en un fichero versionado.
+    phone_overrides: dict[str, str] = field(
+        default_factory=lambda: _phone_map("PHONE_OVERRIDES")
+    )
+    # Llamadas simultáneas que se lanzan al rodear un círculo en Vigía.
+    call_parallelism: int = field(default_factory=lambda: _int("CALL_PARALLELISM", 8))
+    # Radio máximo que se acepta en /calls/dispatch: un círculo de 200 km no es una zona.
+    call_max_radius_m: float = field(default_factory=lambda: _float("CALL_MAX_RADIUS_M", 20000.0))
+    # Tope de llamadas por ráfaga. Rodear el mapa entero no debe lanzar 120 runs.
+    call_max_batch: int = field(default_factory=lambda: _int("CALL_MAX_BATCH", 25))
+
+    # --- Contexto que el agente de voz lee al descolgar ----------------------------------
+    # El prompt del workflow los interpola literalmente ("le llama el asistente automático de
+    # {CAMPANA_ORGANISMO} por el incendio en {CAMPANA_ZONA}"), así que un valor vacío se oye
+    # como un hueco en mitad de la frase.
+    campaign_org: str = field(
+        default_factory=lambda: os.getenv("CAMPANA_ORGANISMO", "Protección Civil")
+    )
+    campaign_zone: str = field(default_factory=lambda: os.getenv("CAMPANA_ZONA", "su zona"))
+    # "ninguna" o la orden en vigor. Si NO es "ninguna", el agente la transmite sin ofrecer
+    # alternativas: no es un texto decorativo.
+    authority_order: str = field(default_factory=lambda: os.getenv("ORDEN_AUTORIDAD", "ninguna"))
 
     # --- Escenario y persistencia -----------------------------------------
     scenario: str = field(default_factory=lambda: os.getenv("SCENARIO", "sierra-culebra"))
@@ -101,6 +170,16 @@ class Settings:
             "scenario": self.scenario,
             "routing_provider": self.routing_provider,
             "allow_real_calls": self.allow_real_calls,
+            "phone_overrides": (
+                f"{len(self.phone_overrides)} teléfono(s) sustituido(s) desde el entorno"
+                if self.phone_overrides
+                else "ninguno (se usan los del escenario)"
+            ),
+            "call_allowlist": (
+                f"{len(self.call_allowlist)} teléfono(s)"
+                if self.call_allowlist
+                else "VACÍA (se marca lo que diga el escenario)"
+            ),
             "auth": "on" if self.hr_shared_secret else "OFF (HR_SHARED_SECRET vacío)",
             "webhook_happyrobot": "configurado" if self.hr_workflow_webhook else "sin configurar",
             "state_jsonl": str(self.state_jsonl),

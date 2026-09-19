@@ -129,6 +129,14 @@ privado.
 **[VERIFICADO — `@happyrobot-ai/workflow-sdk`, `dist/generated/integrations/webhook.d.ts`, y
 `@happyrobot-ai/sdk` README]**
 
+> ⚠️ **CORREGIDO el 19 sep 2026 contra el workspace real.** El punto 1 de abajo —"`POST
+> /workflows/:id/runs` sirva el trigger que sea"— **no se cumple en nuestro workspace**. Probado
+> contra dos workflows publicados (`iif4pdcxctya`, `ahxr2l2ooerj`), por slug y por UUID: devuelve
+> `404 {"error": "Workflow not found upstream"}` siempre. Lo que sí funciona es el punto 2: un nodo
+> raíz `webhook.incoming_hook` (o `predefined_request`) con su propia URL — ya montado y probado
+> con llamadas reales. Cómo quedó, y las cinco trampas del camino (el payload llega anidado bajo
+> `data`, entre otras): [`06-trigger-desde-fuera.md`](06-trigger-desde-fuera.md).
+
 Hay **dos maneras** de arrancar un run, y no son excluyentes:
 
 1. **Vía API pública genérica** (la que probablemente usaremos): sin que importe qué trigger tenga el

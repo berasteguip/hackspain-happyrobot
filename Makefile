@@ -15,7 +15,7 @@ DASH_PORT   ?= 8080
 GPS_PORT    ?= 8081
 
 .DEFAULT_GOAL := help
-.PHONY: help check env install api engine dashboard gps data sim test demo stop clean
+.PHONY: help check env install api engine dashboard gps data sim test demo ensayo reset vigia stop clean
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -61,6 +61,24 @@ gps: ## Sirve la pagina de ubicacion (puerto 8081)
 data: ## Regenera el dataset sintetico y lo valida
 	cd data && .venv/bin/python generate.py --scenario $(SCENARIO) --seed $(SEED) --houses $(HOUSES) --out scenarios/$(SCENARIO).json
 	cd data && .venv/bin/python validate.py scenarios/$(SCENARIO).json
+
+vigia: ## Compila Vigia (la API lo sirve en / cuando existe apps/command-center/dist)
+	cd apps/command-center && npm ci && npm run build
+
+ensayo: ## Arranca la API con el banco de pruebas de la Complutense (telefonos REALES del equipo)
+	@echo "Escenario ucm-madrid: p-001..p-004 son moviles REALES del equipo."
+	@echo "Los dos cerrojos siguen mandando: ALLOW_REAL_CALLS y CALL_ALLOWLIST."
+	@echo "Circulo que coge exactamente a los cuatro: centro 40.45304 / -3.72698, radio 150 m."
+	@echo ""
+	cd api && SCENARIO=ucm-madrid .venv/bin/python -m uvicorn main:app --reload --port $(API_PORT)
+
+reset: ## Vacia el tablero de llamadas para poder volver a llamar a los mismos moviles
+	@cd api && .venv/bin/python -c "\
+import httpx, sys; sys.path.insert(0, '.'); \
+from settings import settings; \
+r = httpx.post('http://localhost:$(API_PORT)/reset', json={'scenario': settings.scenario}, \
+              headers={'x-api-key': settings.hr_shared_secret.encode('latin-1', 'replace')}, timeout=20); \
+print('reset ok' if r.status_code < 400 else f'FALLO {r.status_code}: {r.text[:120]}')"
 
 sim: ## Corre el simulador de evacuacion y compara planes
 	cd sim && .venv/bin/python -m sim.cli --scenario ../data/scenarios/$(SCENARIO).json --variants 200 --out out/

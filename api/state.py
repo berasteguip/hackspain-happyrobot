@@ -19,7 +19,10 @@ from enum import Enum
 from typing import Any, Iterable
 
 from models import (
+    TERMINAL_CALL_STATES,
     Actor,
+    CallRun,
+    CallState,
     Convoy,
     DecisionLogEntry,
     DecisionType,
@@ -132,10 +135,62 @@ class CrisisState:
         # que el planner pueda formar convoyes sin inventar campos en la entidad.
         self.seats_free: dict[str, int] = {}
 
+        # Intentos de llamada vivos e históricos, por id de intento. Separado de `Person`
+        # a propósito: el estado del teléfono no es el estado de la persona (ver `CallState`),
+        # y una persona puede acumular varios intentos a lo largo de la crisis.
+        self.calls: dict[str, CallRun] = {}
+
         # Campos pinchados por un humano: el planner no los puede revertir.
         self.overrides: dict[tuple[str, str, str], dict] = {}
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.last_event_id: str | None = None
+
+    # ---------------------------------------------------------------- llamadas
+    def active_call(self, person_id: str) -> CallRun | None:
+        """El intento vivo de esa persona, si lo hay. Evita llamar dos veces a la vez."""
+        vivos = [
+            c
+            for c in self.calls.values()
+            if c.person_id == person_id and c.state not in TERMINAL_CALL_STATES
+        ]
+        return max(vivos, key=lambda c: c.started_at) if vivos else None
+
+    def last_call(self, person_id: str) -> CallRun | None:
+        intentos = [c for c in self.calls.values() if c.person_id == person_id]
+        return max(intentos, key=lambda c: c.started_at) if intentos else None
+
+    def call_by_run_id(self, run_id: str | None) -> CallRun | None:
+        """Lo que permite casar un `/calls/outcome` de HappyRobot con el intento que lo lanzó."""
+        if not run_id:
+            return None
+        candidatos = [c for c in self.calls.values() if c.run_id == run_id]
+        return max(candidatos, key=lambda c: c.started_at) if candidatos else None
+
+    def set_call_state(
+        self,
+        call_id: str,
+        estado: CallState,
+        *,
+        detail: str | None = None,
+        run_id: str | None = None,
+        answered: bool | None = None,
+    ) -> CallRun | None:
+        """Mueve un intento de estado. Sube `state_version` para que Vigía lo vea en su poll."""
+        with self.lock:
+            call = self.calls.get(call_id)
+            if call is None:
+                return None
+            call.state = estado
+            call.updated_at = utcnow_iso()
+            if detail is not None:
+                call.detail = detail
+            if run_id:
+                call.run_id = run_id
+            if answered is not None:
+                call.answered = answered
+            self.state_version += 1
+            self.t = call.updated_at
+            return call
 
     @property
     def uptime_s(self) -> float:
