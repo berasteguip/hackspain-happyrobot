@@ -108,7 +108,7 @@ export function buildWavePeople(citizens: Citizen[], selected: Citizen[]): WaveP
     const mobility = group?.mobility ?? 'walking'
     const instruction: BridgeInstruction = {
       exit_name: `${zone.code} ${zone.name}`,
-      say_this: `Salga hacia ${zone.name}. No suba hacia el monte y no cruce la zona del incendio.`,
+      say_this: `Salga hacia ${zone.name.split(' · ')[0]}, en ${zone.name.split(' · ')[1] ?? citizen.locality}. No suba hacia el monte y no cruce la zona del incendio.`,
       minutes_to_front: null,
       urgency: 'high',
     }
@@ -122,6 +122,7 @@ export function buildWavePeople(citizens: Citizen[], selected: Citizen[]): WaveP
         address: `dirección censada en ${citizen.locality ?? ''}`,
         priority: '0.80',
         assigned_shelter: instruction.exit_name,
+        say_this: instruction.say_this,
         vulnerable_flag: citizen.vulnerable ? 'sí' : 'no',
         known_context: `núcleo de ${groupSize(citizen)} según censo`,
       },

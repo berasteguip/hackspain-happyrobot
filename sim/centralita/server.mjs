@@ -65,7 +65,7 @@ function readBody(req) {
 function normalize(value) {
   if (value === "true") return true;
   if (value === "false") return false;
-  if (value === "null") return null;
+  if (value === "null" || value === "") return null;
   if (Array.isArray(value)) return value.map(normalize);
   if (value && typeof value === "object") {
     const out = {};
@@ -214,6 +214,13 @@ const server = createServer(async (req, res) => {
           if (v !== null && v !== undefined) mergedExtracted[k] = v;
         }
         call.outcome = { ...body, extracted: mergedExtracted };
+        // Sin tools en el agente: el consentimiento llega por la extracción y el
+        // enlace de ubicación lo "envía" el puente (simulado si no hay SMS real).
+        if (mergedExtracted.consent_position === true && !call.links.length) {
+          call.consent_position = true;
+          call.links.push({ ts: new Date().toISOString(), channel: "sms", simulated: true, url: `${PUBLIC_BASE_URL}/track?id=${body.person_id}`, source: "extracted" });
+          console.log(`[bridge] enlace de ubicación (simulado) · ${body.person_id}`);
+        }
       }
       return send(res, req, 200, { ok: true, state_version: call.version, decisions: [] });
     }

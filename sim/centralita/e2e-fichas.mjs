@@ -4,7 +4,7 @@
 // transcripciones reales con GET /wave/status.
 import { chromium } from "playwright";
 
-const IDS = ["c-168", "c-17", "c-22", "c-11"];
+const IDS = (process.env.IDS || "c-116,c-143,c-128,c-203").split(",");
 const CHROMIUM = process.env.HOME + "/Library/Caches/ms-playwright/chromium-1194/chrome-mac/Chromium.app/Contents/MacOS/Chromium";
 const browser = await chromium.launch({ executablePath: CHROMIUM });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
