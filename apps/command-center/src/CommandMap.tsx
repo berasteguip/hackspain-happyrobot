@@ -15,6 +15,7 @@ import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
 import { UNIT_STATUS_LABEL } from './units'
 import type { DispatchUnit, UnitKind } from './units'
+import { DEMO_PEOPLE } from './demo-points'
 import { WindOverlay } from './WindOverlay'
 
 const PERSON_COLOR = '#459eff'
@@ -392,6 +393,28 @@ function source(map: mapboxgl.Map, id: string) {
   return map.getSource(id) as GeoJSONSource | undefined
 }
 
+function zonePopupContent(zone: SafeZone, exposure: Exposure | undefined, horizon: number) {
+  const content = document.createElement('div')
+  const title = document.createElement('strong')
+  title.textContent = `${zone.code} · ${zone.name}`
+  const risk = document.createElement('p')
+  risk.style.color = EXPOSURE_COLOR[exposure?.level ?? 'unknown']
+  risk.textContent = `${EXPOSURE_LABEL[exposure?.level ?? 'unknown']} · +${horizon} min${exposure && Number.isFinite(exposure.minute) ? ` · +${Math.ceil(exposure.minute)} min` : ''}`
+  const description = document.createElement('p')
+  description.textContent = zone.description
+  const services = document.createElement('p')
+  services.textContent = `${zone.services.join(' · ')} · ${zone.capacity} personas`
+  const note = document.createElement('small')
+  note.textContent = 'No es un refugio oficial. Seguridad, disponibilidad y accesibilidad no verificadas.'
+  const link = document.createElement('a')
+  link.href = zone.sourceUrl
+  link.target = '_blank'
+  link.rel = 'noreferrer'
+  link.textContent = 'Fuente municipal'
+  content.append(title, risk, description, services, note, document.createElement('br'), link)
+  return content
+}
+
 function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | null, areaIds: string[]) {
   for (const [key, ids] of Object.entries(LAYER_IDS)) {
     for (const id of ids) {
@@ -416,7 +439,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   const onUnitSelectRef = useRef(onUnitSelect)
   const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
   const suppressClickRef = useRef(false)
+  const demoMarkersRef = useRef(new Map<string, mapboxgl.Marker>())
   useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
+  useEffect(() => {
+    const markers = demoMarkersRef.current
+    return () => { markers.forEach(marker => marker.remove()); markers.clear() }
+  }, [])
   const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
@@ -574,26 +602,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         const zone = dataRef.current.zones.find((item) => item.id === meeting?.properties?.id)
         if (zone) {
           onSelectRef.current(null)
-          const content = document.createElement('div')
-          const title = document.createElement('strong')
-          title.textContent = `${zone.code} · ${zone.name}`
-          const exposure = dataRef.current.zoneExposure[zone.id]
-          const risk = document.createElement('p')
-          risk.style.color = EXPOSURE_COLOR[exposure?.level ?? 'unknown']
-          risk.textContent = `${EXPOSURE_LABEL[exposure?.level ?? 'unknown']} · +${dataRef.current.horizon} min${exposure && Number.isFinite(exposure.minute) ? ` · +${Math.ceil(exposure.minute)} min` : ''}`
-          const description = document.createElement('p')
-          description.textContent = zone.description
-          const services = document.createElement('p')
-          services.textContent = `${zone.services.join(' · ')} · ${zone.capacity} personas`
-          const note = document.createElement('small')
-          note.textContent = 'No es un refugio oficial. Seguridad, disponibilidad y accesibilidad no verificadas.'
-          const link = document.createElement('a')
-          link.href = zone.sourceUrl
-          link.target = '_blank'
-          link.rel = 'noreferrer'
-          link.textContent = 'Fuente municipal'
-          content.append(title, risk, description, services, note, document.createElement('br'), link)
-          popup.setLngLat([zone.lng, zone.lat]).setDOMContent(content).addTo(map)
+          popup.setLngLat([zone.lng, zone.lat]).setDOMContent(zonePopupContent(zone, dataRef.current.zoneExposure[zone.id], dataRef.current.horizon)).addTo(map)
           return
         }
         const people = map.queryRenderedFeatures(box, { layers: ['people-dot'] })
@@ -758,6 +767,49 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     }
   }, [loaded, drawingArea])
 
+  // Marcadores DOM sobre el canvas para los pocos puntos que un guion de demo
+  // pulsa: sitios fijos del escenario, la persona seleccionada y las de
+  // DEMO_PEOPLE. El canvas sigue pintándolos; esto solo añade zona de clic con
+  // selector estable. Ver src/demo-points.ts.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const showZone = (zone: SafeZone) => {
+      onSelectRef.current(null)
+      popupRef.current?.setLngLat([zone.lng, zone.lat])
+        .setDOMContent(zonePopupContent(zone, dataRef.current.zoneExposure[zone.id], dataRef.current.horizon))
+        .addTo(map)
+    }
+    const wanted = [
+      ...zones.map(zone => ({ demo: 'meeting-point', id: zone.id, lng: zone.lng, lat: zone.lat, onClick: () => showZone(zone) })),
+      ...centers.map(center => ({ demo: 'center-marker', id: center.id, lng: center.lng, lat: center.lat, onClick: () => { popupRef.current?.remove(); onCenterSelectRef.current(center.id) } })),
+      ...citizens
+        .filter(citizen => citizen.id === selectedId || DEMO_PEOPLE.includes(citizen.id))
+        .map(citizen => ({ demo: 'person-marker', id: citizen.id, lng: citizen.lng, lat: citizen.lat, onClick: () => { popupRef.current?.remove(); onSelectRef.current(citizen.id) } })),
+    ]
+    const markers = demoMarkersRef.current
+    const keys = new Set(wanted.map(item => `${item.demo}:${item.id}`))
+    for (const [key, marker] of markers) {
+      if (!keys.has(key)) { marker.remove(); markers.delete(key) }
+    }
+    for (const item of wanted) {
+      const key = `${item.demo}:${item.id}`
+      let marker = markers.get(key)
+      if (!marker) {
+        const element = document.createElement('div')
+        element.className = 'demo-marker'
+        element.dataset.demo = item.demo
+        element.dataset.demoId = item.id
+        element.setAttribute('aria-hidden', 'true')
+        marker = new mapboxgl.Marker({ element }).setLngLat([item.lng, item.lat]).addTo(map)
+        markers.set(key, marker)
+      } else {
+        marker.setLngLat([item.lng, item.lat])
+      }
+      marker.getElement().onclick = item.onClick
+    }
+  }, [zones, centers, citizens, selectedId])
+
   useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
 
   useEffect(() => {
@@ -783,24 +835,24 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
 
   return (
     <>
-      <div ref={rootRef} className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
+      <div ref={rootRef} data-demo="map" className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
       <WindOverlay mapRef={mapRef} enabled={showWind} directionDeg={windDirection} windKmh={windKmh} />
       <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
-        <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
-        <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
+        <button type="button" data-demo="basemap-standard" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
+        <button type="button" data-demo="basemap-satellite" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
         <span className="toolbar-divider" />
         <details className="view-options" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
-          <summary>Encuadre</summary>
+          <summary data-demo="framing-menu">Encuadre</summary>
           <div onClick={event => { if ((event.target as HTMLElement).closest('button')) { const details = event.currentTarget.closest('details'); if (details) { details.open = false; details.querySelector('summary')?.focus() } } }}>
-            <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
-            {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
-            {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
-            <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
+            <button type="button" data-demo="framing-fire" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
+            {selectedId && <button type="button" data-demo="framing-person" onClick={locate}>Centrar persona</button>}
+            {route && <button type="button" data-demo="framing-route" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
+            <button type="button" data-demo="framing-all" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
           </div>
         </details>
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
-      {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" onClick={() => setMapError('')}>Cerrar aviso</button></div>}
+      {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" data-demo="map-error-dismiss" onClick={() => setMapError('')}>Cerrar aviso</button></div>}
     </>
   )
 }

@@ -332,3 +332,6 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   .floating-panel, .alert-toasts { top: 80px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+/* Zona de clic para guiones de demo: nodo DOM real sobre el canvas del mapa, sin
+   pintar nada (el símbolo lo sigue dibujando Mapbox). Ver src/demo-points.ts. */
+.demo-marker { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; }
