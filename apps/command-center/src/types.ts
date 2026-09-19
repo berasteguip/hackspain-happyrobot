@@ -8,6 +8,7 @@ export type CallStateName =
   | 'failed'
   | 'blocked'
   | 'simulated'
+  | 'stale'
 
 export type CitizenStatus =
   | 'pending'

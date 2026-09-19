@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -34,6 +35,7 @@ from models import (
     CallState,
     DecisionType,
     Person,
+    parse_iso,
     utcnow_iso,
 )
 from settings import settings
@@ -97,6 +99,13 @@ def resolve_targets(state, body: CallDispatch) -> list[Person]:
 # --------------------------------------------------------------------------------------
 
 
+def _minutos_desde(iso: str | None) -> float:
+    marca = parse_iso(iso)
+    if marca is None:
+        return 0.0
+    return (datetime.now(timezone.utc) - marca).total_seconds() / 60.0
+
+
 def _skip_reason(state, person: Person, force: bool) -> str | None:
     """`None` = se llama. Cualquier otra cosa es el motivo que verá el operador."""
     if not person.phone:
@@ -105,10 +114,13 @@ def _skip_reason(state, person: Person, force: bool) -> str | None:
         return None
     vivo = state.active_call(person.id)
     if vivo is not None:
-        return f"ya tiene una llamada en curso ({vivo.state.value})"
+        return (
+            f"ya tiene una llamada en curso ({vivo.state.value}) desde hace "
+            f"{_minutos_desde(vivo.updated_at):.0f} min. Usa «volver a llamar» para forzar."
+        )
     ultimo = state.last_call(person.id)
     if ultimo is not None and ultimo.state == CallState.answered:
-        return "ya contestó en esta crisis (usa force para volver a llamar)"
+        return "ya contestó en esta crisis. Usa «volver a llamar» para insistir."
     return None
 
 
@@ -125,6 +137,10 @@ def dispatch(state, body: CallDispatch) -> tuple[str, list[CallRun], list[dict[s
     `/calls/started` y `/calls/outcome`—. Así Vigía puede pintar el tablero completo en la
     respuesta en vez de adivinar.
     """
+    # Primero se cierran los intentos que llevan colgados sin desenlace: si no, una llamada
+    # de hace media hora que nunca se cerró impide volver a llamar a esa persona.
+    state.expire_stale_calls()
+
     objetivos = resolve_targets(state, body)
     batch_id = f"b-{uuid.uuid4().hex[:8]}"
 
