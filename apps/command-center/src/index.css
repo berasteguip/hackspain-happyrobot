@@ -111,25 +111,14 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .layer-copy { flex: 1; }
 .layer-copy strong { display: block; font-size: 12px; font-weight: 450; }
 .layer-copy small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
-.muted-layer .layer-copy, .muted-layer .app-icon, .muted-layer .center-mark { opacity: 0.55; }
+.muted-layer .layer-copy, .muted-layer .app-icon, .muted-layer .site-emoji { opacity: 0.55; }
 .map-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 8px; padding-bottom: 20px; margin-bottom: 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .map-legend > span { display: flex; align-items: center; gap: 8px; }
 .map-legend .app-icon { width: 16px; height: 16px; }
 .legend-point { width: 6px; height: 6px; background: #459eff; border-radius: 50%; margin: 0 5px; }
 .legend-fire { width: 14px; height: 8px; border-radius: 3px; background: linear-gradient(90deg, #9d3a23, #ed7940); }
-.center-mark { position: relative; display: inline-grid; place-items: center; width: 23px; height: 23px; flex: 0 0 23px; border: 1.5px solid; border-radius: 50%; background: transparent; color: #c5d4dc; }
-.center-mark.hospital { color: #b5a3cf; border-color: #88779e; }
-.center-mark.hospital::before, .center-mark.hospital::after { content: ''; position: absolute; background: currentColor; }
-.center-mark.hospital::before { width: 10px; height: 2px; }
-.center-mark.hospital::after { width: 2px; height: 10px; }
-.center-mark.health { color: #94bac8; border-color: #688d9b; }
-.center-mark.health::after { content: ''; width: 8px; height: 8px; border: 1.5px solid currentColor; border-radius: 50%; }
-.center-mark.fire { color: #daa47e; border-color: #a57d60; border-radius: 5px; }
-.center-mark.fire::after { content: ''; width: 7px; height: 7px; background: currentColor; transform: rotate(45deg); }
-.center-mark.meeting { color: #9ec9b0; border-color: #6d9a80; }
-.center-mark.meeting::before { content: ''; position: absolute; top: 4px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 6px solid currentColor; }
-.center-mark.meeting::after { content: ''; position: absolute; top: 10px; width: 8px; height: 6px; background: currentColor; }
-.map-legend .center-mark { transform: scale(0.75); margin: -3px; }
+.site-emoji { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 26px; font: 22px/1 "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.map-legend .site-emoji { width: 18px; height: 18px; flex-basis: 18px; font-size: 16px; }
 .source-details { padding: 16px 0; border-top: 1px solid var(--line); margin-top: 16px; font-size: 11px; }
 .source-details > summary { color: var(--text); }
 .source-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; font-size: 12px; }

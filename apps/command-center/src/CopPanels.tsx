@@ -5,7 +5,7 @@ import { haversineMeters } from './geo'
 import { fetchRefugeRoutes, rankRefugeRoutes } from './routing'
 import type { RefugeRoute } from './routing'
 import type { Settlement } from './scenario'
-import { CENTER_LABEL, createNotice, NOTICE_LABEL, transitionNotice } from './response'
+import { CENTER_LABEL, createNotice, NOTICE_LABEL, SITE_EMOJI, transitionNotice } from './response'
 import type { ResponseCenter } from './response'
 import type { DemoNotice } from './response'
 import { ALERT_ACTION_LABEL, SEVERITY_LABEL } from './alerts'
@@ -101,7 +101,7 @@ export function ResponsePanel({ selectedId, onSelect, scenario, notices, onNotic
     : 'Preaviso de posible llegada de personas afectadas. Número, gravedad y ETA pendientes.')
   return <div className="cop-content">
     <div className="segmented-control" role="group" aria-label="Tipo de centro">{[['all', 'Todos'], ...Object.entries(CENTER_LABEL)].map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
-    <div className="cop-list">{centers.filter(item => filter === 'all' || item.kind === filter).map(item => <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}><span className={`center-mark ${item.kind}`} aria-hidden="true" /><span><strong>{item.name}</strong><small>{CENTER_LABEL[item.kind]}</small></span></button>)}</div>
+    <div className="cop-list">{centers.filter(item => filter === 'all' || item.kind === filter).map(item => <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}><span className="site-emoji" aria-hidden="true">{SITE_EMOJI[item.kind]}</span><span><strong>{item.name}</strong><small>{CENTER_LABEL[item.kind]}</small></span></button>)}</div>
     {center && <section className="center-detail">
       <h3>{center.name}</h3><p className="fine">{center.address}</p><p className="fine">{center.note}</p>
       <p className="fine">Fuentes consultadas: {center.verifiedAt}.</p>

@@ -9,7 +9,7 @@ import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints } from './fire-model'
 import type { Exposure, FireForecast } from './fire-model'
-import { CENTER_COLOR } from './response'
+import { CENTER_COLOR, SITE_EMOJI } from './response'
 import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
 import { UNIT_EMOJI, UNIT_LABEL, UNIT_STATUS_LABEL } from './units'
@@ -18,7 +18,7 @@ import { WindOverlay } from './WindOverlay'
 
 const PERSON_COLOR = '#459eff'
 
-function emojiMarker(emoji: string) {
+function emojiMarker(emoji: string, statusColor?: string) {
   const canvas = document.createElement('canvas')
   canvas.width = 80
   canvas.height = 80
@@ -27,84 +27,17 @@ function emojiMarker(emoji: string) {
   context.textAlign = 'center'
   context.textBaseline = 'middle'
   context.fillText(emoji, 40, 42)
+  if (statusColor) {
+    context.beginPath()
+    context.arc(64, 64, 7, 0, Math.PI * 2)
+    context.fillStyle = statusColor
+    context.fill()
+    context.strokeStyle = '#17252e'
+    context.lineWidth = 3
+    context.stroke()
+  }
   return context.getImageData(0, 0, 80, 80)
 }
-
-function badge(color: string, background: string, paint: (context: CanvasRenderingContext2D) => void) {
-  const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
-  const context = canvas.getContext('2d')!
-  context.fillStyle = background
-  context.strokeStyle = color
-  context.lineWidth = 3
-  context.beginPath()
-  context.arc(32, 32, 28, 0, Math.PI * 2)
-  context.fill()
-  context.stroke()
-  paint(context)
-  return context.getImageData(0, 0, 64, 64)
-}
-
-function hospitalMarker(color: string) {
-  return badge(color, '#14232de6', context => {
-    context.fillStyle = color
-    context.fillRect(29, 16, 6, 32)
-    context.fillRect(16, 29, 32, 6)
-  })
-}
-
-function healthMarker(color: string) {
-  return badge(color, '#e7f1f5', context => {
-    context.strokeStyle = color
-    context.lineWidth = 4
-    context.beginPath()
-    context.arc(32, 32, 9, 0, Math.PI * 2)
-    context.stroke()
-  })
-}
-
-function fireMarker(color: string) {
-  const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
-  const context = canvas.getContext('2d')!
-  context.fillStyle = '#14232de6'
-  context.strokeStyle = color
-  context.lineWidth = 3
-  context.beginPath()
-  context.moveTo(32, 6)
-  context.lineTo(58, 32)
-  context.lineTo(32, 58)
-  context.lineTo(6, 32)
-  context.closePath()
-  context.fill()
-  context.stroke()
-  context.fillStyle = color
-  context.beginPath()
-  context.moveTo(32, 20)
-  context.lineTo(44, 32)
-  context.lineTo(32, 44)
-  context.lineTo(20, 32)
-  context.closePath()
-  context.fill()
-  return context.getImageData(0, 0, 64, 64)
-}
-
-function meetingMarker(color: string) {
-  return badge(color, '#14232de6', context => {
-    context.fillStyle = color
-    context.beginPath()
-    context.moveTo(32, 15)
-    context.lineTo(49, 29)
-    context.lineTo(15, 29)
-    context.closePath()
-    context.fill()
-    context.fillRect(20, 29, 24, 16)
-  })
-}
-
-const CENTER_MARKER = { hospital: hospitalMarker, health: healthMarker, fire: fireMarker } as const
 
 function overviewBounds(cells: FeatureCollection<Polygon>, centers: ResponseCenter[], zones: SafeZone[], fires: FireSpot[]) {
   const bounds = new mapboxgl.LngLatBounds()
@@ -401,7 +334,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.8 } })
       map.addSource('zones', { type: 'geojson', data: zonesGeo(current.zones, current.zoneExposure) })
       for (const [level, color] of Object.entries(EXPOSURE_COLOR)) {
-        map.addImage(`meeting-point-${level}`, meetingMarker(color), { pixelRatio: 2 })
+        map.addImage(`meeting-point-${level}`, emojiMarker(SITE_EMOJI.meeting, color), { pixelRatio: 2 })
       }
       map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'icon-image': ['concat', 'meeting-point-', ['get', 'level']], 'icon-size': 0.9, 'icon-allow-overlap': true } })
       map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: {
@@ -417,7 +350,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         data: centersGeo(centers),
       })
       for (const kind of ['hospital', 'health', 'fire'] as const) {
-        map.addImage(`center-marker-${kind}`, CENTER_MARKER[kind](CENTER_COLOR[kind]), { pixelRatio: 2 })
+        map.addImage(`center-marker-${kind}`, emojiMarker(SITE_EMOJI[kind]), { pixelRatio: 2 })
         map.addLayer({ id: `center-${kind}`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'icon-image': `center-marker-${kind}`, 'icon-size': 0.9, 'icon-allow-overlap': true } })
         map.addLayer({ id: `center-${kind}-label`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-max-width': 16 }, paint: { 'text-color': CENTER_COLOR[kind], 'text-halo-color': '#14232d', 'text-halo-width': 2 } })
       }

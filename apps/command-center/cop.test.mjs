@@ -34,6 +34,18 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(!html.includes('class="floating-panel"'))
 })
 
+test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {
+  const { SITE_EMOJI } = await server.ssrLoadModule('/src/response.ts')
+  assert.deepEqual(SITE_EMOJI, { hospital: '🏥', health: '🏥', fire: '🚒', meeting: '⛺' })
+  const { ResponsePanel } = await server.ssrLoadModule('/src/CopPanels.tsx')
+  const html = renderToStaticMarkup(createElement(ResponsePanel, { selectedId: null, onSelect() {}, scenario: 'test', notices: [], onNotices() {}, centers: RESPONSE_CENTERS, settlements: GREDOS_SCENARIO.settlements }))
+  assert.equal((html.match(/class="site-emoji"/g) ?? []).length, RESPONSE_CENTERS.length)
+  for (const center of RESPONSE_CENTERS) {
+    assert.ok(html.includes(SITE_EMOJI[center.kind]))
+    assert.ok(html.includes(center.name))
+  }
+})
+
 test('el viento visual escala suavemente con el zoom y limita velocidad, longitud y densidad', async () => {
   const { windVisualStyle } = await server.ssrLoadModule('/src/wind.ts')
   const far = windVisualStyle(8, 20, 1440, 1000)

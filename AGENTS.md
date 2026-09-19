@@ -128,3 +128,9 @@ Verificación: 41 tests, lint y build; comprobación de navegador en 1440, 1024,
 con proveedores controlados, incluyendo envío simulado a `/calls/dispatch`, tablero, exclusiones,
 capas, rutas, medios, avisos, viento, cambio de escenario y foco de teclado. No se ejecutaron
 llamadas reales. El script temporal de comprobación es `/tmp/vigia-minimal-ui.mjs` en este equipo.
+
+Preferencia posterior de Mateo (2026-09-19): los sitios sí usan los emojis solicitados:
+🏥 hospitales y centros de salud, ⛺ puntos de encuentro, 🚒 parques de bomberos. Compartir
+`SITE_EMOJI` de `src/response.ts` entre mapa, listas, capas y leyenda. Mantener un pequeño
+indicador de exposición junto al punto de encuentro, sus nombres y las interacciones.
+La navegación y el resto de controles conservan los iconos SVG.
