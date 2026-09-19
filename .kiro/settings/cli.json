@@ -1,0 +1,12 @@
+{
+  "chat.modelDefaults": {
+    "claude-fable-5.1": {
+      "output_config": {
+        "effort": "high"
+      }
+    }
+  },
+  "toolSearch.enabled": true,
+  "toolSearch.minPct": 5,
+  "toolSearch.minTokens": 50000
+}

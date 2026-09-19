@@ -1,11 +1,39 @@
-.DS_Store
+# Secretos
 .env
 .env.*
 !.env.example
+**/config.js
+!**/config.example.js
+
+# Playwright output (may contain credentials)
+.playwright-cli/
+.playwright/
+.playwright-mcp/
+
+# Node
 node_modules/
 dist/
 *.local
 
+# Python
+.venv/
+**/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Artefactos de ejecucion
+api/state.jsonl
+api/tests/.state-test.jsonl
+**/build.log
+sim/out/
+sim/cache/
+engine/logs/
+
+# macOS
+.DS_Store
 
 # Config local de agentes (no se comparte)
 .devin/config.local.json

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Puesto de mando · Evacuación guiada — DATOS SINTÉTICOS</title>
+
+<!-- Leaflet: copia LOCAL por defecto (el wifi de un hackathon se cae).
+     Si alguna vez hace falta el CDN: https://unpkg.com/leaflet@1.9.4/dist/leaflet.css -->
+<link rel="stylesheet" href="vendor/leaflet.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===================== BARRA SUPERIOR ===================== -->
+  <header id="topbar">
+    <div class="tb-block" id="tb-brand">
+      <div class="title">Puesto de mando · evacuación guiada</div>
+      <div class="sub">Sierra de la Culebra · CECOPI</div>
+      <span class="badge-synthetic">DATOS SINTÉTICOS</span>
+    </div>
+
+    <div class="tb-block">
+      <div class="tb-label">Hora del escenario</div>
+      <div class="tb-value" id="tb-clock">--:--</div>
+      <div class="tb-label" id="tb-elapsed" style="margin-top:3px">+0 min desde el aviso</div>
+    </div>
+
+    <div class="tb-block" id="tb-counters">
+      <div class="counter inside"><div class="n" id="c-inside">0</div><div class="k">dentro</div></div>
+      <div class="counter moving"><div class="n" id="c-moving">0</div><div class="k">en ruta</div></div>
+      <div class="counter safe"><div class="n" id="c-safe">0</div><div class="k">a salvo</div></div>
+      <div class="counter unknown"><div class="n" id="c-unknown">0</div><div class="k">sin localizar</div></div>
+    </div>
+
+    <div class="tb-block" id="tb-wind">
+      <div class="windrose" id="windrose">
+        <svg viewBox="0 0 100 100" aria-label="rosa de los vientos">
+          <circle cx="50" cy="50" r="46" fill="none" stroke="#2c353f" stroke-width="3"/>
+          <text x="50" y="14" text-anchor="middle" font-size="13" fill="#6d7b89" font-weight="700">N</text>
+          <g id="wind-arrow">
+            <!-- flecha apuntando HACIA DONDE sopla el viento (0deg = hacia el norte) -->
+            <path d="M50 16 L60 46 L50 40 L40 46 Z" fill="#ffb02e"/>
+            <line x1="50" y1="40" x2="50" y2="82" stroke="#ffb02e" stroke-width="5" stroke-linecap="round"/>
+          </g>
+        </svg>
+      </div>
+      <div>
+        <div class="tb-label">Viento</div>
+        <div class="tb-value" id="tb-wind-speed" style="font-size:19px">--</div>
+        <div class="tb-label" id="tb-wind-dir" style="margin-top:2px">--</div>
+        <div class="tb-label" id="tb-fire-head" style="margin-top:2px">--</div>
+      </div>
+    </div>
+
+    <div class="tb-block" id="tb-actions">
+      <div class="col">
+        <div class="conn connecting" id="conn"><span class="dot"></span><span id="conn-text">conectando…</span></div>
+        <div class="tb-label" id="conn-detail">estado v0</div>
+      </div>
+      <div class="col">
+        <button id="btn-webcall-top" class="primary" title="Paso 2 de la demo: el jurado habla con el agente">📞 Web call</button>
+        <button id="btn-pause" class="danger" title="Pausa todas las acciones automáticas del agente">⏸ Pausar agente</button>
+      </div>
+      <div class="col">
+        <button id="btn-force-call" title="Forzar una llamada inmediata a una persona">☎︎ Forzar llamada</button>
+        <button id="btn-fit" class="sm" title="Reencuadrar el mapa">⤢ Encuadrar mapa</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== BANNER DE ESTADO DE LA API ===================== -->
+  <div id="banner">
+    <span class="ico">⚠️</span>
+    <span id="banner-text">Sin conexión con la API</span>
+    <span class="detail" id="banner-detail"></span>
+  </div>
+
+  <!-- ===================== CUERPO ===================== -->
+  <div id="main">
+
+    <div id="left-col">
+      <div id="map-wrap">
+        <div id="map"></div>
+        <div class="map-note">DATOS SINTÉTICOS</div>
+        <div id="legend">
+          <div class="lg-t">Personas</div>
+          <div class="lg"><span class="sw" style="background:#8b98a5"></span> sin localizar</div>
+          <div class="lg"><span class="sw" style="background:#ffb02e"></span> contactada</div>
+          <div class="lg"><span class="sw" style="background:#2fd06a"></span> en ruta / a salvo</div>
+          <div class="lg"><span class="sw" style="background:#ff4d4f"></span> en riesgo</div>
+          <div class="lg"><span class="sw" style="background:#b36bff"></span> se niega a salir</div>
+          <div class="lg-t" style="margin-top:5px">Posición</div>
+          <div class="lg"><span class="sw solid"></span> GPS (borde continuo)</div>
+          <div class="lg"><span class="sw dash"></span> declarada (discontinuo)</div>
+          <div class="lg-t" style="margin-top:5px">Otros</div>
+          <div class="lg"><span class="sw sq" style="background:rgba(139,152,165,.4);border:2px dashed #8b98a5"></span> casa sin contestar</div>
+          <div class="lg"><span class="sw" style="background:rgba(255,59,48,.45);border:2px solid #ff3b30"></span> fuego y cono de avance</div>
+        </div>
+        <!-- Ficha del elemento pulsado -->
+        <aside id="entity-card">
+          <header><h3 id="ec-title">—</h3><button class="sm" id="ec-close">✕</button></header>
+          <div class="body" id="ec-body"></div>
+          <div class="card-actions" id="ec-actions"></div>
+        </aside>
+      </div>
+
+      <div id="left-bottom">
+        <!-- Casas sin contestar -->
+        <section class="panel" id="panel-patrol">
+          <header>
+            <h2>Casas sin contestar</h2>
+            <span class="count" id="patrol-count">0</span>
+            <span class="spacer"></span>
+            <button class="sm" id="btn-copy-houses" title="Copiar la lista para pegarla en el grupo de la Guardia Civil">⧉ Copiar lista</button>
+          </header>
+          <div class="body" id="patrol-body"></div>
+        </section>
+
+        <!-- Prioridad aérea -->
+        <section class="panel" id="panel-air">
+          <header>
+            <h2>Prioridad aérea por sector</h2>
+            <span class="count" id="air-count">0</span>
+            <span class="spacer"></span>
+            <button class="sm" id="btn-send-air" title="Mandar la prioridad al puesto de mando (CECOPI)">➤ Enviar al puesto de mando</button>
+          </header>
+          <div class="body" id="air-body"></div>
+        </section>
+      </div>
+    </div>
+
+    <div id="right-col">
+      <!-- Aprobaciones pendientes (arriba, con cuenta atrás) -->
+      <section class="panel hidden" id="panel-approvals">
+        <header><h2>Aprobación pendiente</h2><span class="count" id="ap-count">0</span></header>
+        <div class="body" id="ap-body"></div>
+      </section>
+
+      <!-- Llamadas -->
+      <section class="panel" id="panel-calls">
+        <header>
+          <h2>Llamadas</h2>
+          <span class="count" id="calls-count">0</span>
+          <span class="spacer"></span>
+          <button class="sm" id="btn-webcall-panel">📞 Web call</button>
+        </header>
+        <div class="body">
+          <div class="calls-top">
+            <div class="calls-big"><div class="n" id="calls-live">0</div><div class="k">en curso ahora</div></div>
+            <div class="calls-side">
+              <div><b id="calls-total">0</b> llamadas lanzadas</div>
+              <div><b id="calls-answered">0</b> contestadas · <b id="calls-sms">0</b> SMS</div>
+            </div>
+          </div>
+          <div id="webcall-slot">
+            <div class="wc-txt">
+              <b>Hueco para el widget de Web call</b>
+              TODO(web-call): el botón abre la Web call en otra pestaña.
+            </div>
+            <div id="webcall-embed"></div>
+          </div>
+          <div id="calls-body" style="margin-top:6px"></div>
+        </div>
+      </section>
+
+      <!-- Qué ha cambiado (decision_log) -->
+      <section class="panel" id="panel-timeline">
+        <header>
+          <h2>Qué ha cambiado</h2>
+          <span class="count" id="tl-count">0</span>
+          <span class="spacer"></span>
+          <div class="tl-filters">
+            <select id="tl-filter" title="Filtrar por tipo de decisión">
+              <option value="">todos los tipos</option>
+            </select>
+            <select id="tl-actor" title="Filtrar por actor">
+              <option value="">sistema + humano + agente</option>
+              <option value="system">system</option>
+              <option value="human">human</option>
+              <option value="agent">agent</option>
+            </select>
+          </div>
+        </header>
+        <div class="body" id="tl-body"></div>
+      </section>
+
+      <!-- Cola de atención -->
+      <section class="panel" id="panel-queue">
+        <header>
+          <h2>Cola de atención</h2>
+          <span class="count" id="queue-count">0</span>
+          <span class="spacer"></span>
+          <span class="tb-label">pulsa una fila → por qué va primero</span>
+        </header>
+        <div class="body" id="queue-body"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===================== BARRA INFERIOR: TIRA DE EVENTOS ===================== -->
+  <footer id="bottombar">
+    <div class="bb-label">Últimos minutos</div>
+    <div id="strip"></div>
+  </footer>
+</div>
+
+<div id="toasts"></div>
+
+<script src="vendor/leaflet.js"></script>
+<!-- config.js es opcional (copiar de config.example.js). Sin él se usan los valores por defecto. -->
+<script src="config.js" onerror="console.info('[dashboard] sin config.js, usando valores por defecto')"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b5fae">
+<title>Comparte tu ubicación — Protección Civil</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#101820; --muted:#3f4750; --panel:#f0f2f5;
+    --accent:#0b5fae; --accent-fg:#ffffff;
+    --danger:#b3261e; --danger-fg:#ffffff;
+    --live:#1a7f37; --border:#c7cdd4;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0a0e13; --fg:#f5f6f7; --muted:#c2c8cf; --panel:#171c22; --border:#3a4149; }
+  }
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-size:20px; line-height:1.4;
+    min-height:100vh;
+  }
+  .view{
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+    min-height:100vh; padding:24px 16px 32px; text-align:center;
+  }
+  /* [hidden] tiene la misma especificidad que .view/.btn-huge; sin esta regla el hidden del JS no oculta nada */
+  [hidden]{ display:none !important; }
+  h1{ font-size:26px; line-height:1.3; margin:8px 0 20px; max-width:34ch; }
+  p{ margin:8px 0; }
+  .fine-print{ font-size:16px; color:var(--muted); max-width:36ch; margin-top:28px; }
+  .btn-huge{
+    display:flex; align-items:center; justify-content:center;
+    width:94%; max-width:520px; min-height:46vh;
+    background:var(--accent); color:var(--accent-fg);
+    border:none; border-radius:20px;
+    font-size:32px; font-weight:700; line-height:1.25;
+    padding:24px; cursor:pointer; text-decoration:none;
+  }
+  .btn-huge:active{ opacity:0.85; }
+  .btn-huge:focus{ outline:4px solid #ffce00; outline-offset:3px; }
+  .btn-call{ background:var(--danger); color:var(--danger-fg); min-height:30vh; font-size:34px; }
+  .btn-discreet{
+    margin-top:28px; background:transparent; color:var(--muted);
+    border:2px solid var(--border); border-radius:12px;
+    font-size:18px; padding:12px 20px; cursor:pointer;
+  }
+  .btn-discreet:focus{ outline:3px solid #ffce00; outline-offset:2px; }
+  .status-row{ display:flex; align-items:center; gap:12px; font-size:24px; font-weight:700; margin-bottom:6px; }
+  .dot-live{
+    width:20px; height:20px; border-radius:50%; background:var(--live); flex:0 0 auto;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 rgba(26,127,55,0.55); }
+    70%{ box-shadow:0 0 0 16px rgba(26,127,55,0); }
+    100%{ box-shadow:0 0 0 0 rgba(26,127,55,0); }
+  }
+  .small{ font-size:16px; color:var(--muted); }
+  #instruction-box{
+    width:94%; max-width:560px; margin-top:24px;
+    background:var(--panel); border:2px solid var(--border); border-radius:16px;
+    padding:28px 20px; transition: background-color 0.2s, color 0.2s;
+  }
+  #instruction-box.flash{ background:#ffcf33 !important; color:#101820 !important; border-color:#101820; }
+  #instruction-text{ font-size:30px; font-weight:700; margin:0; }
+  .error-message{ font-size:22px; max-width:36ch; margin-bottom:24px; }
+  @media (prefers-reduced-motion: reduce){
+    .dot-live{ animation:none; }
+  }
+</style>
+</head>
+<body>
+
+<section id="view-inicio" class="view">
+  <h1>Protección Civil necesita saber dónde estás para guiarte</h1>
+  <button id="btn-share" class="btn-huge" type="button">COMPARTIR MI UBICACIÓN</button>
+  <p class="fine-print">
+    Compartimos tu posición aproximada solo con Protección Civil, para indicarte
+    por dónde salir mientras dure la emergencia. Puedes dejar de compartir cuando
+    quieras y se borra al terminar.
+  </p>
+</section>
+
+<section id="view-compartiendo" class="view" hidden>
+  <div class="status-row">
+    <span class="dot-live" aria-hidden="true"></span>
+    <span>Te estamos viendo</span>
+  </div>
+  <p id="last-update" class="small">Última actualización: --:--:--</p>
+  <div id="instruction-box" aria-live="assertive" role="status">
+    <p id="instruction-text">Esperando tu primera instrucción…</p>
+  </div>
+  <button id="btn-stop" class="btn-discreet" type="button">Dejar de compartir</button>
+</section>
+
+<section id="view-error" class="view" hidden>
+  <h1 id="error-title">Algo no ha funcionado</h1>
+  <p id="error-message" class="error-message"></p>
+  <a id="error-call" class="btn-huge btn-call" href="tel:112" hidden>LLAMAR AL 112</a>
+  <button id="error-retry" class="btn-huge" type="button" hidden>REINTENTAR</button>
+</section>
+
+<script src="config.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  function pad2(n){ n = String(n); return n.length < 2 ? '0' + n : n; }
+
+  var CONFIG = window.GPS_CONFIG || { API_BASE_URL: '', API_KEY: '' };
+  var params = new URLSearchParams(window.location.search);
+  var personId = params.get('p');
+  var token = params.get('k');
+
+  var views = {
+    inicio: document.getElementById('view-inicio'),
+    compartiendo: document.getElementById('view-compartiendo'),
+    error: document.getElementById('view-error')
+  };
+
+  function showView(name){
+    var key;
+    for(key in views){
+      if(views.hasOwnProperty(key)){ views[key].hidden = (key !== name); }
+    }
+    if(name === 'error' || name === 'inicio'){
+      views[name].focus && views[name].focus();
+    }
+  }
+
+  function showError(title, message, opts){
+    document.getElementById('error-title').textContent = title;
+    document.getElementById('error-message').textContent = message;
+    var callBtn = document.getElementById('error-call');
+    var retryBtn = document.getElementById('error-retry');
+    callBtn.hidden = !(opts && opts.call);
+    retryBtn.hidden = !(opts && opts.retry !== false);
+    showView('error');
+  }
+
+  // --- Cola offline ---------------------------------------------------
+  var QUEUE_KEY = 'gps_queue_' + (personId || 'sin_id');
+  function loadQueue(){
+    try { return JSON.parse(window.localStorage.getItem(QUEUE_KEY) || '[]'); }
+    catch(e){ return []; }
+  }
+  function saveQueue(q){
+    try { window.localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }
+    catch(e){ /* localStorage no disponible: seguimos solo en memoria */ }
+  }
+  var queue = loadQueue();
+  var flushing = false;
+
+  function apiUrl(path){
+    var base = (CONFIG.API_BASE_URL || '').replace(/\/$/, '');
+    var withToken = token ? (path.indexOf('?') === -1 ? '?' : '&') + 'k=' + encodeURIComponent(token) : '';
+    return base + path + withToken;
+  }
+
+  function postPosition(point, cb){
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', apiUrl('/positions'), true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('x-api-key', CONFIG.API_KEY || '');
+    xhr.timeout = 8000;
+    xhr.onload = function(){ cb(xhr.status >= 200 && xhr.status < 300); };
+    xhr.onerror = function(){ cb(false); };
+    xhr.ontimeout = function(){ cb(false); };
+    try { xhr.send(JSON.stringify(point)); }
+    catch(e){ cb(false); }
+  }
+
+  function flushQueue(){
+    if(flushing || queue.length === 0){ return; }
+    flushing = true;
+    var point = queue[0];
+    postPosition(point, function(ok){
+      flushing = false;
+      if(ok){
+        queue.shift();
+        saveQueue(queue);
+        flushQueue();
+      }
+    });
+  }
+
+  function enqueueAndSend(point){
+    queue.push(point);
+    saveQueue(queue);
+    flushQueue();
+  }
+
+  window.setInterval(flushQueue, 5000);
+  window.addEventListener('online', flushQueue);
+
+  // --- Geolocalización --------------------------------------------------
+  var watchId = null;
+  var lastSent = null;
+  var firstFixReceived = false;
+  var noFixWatchdog = null;
+  var SEND_INTERVAL_MS = 5000;
+  var MOVE_THRESHOLD_M = 20;
+
+  function haversine(lat1, lon1, lat2, lon2){
+    var R = 6371000;
+    var toRad = function(d){ return d * Math.PI / 180; };
+    var dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function updateLastUpdateLabel(nowMs){
+    var d = new Date(nowMs);
+    document.getElementById('last-update').textContent =
+      'Última actualización: ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+  }
+
+  function onPosition(pos){
+    if(!firstFixReceived){
+      firstFixReceived = true;
+      if(noFixWatchdog){ window.clearTimeout(noFixWatchdog); noFixWatchdog = null; }
+    }
+    var now = Date.now();
+    var lat = pos.coords.latitude, lon = pos.coords.longitude, acc = pos.coords.accuracy;
+    var shouldSend = !lastSent;
+    if(lastSent){
+      var dt = now - lastSent.tMs;
+      var dist = haversine(lastSent.lat, lastSent.lon, lat, lon);
+      shouldSend = dt >= SEND_INTERVAL_MS || dist >= MOVE_THRESHOLD_M;
+    }
+    updateLastUpdateLabel(now);
+    if(shouldSend){
+      lastSent = { lat: lat, lon: lon, tMs: now };
+      enqueueAndSend({
+        person_id: personId,
+        lat: lat,
+        lon: lon,
+        accuracy_m: acc,
+        t: new Date(now).toISOString()
+      });
+    }
+  }
+
+  function onPositionError(err){
+    if(err.code === err.PERMISSION_DENIED){
+      stopSharing();
+      showError(
+        'Necesitamos tu ubicación',
+        'Has denegado el permiso de ubicación. Sin él no podemos guiarte por el camino seguro. Llama al 112 y te dirán qué hacer.',
+        { call: true, retry: false }
+      );
+      return;
+    }
+    // POSITION_UNAVAILABLE o TIMEOUT: no abandonamos, son normales con mala cobertura.
+    if(!firstFixReceived){
+      var box = document.getElementById('instruction-text');
+      box.textContent = 'Buscando señal GPS… no cierres esta página.';
+    }
+  }
+
+  function startSharing(){
+    if(!('geolocation' in navigator)){
+      showError(
+        'Este teléfono no puede compartir ubicación',
+        'Tu navegador no tiene GPS disponible. Llama al 112 y te ubicamos por teléfono.',
+        { call: true, retry: false }
+      );
+      return;
+    }
+    showView('compartiendo');
+    requestWakeLock();
+    watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000
+    });
+    noFixWatchdog = window.setTimeout(function(){
+      if(!firstFixReceived){
+        stopSharing();
+        if(navigator.onLine === false){
+          showError(
+            'Sin conexión y sin señal GPS',
+            'No tenemos ni cobertura ni GPS ahora mismo. Vuelve a intentarlo o llama al 112 y te ubicamos por teléfono.',
+            { call: true, retry: true }
+          );
+        } else {
+          showError(
+            'No conseguimos tu ubicación',
+            'Llevamos un rato intentándolo sin éxito. Puedes reintentar, o llamar al 112 y te ubicamos por teléfono.',
+            { call: true, retry: true }
+          );
+        }
+      }
+    }, 25000);
+    pollInstructions();
+    instructionTimer = window.setInterval(pollInstructions, 10000);
+  }
+
+  function stopSharing(){
+    if(watchId !== null){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if(instructionTimer){ window.clearInterval(instructionTimer); instructionTimer = null; }
+    if(noFixWatchdog){ window.clearTimeout(noFixWatchdog); noFixWatchdog = null; }
+    releaseWakeLock();
+  }
+
+  // --- Wake Lock ----------------------------------------------------------
+  var wakeLock = null;
+  function requestWakeLock(){
+    if('wakeLock' in navigator){
+      navigator.wakeLock.request('screen').then(function(lock){
+        wakeLock = lock;
+        lock.addEventListener('release', function(){ wakeLock = null; });
+      }).catch(function(){ /* degradación silenciosa: no todos los navegadores lo permiten */ });
+    }
+  }
+  function releaseWakeLock(){
+    if(wakeLock){ wakeLock.release().catch(function(){}); wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState === 'visible' && watchId !== null && wakeLock === null){
+      requestWakeLock();
+    }
+  });
+
+  // --- Instrucciones --------------------------------------------------
+  var lastInstructionText = null;
+  var instructionTimer = null;
+
+  function pollInstructions(){
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', apiUrl('/instructions/' + encodeURIComponent(personId)), true);
+    xhr.setRequestHeader('x-api-key', CONFIG.API_KEY || '');
+    xhr.timeout = 8000;
+    xhr.onload = function(){
+      if(xhr.status >= 200 && xhr.status < 300){
+        try { applyInstruction(JSON.parse(xhr.responseText)); }
+        catch(e){ /* respuesta no válida: se ignora este ciclo, se reintenta en 10s */ }
+      }
+    };
+    try { xhr.send(); } catch(e){}
+  }
+
+  function applyInstruction(data){
+    var text = (data && data.say_this) || (data && data.instruction) || null;
+    if(!text){ return; }
+    var box = document.getElementById('instruction-text');
+    var changed = lastInstructionText !== null && text !== lastInstructionText;
+    lastInstructionText = text;
+    box.textContent = text;
+    if(changed){ alertChange(); }
+  }
+
+  function alertChange(){
+    var box = document.getElementById('instruction-box');
+    box.classList.add('flash');
+    window.setTimeout(function(){ box.classList.remove('flash'); }, 1500);
+    if('vibrate' in navigator){ navigator.vibrate([200, 100, 200, 100, 200]); }
+    beep();
+  }
+
+  function beep(){
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if(!AudioCtx){ return; }
+      var ctx = new AudioCtx();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.frequency.value = 880;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.3);
+      osc.onended = function(){ ctx.close(); };
+    } catch(e){ /* Web Audio no disponible: sin pitido, vibración y flash siguen funcionando */ }
+  }
+
+  // --- Cableado de botones ------------------------------------------------
+  document.getElementById('btn-share').addEventListener('click', startSharing);
+  document.getElementById('btn-stop').addEventListener('click', function(){
+    stopSharing();
+    showView('inicio');
+  });
+  document.getElementById('error-retry').addEventListener('click', function(){
+    showView('inicio');
+  });
+
+  window.addEventListener('beforeunload', releaseWakeLock);
+
+  // --- Arranque -------------------------------------------------------
+  if(!personId){
+    showError(
+      'Enlace incompleto',
+      'Este enlace no tiene la información necesaria para ubicarte. Llama al 112 y te ayudamos por teléfono.',
+      { call: true, retry: false }
+    );
+  }
+})();
+</script>
+</body>
+</html>

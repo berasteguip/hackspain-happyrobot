@@ -1,9 +1,17 @@
 # Vigía — prevención de incendios con agentes de voz HappyRobot
 
-> **Actualizado:** 2026-09-19 · **Estado:** borrador
+> **Actualizado:** 2026-09-19 · **Estado:** borrador (tesis inicial, 18-19 sep)
 > **En una frase:** agentes de HappyRobot llaman a la población en zonas de riesgo
 > de incendio, indican zonas seguras y, con consentimiento, el CECOP sigue su
 > movimiento en un mapa junto a los focos.
+>
+> **Nota de organización (19 sep, mediodía):** este doc es la tesis de partida y sigue
+> valiendo para el problema, la frontera con el 112 y el visor cartográfico. El alcance
+> vigente del producto (300 vecinos simulados con personalidad, rutas reales por persona,
+> refugios con capacidad, convoyes, lista de casas sin respuesta) está en
+> [`02-escenario-incendio.md`](02-escenario-incendio.md). Donde los dos discrepen, manda el 02.
+> Diferencias conocidas: dataset (aquí Ávila; en el 02 Zamora) y mapa (aquí Mapbox; en
+> `web/dashboard` MapLibre). Ambas están abiertas en [`../07-decisiones/`](../07-decisiones/README.md).
 
 ## Problema
 

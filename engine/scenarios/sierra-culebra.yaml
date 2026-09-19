@@ -1,0 +1,149 @@
+# Sierra de la Culebra (Zamora) — guion del escenario de demo
+#
+# Geografía REAL, verificada en `docs/03-dominio-crisis/05-geografia-sierra-culebra.md`:
+#   Losacio               41.71088, -6.03987  (90 hab.)
+#   Ferreruela de Tábara  41.76583, -6.07194
+#   Sesnández de Tábara   41.80778, -6.07667
+#   Tábara (zona segura)  41.82611, -5.95889  — salida `x-a`
+#   ZA-P-2434: único acceso provincial desde Sesnández hacia Tábara. Cortarla aísla los
+#   tres pueblos aunque estén a menos de 15 km de la zona segura.
+#
+# ⚠️ Lo que NO es dato histórico (y no se presenta como tal en la demo):
+#   - El giro de viento 225° → 315° es una construcción narrativa razonada
+#     (`docs/03-dominio-crisis/05-geografia-sierra-culebra.md` §7), no una medición del incendio de julio de 2022.
+#   - El punto de ignición y los tiempos son de diseño: están elegidos para que el giro de
+#     viento cambie de verdad a quién amenaza el fuego. Con un foco al SO de Losacio, un
+#     viento del 315° empuja la cabeza al 135° (SE) y se aleja del corredor
+#     Ferreruela–Sesnández–Tábara, que queda al N/NNO. Con el foco en la sierra
+#     (41.86, -6.16, entre Riofrío y Sarracín de Aliste, dentro del área del incendio real)
+#     la geometría sí funciona: antes del giro la cabeza va al 45° hacia el monte vacío, y
+#     tras el giro el flanco sur pasa a ser cabeza y apunta a los pueblos y a la ZA-P-2434.
+#
+# Rumbos y distancias desde el foco (41.86, -6.16), calculados, no estimados:
+#   Sesnández  130.0° /  9.0 km · Ferreruela 145.2° / 12.9 km
+#   Tábara     102.9° / 17.0 km · Losacio    149.2° / 19.3 km
+#
+# Duración: `ends_at_min: 88` → 88 s reales con `--time-scale 60`. Cabe en la demo de 3 min.
+
+name: sierra-culebra
+starts_at: "2026-09-19T17:20:00Z"
+
+settings:
+  ends_at_min: 88
+  # Un push de fuego por minuto simulado = 1 s real a escala 60. Suficiente para que el mapa
+  # se mueva de forma continua sin inundar la API.
+  fire_push_interval_sim_s: 60
+  fire_log_every_min: 6
+  position_interval_sim_s: 30
+  position_log_every_min: 2
+  n_rays: 72
+  spread_law: cosine          # la curva de dos armónicos del contrato §4, no la elipse de FARSITE
+  cone_half_angle_deg: 30
+  seed: 20260919
+  reset_on_start: true
+  include_secondary_perimeters: true
+
+fire:
+  # Foco inicial ya declarado: ~2.100 ha, el orden de magnitud de las primeras horas.
+  center: {lat: 41.86, lon: -6.16}
+  radius_m: 2600
+  wind:
+    direction_deg: 225        # DE DÓNDE viene (convención meteorológica): del suroeste
+    speed_kmh: 34
+    gusts_kmh: 52
+  # `head_bearing_deg` se deriva del viento a propósito (225 → 45°): así no hay dos números
+  # que puedan desincronizarse. Ver `head_bearing_from_wind` en fire_model.py.
+  # 2,4 km/h en la cabeza. Está calibrado para que en los 88 min del guion el frente se
+  # acerque a Sesnández (a 9 km) sin llegar a arrasarlo: la demo tiene que acabar con gente
+  # en peligro, no con los pueblos ya dentro del fuego.
+  spread_rate_mh: 2400
+  spotting:
+    # Las pavesas de este guion son un evento explícito del timeline (t+34), no una tirada de
+    # dados: en la demo el foco secundario tiene que salir siempre.
+    probability_per_min: 0.0
+    radius_m: 220
+    min_distance_m: 2500
+    max_distance_m: 4500
+    max_spots: 4
+
+timeline:
+  # --- 1. el incendio existe y crece -------------------------------------------------
+  - at_min: 0
+    type: fire_declared
+    note: >-
+      Aviso del 112 a las 19:20. El frente avanza al 45° (nordeste) monte adentro: los
+      pueblos del sur todavía no están en la trayectoria.
+
+  # --- 2. se cae el GPS: hay que decidir con datos congelados -------------------------
+  - at_min: 16
+    type: integration_down
+    integration: gps
+    minutes: 5
+    note: >-
+      La página de posición deja de reportar 5 minutos. El sistema tiene que seguir
+      priorizando con la última posición conocida, no esperar a tener datos frescos.
+
+  # --- 3. EL GIRO DE VIENTO: el evento central ---------------------------------------
+  - at_min: 26
+    type: wind_shift
+    to:
+      direction_deg: 315      # ahora viene del noroeste → la cabeza gira al 135° (sureste)
+      speed_kmh: 41
+      gusts_kmh: 63
+    spread_rate_mh: 3000      # el viento aprieta: la cabeza pasa de 2,4 a 3 km/h
+    note: >-
+      El viento rola al noroeste. Lo que era flanco pasa a ser cabeza y el fuego se gira
+      hacia el corredor Sesnández–Ferreruela y la ZA-P-2434. Todos los planes de hace
+      veinte minutos acaban de caducar.
+
+  # --- 4. pavesas: fuego DETRÁS de quien ya está saliendo -----------------------------
+  - at_min: 34
+    type: spot_fire
+    distance_m: 4200
+    radius_m: 240
+    note: >-
+      Pavesas a favor del nuevo viento: foco secundario hacia Sesnández, entre el frente
+      principal y la gente que está evacuando.
+
+  # --- 5. LA CARRETERA: se corta la única salida provincial --------------------------
+  - at_min: 42
+    type: road_closed
+    road_name: ZA-P-2434
+    reason: humo denso y visibilidad nula en el tramo Sesnández–Tábara
+    source: guardia_civil
+    note: >-
+      Se corta el único acceso provincial a Tábara. Los tres pueblos quedan aislados
+      aunque la zona segura esté a menos de 15 km: toda ruta asignada por ahí deja de valer.
+
+  # --- 6. LA ZONA DE SALIDA AMENAZADA: invalida todas las rutas a la vez -------------
+  - at_min: 58
+    type: exit_threatened
+    exit_id: x-a
+    reason: >-
+      el cono de avance (135°, semiángulo 30°) apunta a Tábara y el frente está a menos de
+      3 km del acceso
+    note: >-
+      La zona de salida deja de ser segura. No es una ruta la que se rompe: son todas las
+      que van al mismo sitio.
+
+  # --- 7. la gente no hace lo que se le dice -----------------------------------------
+  - at_min: 66
+    type: person_wrong_way
+    person_id: p-007
+    lat: 41.7800
+    lon: -6.0900
+    speed_kmh: 38
+    minutes: 8
+    note: >-
+      Sale de Ferreruela hacia el norte por pista, directo al frente nuevo. Va hacia el
+      fuego creyendo que huye de él: llamada inmediata.
+
+  - at_min: 74
+    type: person_stalled
+    person_id: p-001
+    lat: 41.8300
+    lon: -6.0600
+    minutes: 10
+    note: >-
+      Coche guía del convoy parado en la ZA-P-2434 entre Sesnández y Tábara. Si el guía no
+      se mueve, el convoy entero se queda dentro.
