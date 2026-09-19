@@ -1,0 +1,188 @@
+{
+  "meta": {
+    "name": "test-mini",
+    "synthetic": true,
+    "notice": "Escenario de TEST. Geometría elegida a mano para que los números sean predecibles."
+  },
+  "map": { "center_lat": 41.66, "center_lon": -6.0, "zoom": 12 },
+  "villages": [{ "name": "Villatest", "lat": 41.65, "lon": -6.0, "population": 40 }],
+  "houses": [
+    {
+      "id": "h-001",
+      "address": "Camino del Horno 1",
+      "village": "Villatest",
+      "lat": 41.65,
+      "lon": -6.0,
+      "phone": "+34600991001",
+      "residents_expected": 2,
+      "vulnerable": false,
+      "sector_id": "s-1",
+      "status": "pending"
+    },
+    {
+      "id": "h-002",
+      "address": "Camino del Horno 2",
+      "village": "Villatest",
+      "lat": 41.651,
+      "lon": -6.001,
+      "phone": "+34600991002",
+      "residents_expected": 1,
+      "vulnerable": true,
+      "vulnerability_reason": "vive sola, 88 años",
+      "sector_id": "s-1",
+      "status": "pending"
+    },
+    {
+      "id": "h-003",
+      "address": "Camino del Horno 3",
+      "village": "Villatest",
+      "lat": 41.652,
+      "lon": -5.999,
+      "phone": "+34600991003",
+      "residents_expected": 3,
+      "vulnerable": false,
+      "sector_id": "s-1",
+      "status": "pending"
+    },
+    {
+      "id": "h-004",
+      "address": "Las Eras 4",
+      "village": "Villatest",
+      "lat": 41.58,
+      "lon": -6.0,
+      "phone": "+34600991004",
+      "residents_expected": 1,
+      "vulnerable": false,
+      "sector_id": "s-1",
+      "status": "pending"
+    }
+  ],
+  "people": [
+    {
+      "id": "p-001",
+      "house_id": "h-001",
+      "name": "Antonio Prieto",
+      "phone": "+34600992001",
+      "lat": 41.65,
+      "lon": -6.0,
+      "position_source": "declared",
+      "household_size": 2,
+      "mobility": "car",
+      "has_smartphone": true,
+      "status": "contacted",
+      "sector_id": "s-1"
+    },
+    {
+      "id": "p-002",
+      "house_id": "h-002",
+      "name": "Mercedes Cid",
+      "phone": "+34600992002",
+      "lat": 41.651,
+      "lon": -6.001,
+      "position_source": "declared",
+      "household_size": 1,
+      "mobility": "reduced",
+      "has_smartphone": false,
+      "status": "contacted",
+      "sector_id": "s-1"
+    },
+    {
+      "id": "p-003",
+      "house_id": "h-003",
+      "name": "Ramon Ferrero",
+      "phone": "+34600992003",
+      "lat": 41.652,
+      "lon": -5.999,
+      "position_source": "declared",
+      "household_size": 3,
+      "mobility": "car",
+      "has_smartphone": true,
+      "status": "contacted",
+      "sector_id": "s-1"
+    },
+    {
+      "id": "p-004",
+      "house_id": "h-004",
+      "name": "Pilar Casaseca",
+      "phone": "+34600992004",
+      "lat": 41.58,
+      "lon": -6.0,
+      "position_source": "declared",
+      "household_size": 1,
+      "mobility": "walking",
+      "has_smartphone": true,
+      "status": "unknown",
+      "sector_id": "s-1"
+    }
+  ],
+  "safe_zones": [
+    {
+      "id": "x-a",
+      "name": "Tabara (colegio)",
+      "lat": 41.66,
+      "lon": -5.8,
+      "capacity": 300,
+      "occupancy": 0,
+      "status": "open",
+      "access_roads": ["carretera de Tabara"]
+    },
+    {
+      "id": "x-b",
+      "name": "Alcanices (pabellon)",
+      "lat": 41.66,
+      "lon": -6.25,
+      "capacity": 120,
+      "occupancy": 0,
+      "status": "open",
+      "access_roads": ["carretera de Alcanices"]
+    }
+  ],
+  "sectors": [
+    {
+      "id": "s-1",
+      "name": "Sector 1",
+      "polygon": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-6.1, 41.55],
+            [-5.9, 41.55],
+            [-5.9, 41.7],
+            [-6.1, 41.7],
+            [-6.1, 41.55]
+          ]
+        ]
+      }
+    }
+  ],
+  "patrols": [
+    {
+      "id": "pt-1",
+      "name": "Patrulla 1",
+      "lat": 41.68,
+      "lon": -6.0,
+      "status": "standby",
+      "channel": "+34600999001"
+    }
+  ],
+  "fire": {
+    "perimeter": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [-6.05, 41.6],
+          [-5.95, 41.6],
+          [-5.95, 41.62],
+          [-6.05, 41.62],
+          [-6.05, 41.6]
+        ]
+      ]
+    },
+    "wind": { "direction_deg": 180.0, "speed_kmh": 30.0, "gusts_kmh": 45.0 },
+    "spread_rate_mh": 1000.0,
+    "head_bearing_deg": 0.0,
+    "cone_half_angle_deg": 30.0,
+    "updated_at": "2026-09-19T12:00:00Z"
+  },
+  "roads": []
+}
