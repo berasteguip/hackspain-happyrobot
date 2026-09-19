@@ -1,0 +1,22 @@
+# Existe por una razón concreta: el Makefile de la raíz lanza el simulador con
+#   cd sim && .venv/bin/python -m sim.cli ...
+# y con `cd sim` el propio directorio no es importable como paquete `sim`. Instalarlo en modo
+# editable (`-e .` en requirements.txt) registra el paquete `sim` -> este directorio, así que
+# `python -m sim.cli` funciona desde dentro de sim/ y `pytest -q` también.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evac-sim"
+version = "0.1.0"
+description = "Simulador de evacuación por incendio (HackSpain 2026, equipo router123)"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0", "matplotlib>=3.8", "pillow>=10.0"]
+
+[tool.setuptools]
+packages = ["sim"]
+package-dir = { sim = "." }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -180,9 +180,9 @@ def build_initial() -> None:
     VERSIONS[("fire", "fire")] = 1
 
     zones = [
-        {"id": "x-a", "name": "Polideportivo de Tábara", "lat": 41.8712, "lon": -5.9531,
+        {"id": "x-a", "name": "Tábara (CRA León Felipe)", "lat": 41.8712, "lon": -5.9531,
          "capacity": 400, "occupancy": 86, "status": "open",
-         "access_roads": ["ZA-P-1508"], "distance_to_fire_m": 9200},
+         "access_roads": ["ZA-P-2434"], "distance_to_fire_m": 9200},
         {"id": "x-b", "name": "Pabellón de Ferreras", "lat": 41.8550, "lon": -6.0900,
          "capacity": 150, "occupancy": 131, "status": "filling",
          "access_roads": ["ZA-P-1512"], "distance_to_fire_m": 6100},
@@ -226,7 +226,7 @@ def build_initial() -> None:
                traj=[{"lat": 41.8228, "lon": -6.0321, "t": iso(T0 - timedelta(minutes=3))},
                      {"lat": 41.8247, "lon": -6.0305, "t": iso(T0 - timedelta(minutes=2))}],
                route=route([[41.8265, -6.0290], [41.8400, -6.0100], [41.8560, -5.9880], [41.8712, -5.9531]], 7400, 640),
-               instruction="Sal por la ZA-P-1508 hacia Tábara. No cojas la N-631.",
+               instruction="Salga por la ZA-P-2434 hacia Tábara. No coja la N-631.",
                notes="Tiene sitio para 2 vecinos más."),
         person("p-002", "Rosa Vaquero", "+34600990031", 41.8241, -6.0246, "declared", "contacted",
                "reduced", 2, "s-1", "x-a", 16.0, 0.74,

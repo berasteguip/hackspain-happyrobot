@@ -77,10 +77,15 @@ class Population:
     ready_delay_min: np.ndarray  # minutos desde que recibe el aviso hasta que arranca
     never_leaves: np.ndarray  # bool
     front_arrival_min: np.ndarray  # minuto (reloj sim) en que el frente llega a su casa
+    weight: np.ndarray  # personas que van en este agente (una familia = un coche)
 
     @property
     def n(self) -> int:
         return len(self.person_id)
+
+    @property
+    def n_people(self) -> int:
+        return int(self.weight.sum())
 
 
 @dataclass
@@ -287,7 +292,7 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
             if node == int(exit_nodes[xi]):
                 state[i] = SAFE
                 t_safe[i] = t
-                exit_count[xi] += 1
+                exit_count[xi] += int(pop.weight[i])
                 if e_cur >= 0 and pop.consumes_capacity[i]:
                     occupancy[e_cur] -= 1
                 continue
@@ -337,13 +342,14 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
 
         # --- registro para la animación del puesto de mando ---
         if t >= next_record - 1e-9:
+            w = pop.weight
             rec = {
                 "t_min": round(t, 2),
-                "at_home": int(((state == AT_HOME) | (state == NEVER_LEAVES)).sum()),
-                "moving": int(((state == ON_EDGE) | (state == QUEUED)).sum()),
-                "queued": int((state == QUEUED).sum()),
-                "safe": int((state == SAFE).sum()),
-                "intercepted": int((state == INTERCEPTED).sum()),
+                "at_home": int(w[(state == AT_HOME) | (state == NEVER_LEAVES)].sum()),
+                "moving": int(w[(state == ON_EDGE) | (state == QUEUED)].sum()),
+                "queued": int(w[state == QUEUED].sum()),
+                "safe": int(w[state == SAFE].sum()),
+                "intercepted": int(w[state == INTERCEPTED].sum()),
             }
             if cfg.record_positions:
                 mv = np.flatnonzero((state == ON_EDGE) | (state == QUEUED))
@@ -356,20 +362,21 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
             break
         t += dt
 
-    safe_times = t_safe[np.isfinite(t_safe)]
-    movers = int((~pop.never_leaves).sum())
+    w = pop.weight
+    fin = np.isfinite(t_safe)
+    safe_times = np.repeat(t_safe[fin], w[fin]) if fin.any() else np.array([])
     by_village = {}
     for vi, vid in enumerate(world.village_ids):
         m = pop.village_idx == vi
-        by_village[vid] = int((state[m] == INTERCEPTED).sum())
+        by_village[vid] = int(w[m][state[m] == INTERCEPTED].sum())
     return VariantResult(
         plan_id=plan.plan_id,
         plan=plan.as_dict(world),
-        intercepted=int((state == INTERCEPTED).sum()),
-        safe=int((state == SAFE).sum()),
-        not_out=int(((state == AT_HOME) | (state == ON_EDGE) | (state == QUEUED) | (state == STUCK)).sum()),
-        never_leaves=int((state == NEVER_LEAVES).sum()),
-        stuck=int((state == STUCK).sum()),
+        intercepted=int(w[state == INTERCEPTED].sum()),
+        safe=int(w[state == SAFE].sum()),
+        not_out=int(w[(state == AT_HOME) | (state == ON_EDGE) | (state == QUEUED) | (state == STUCK)].sum()),
+        never_leaves=int(w[state == NEVER_LEAVES].sum()),
+        stuck=int(w[state == STUCK].sum()),
         clearance_p50_min=float(np.percentile(safe_times, 50)) if safe_times.size else float("inf"),
         clearance_p95_min=float(np.percentile(safe_times, 95)) if safe_times.size else float("inf"),
         max_queue=int(max_queue),

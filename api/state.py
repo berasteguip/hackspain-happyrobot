@@ -94,7 +94,12 @@ class CrisisState:
     def reset_entities(self, scenario: str | None = None) -> None:
         """Vacía el estado. Lo llama `/reset` y el arranque; no escribe decision_log."""
         self.scenario = scenario or settings.scenario
-        self.state_version = 0
+        # El contador NO vuelve a cero: el contrato dice que `state_version` sube en cada mutación y
+        # el dashboard hace long-poll con él. Si `/reset` lo reiniciara, un cliente que pregunta
+        # `since_version=610` no vería nada del escenario nuevo hasta pasar otra vez de 610.
+        # Al recrear las entidades todas quedan por encima de la marca anterior, así que el primer
+        # diff después de un reset trae el escenario completo, que es justo lo que el cliente quiere.
+        self.state_version = getattr(self, "state_version", 0)
         self.t = utcnow_iso()
         self.people: dict[str, Person] = {}
         self.houses: dict[str, House] = {}

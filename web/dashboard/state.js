@@ -307,6 +307,10 @@ export function humanType(type) {
   const M = {
     fire_updated: "el fuego se ha movido",
     road_closed: "carretera cortada",
+    road_reopened: "carretera reabierta",
+    exit_status_changed: "cambio en una salida",
+    entity_created: "nuevo elemento en el mapa",
+    approval_rejected: "aprobación denegada",
     person_located: "persona localizada",
     person_status_changed: "cambio de estado",
     route_recalculated: "ruta recalculada",
