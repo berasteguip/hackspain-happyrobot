@@ -96,3 +96,73 @@ Empieza por `llms.txt` (índice completo). Guía de uso y páginas clave en
 - [ ] Formato y duración de la demo final, y quién juzga.
 - [ ] Validación con quien ha coordinado emergencias reales:
       `docs/05-investigacion/2026-09-19-contacto-ines-galindo-csic.md`.
+
+## 7. Integración del mapa avanzado con HappyRobot — 2026-09-19
+
+Rama `devin/mapa-avanzado-happyrobot`: base `origin/main` en `f2a3214`, centralita
+recuperada de `ade0f90`. Mantener las features de ese mapa, no reemplazarlo por el anterior.
+El frontend conserva estado propio; no se ha unificado con la API Python ni cambiado el dataset.
+
+Arranque y contrato de uso en `apps/command-center/README.md`. La conexión usa `/bridge`
+(proxy Vite) y `sim/centralita/server.mjs`. El SDK y las claves quedan en Node, no en el cliente.
+`BRIDGE_ENV_FILE` permite reutilizar el entorno de otro worktree sin copiar secretos.
+Convivencia local: mapa nuevo `5174`, puente nuevo `8788`; anteriores `5173` y `8787` intactos.
+
+Verificación: Node 24, `npm ci`; 42 tests en `apps/command-center` (39 tras viento, 37 antes), 4 en `sim/centralita`,
+build y lint correctos. `npm run test:e2e` en centralita comprueba el frontend en `5174`
+con Chrome instalado y proveedores controlados; no consume HappyRobot por defecto.
+`E2E_LIVE_HR=1` sí lanza una ola real: exigir autorización antes de usarlo.
+
+No reintroducir el fallo de `done` sin outcome: polling hasta extracción o fallo explícito,
+sin consentimiento ficticio ni movimiento mientras falta el resultado. No animar GPS,
+no cambiar el refugio comunicado por otro automáticamente ni mover a quien no ha confirmado.
+Pausa no cancela chats; la demo local es una opción explícita separada, no un fallback.
+No editar los workflows publicados en caliente; fork antes de cualquier cambio.
+
+Prueba real autorizada: ocho chats (cuatro vecinos), cuatro outcomes recuperados y aplicados.
+La ola no produjo cuatro salidas autónomas: hubo intención no confirmada/negativa y movilidad
+reducida; esos contactos permanecen en asistencia. Detalle y run IDs en `docs/06-producto/01-vigia.md`.
+El pull debe admitir runs sin fecha (`Date.parse(0)` no representa ausencia) y listas de Extract
+serializadas como texto JSON. `E2E_RECOVER_HR=1 npm run test:e2e` valida recuperación sin nuevos runs.
+
+Preferencia visual de Mateo (2026-09-19): no dibujar la zona amarilla rayada de posible
+riesgo/propagación, tampoco al simular +1 h. Se conserva la huella roja y el cálculo interno
+para rutas y exposición de refugios; no reintroducir esa superposición sin pedirlo.
+
+Preferencia de interfaz (2026-09-19): mapa despejado, barra de campaña de 64 px, sin tarjeta
+permanente de viento ni formulario de campaña abierto. Un único panel bajo demanda; opciones
+por botones segmentados en vez de selects para canal, transporte y filtros de centros.
+Campaña se abre desde el icono de ajustes de la barra; Escenario reúne viento y horizonte.
+Las fichas separan Resumen, Conversación y Rutas. La leyenda vive en Capas.
+Mantener todas las operaciones, los avisos de coste/demo y navegación con Escape; no volver a
+superponer cajas grandes por defecto. E2E cubre escritorio 1440 px y móvil 390 px sin red externa.
+
+Viento visual (2026-09-19): referencia de Mateo, captura de FireMap.live; usar partículas
+lentas con estelas degradadas, no flechas. Posiciones geográficas reproyectadas con la cámara;
+velocidad, longitud y densidad varían suavemente con el zoom. Sigue siendo viento de demo,
+no una fuente meteorológica. Respetar movimiento reducido, pausa al ocultar la pestaña,
+límite de partículas y canvas sin interceptar clics. Helpers comprobables en `src/wind.ts`.
+
+Flujo de contacto revisado (2026-09-19, petición de Mateo): mapa inicialmente sin residentes,
+contorno recomendado estático (`RECOMMENDED_CALL_AREA`) y círculos manuales acumulables mediante
+Zona. Es una zona de contacto, no la trama amarilla de riesgo retirada. Enviar llamadas confirma
+la selección; se simula la consulta censal por pueblos y se lanzan hasta cuatro chats.
+**No implementar búsqueda real en censos/archivos ni extracción de teléfonos**: ese agente queda
+fuera del alcance por decisión explícita del usuario. Usar únicamente los contactos sintéticos.
+La selección de pueblos usa sus centros de referencia; una selección vacía no tiene fallback.
+Mostrar en mapa/Personas solo ubicaciones compartidas, incluso si necesitan asistencia. La posición
+sintética se activa tras consentimiento y se etiqueta demo; GPS voluntario sigue siendo GPS.
+Al seleccionar un punto se dibuja su ruta asignada, con el destino comunicado, sin nueva consulta
+ni línea recta de respaldo. La comparación manual es vista previa, no reasignación.
+Tests de navegador cubren 0 → 1 → 4 marcadores, círculos acumulados/cancelación, zona vacía,
+clic real sobre un punto y geometría de su ruta. No lanzar chats reales para estas pruebas.
+
+Revisión solicitada del agente sustituto (2026-09-19): `Triaje incendios — MVP`, v4 publicada,
+editor `l49nka6u9sbo`, ocho nodos; depende de `Vigía · llamada a tercero` v1 en borrador, cinco nodos.
+Inventario completo en `docs/06-producto/06-workflow-happyrobot-vs-contrato.md` §5. Mateo pide
+conservar el conjunto entero, pero primero listar funcionalidades: **integración no iniciada**.
+Es voz saliente, no Chatbot Request. Dos tools: enlace de ubicación (hoy DM de Slack, no SMS)
+y consulta síncrona a terceros (hijo marca NUMERO_DEMO, no el número solicitado). Extract principal
+con ocho campos de triaje, distinto del contrato actual; sin callback principal `/calls/outcome`.
+No dar por implementada la transferencia humana solo porque la ordene el prompt. Ambos mensajes
+iniciales tienen huecos; el prompt y la tool discrepan en cuándo enviar el enlace. No corregidos.

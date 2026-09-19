@@ -426,6 +426,162 @@ precarga, consulta después de responder, diagnóstico HTTP 403, recuperación m
 reintento, movimiento de 24 personas, pausa/reanudación y ausencia de cambios fuera
 de la selección. Esta prueba no valida credenciales ni disponibilidad real de Mapbox.
 
+## Integración del mapa avanzado y la centralita — 2026-09-19
+
+Por petición de Mateo se usa `main` (`f2a3214`) como base del mapa y se integra la conexión
+HappyRobot de `devin/vigia-grupos-puntos-encuentro` (`ade0f90`) en
+`devin/mapa-avanzado-happyrobot`. Se conserva el mapa avanzado: círculo de campaña,
+propagación a una hora, viento, centros de respuesta y comparación de rutas.
+No se modifica la otra copia de trabajo ni se unifica todavía el estado con `api/`.
+
+El modo HappyRobot inicia hasta cuatro contactos de la selección, o cuatro de Guisando con
+el botón rápido. Cada uno tiene una conversación real entre dos agentes de texto (ocho runs
+para una ola de cuatro). El puente Node usa el SDK del workspace EU y devuelve transcripción y
+Extract por polling, con recuperación por API cuando falla el webhook del túnel.
+La campaña local completa permanece como opción explícita, no como fallback de errores de chat.
+
+Correcciones frente al puente inicial: esperar el outcome incluso después de `done`, refrescar
+los nodos del run durante el pull, distinguir fallo técnico de `answered:false`, preservar
+consentimiento desconocido, IDs únicos por ola y enlace de tracking con el ID del mapa.
+No se simulan respuestas mientras falta Extract. Se valida el punto candidato antes del chat,
+se reconsulta la ruta con la movilidad extraída y no se cambia el destino comunicado en silencio.
+La asignación HappyRobot comprueba plazas por tamaño del grupo. Necesidad de ayuda pendiente,
+falta de intención, consentimiento o ruta bloquean el movimiento. GPS real queda excluido.
+
+Verificación local: 37 tests del frontend, 4 del pull, build y lint correctos.
+Prueba de navegador con proveedores controlados: una ola de cuatro, cuatro transcripciones y
+outcomes, cuatro grupos en movimiento, cero cambios en los otros 296, pausa/reanudación sin
+duplicar runs y recepción del outcome durante pausa. También se probaron viento, propagación
+y panel de centros. Esto no valida credenciales ni respuestas reales de Mapbox.
+Prueba real autorizada: una ola de cuatro, ocho sesiones de chat, sin telefonía ni SMS.
+Los runs del agente fueron `d1255369-1f20-4d8d-83dc-5af162edbe3f`,
+`afd62c2a-b0e2-458a-996f-c079f5b15369`, `825cb370-2414-4fd5-b733-837edecd2e4f`
+y `b12337a3-c027-440d-aef7-a33ddbdc00d9` (2026-09-19, 14:26 UTC).
+Agente y Extract terminaron; el webhook del túnel falló. El primer pull local también falló:
+cuando faltaba fecha en la lista de runs, `Date.parse(0)` producía enero de 2000 y el filtro
+los descartaba. Se corrigió, se fijó con test y se recuperaron los mismos cuatro runs sin
+volver a conversar. También se normalizan listas serializadas como texto JSON por Extract.
+Un puente actualizado recuperó automáticamente las cuatro extracciones, y el navegador
+aplicó los cuatro resultados con sus transcripciones y enlaces mediante «Recuperar última ola».
+
+**No se verificaron cuatro movimientos con esos resultados reales:** dos `will_evacuate`
+son null, uno false y el único true declara movilidad reducida y necesidad de ayuda.
+Los cuatro quedan en asistencia según las reglas, sin inventar consentimiento de salida.
+El recorrido de cuatro grupos está verificado con outcomes controlados, no con esta ola real.
+Mapbox permaneció controlado en ambas pruebas automatizadas; no se validó su servicio real.
+No se cambiaron prompts ni versiones publicadas para forzar respuestas favorables.
+
+Fuentes: commits de base y origen indicados, pruebas ejecutadas el 2026-09-19,
+[bridge.ts](../../apps/command-center/src/bridge.ts),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[server.mjs](../../sim/centralita/server.mjs), [pull.mjs](../../sim/centralita/pull.mjs) y
+[e2e-integration.mjs](../../sim/centralita/e2e-integration.mjs).
+Arranque y limitaciones: [README del frontend](../../apps/command-center/README.md).
+
+## Retirada de la superposición de riesgo — 2026-09-19
+
+Por petición de Mateo, se retira del mapa la zona amarilla rayada de posible riesgo:
+relleno, trama y contorno. Tampoco aparece al simular +1 hora ni tiene un control en Capas.
+La huella roja permanece. El cálculo interno de propagación, la exposición de refugios y
+los filtros de rutas no cambian. Esta decisión sustituye la visualización de la proyección
+descrita en las revisiones anteriores, no su cálculo.
+
+Fuente: petición y captura del usuario en esta sesión (2026-09-19),
+[CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx) y
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx).
+
+## Interfaz mínima y controles bajo demanda — 2026-09-19
+
+Por petición de Mateo se sustituye la composición de tarjetas permanentes por una barra
+compacta de campaña (64 px), marca discreta y navegación de cuatro entradas: Personas,
+Escenario, Centros y Capas. El mapa queda libre al abrir, sin panel ni select visibles.
+La leyenda pasa a Capas; viento y horizonte se reúnen en Escenario.
+
+El icono de ajustes de la barra abre Campaña: canal HappyRobot/local, zona, actividad,
+recuperación de conversaciones y reintentos. Solo se muestra un panel a la vez.
+La acción principal cambia entre Iniciar, Pausar y Reanudar. Las fichas presentan Resumen,
+Conversación y Rutas por separado. No se cambia el protocolo ni la conexión con HappyRobot.
+
+Se verifican en navegador el tamaño de la barra, navegación y cierre con Escape,
+controles accesibles en móvil, panel sin solaparse con la barra, selección de canal/zona,
+viento y horizonte, centros, pestañas de ficha y el flujo de cuatro resultados controlados.
+Las peticiones externas se interceptan en estas pruebas: no crean runs ni verifican el
+servicio real de Mapbox. Se mantienen las advertencias de ejercicio y consumo de créditos.
+
+Fuente: petición y captura del usuario de esta sesión (2026-09-19),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[CopPanels.tsx](../../apps/command-center/src/CopPanels.tsx),
+[index.css](../../apps/command-center/src/index.css) y
+[e2e-integration.mjs](../../sim/centralita/e2e-integration.mjs).
+
+## Viento con partículas ligadas al mapa — 2026-09-19
+
+La captura de FireMap.live aportada por Mateo sirve como referencia visual: trazos suaves,
+movimiento lento y adaptación a la cámara. Se sustituyen las flechas en coordenadas de pantalla
+por partículas en coordenadas geográficas, reproyectadas al desplazar, girar o inclinar el mapa.
+La longitud, velocidad aparente y densidad cambian gradualmente con el zoom; cada estela tiene
+un degradado hacia una cabeza más clara y un ciclo de aparición/desaparición suave.
+
+La capa sigue usando el rumbo y la velocidad ficticios del escenario. Su velocidad visual
+está ajustada para legibilidad y no representa un transporte meteorológico calibrado.
+No se consulta una fuente de viento real ni se modifica el modelo de propagación.
+
+La animación usa tiempo transcurrido, con un máximo de 650 partículas y resolución de canvas
+limitada a DPR 2. Se detiene al ocultar la pestaña, desactivar el viento o pedir movimiento
+reducido; en este último caso sigue reproyectándose al mover la cámara. No captura eventos
+de puntero. Se comprueban escala continua, avance a 30/60 pasos por segundo y opacidad en tests;
+en navegador, animación, imagen estática con movimiento reducido, zoom/giro/inclinación y
+encendido/apagado. Build y lint forman parte de la verificación habitual.
+
+Fuentes: petición y captura del usuario (2026-09-19),
+[WindOverlay.tsx](../../apps/command-center/src/WindOverlay.tsx),
+[wind.ts](../../apps/command-center/src/wind.ts),
+[cop.test.mjs](../../apps/command-center/cop.test.mjs) y
+[e2e-integration.mjs](../../sim/centralita/e2e-integration.mjs).
+
+## Zona de contacto y aparición progresiva — 2026-09-19
+
+Por petición de Mateo se cambia el flujo: primero se define dónde explorar, después se envían
+las llamadas y solo se muestran personas cuando se obtiene su ubicación. La recomendación es
+un contorno estático suave alrededor del incendio (`RECOMMENDED_CALL_AREA`), sin trama amarilla;
+no representa peligro, predicción meteorológica ni una orden oficial. En este escenario incluye
+los centros de Guisando y El Hornillo. Se pueden sumar círculos manuales y retirar cada uno;
+la recomendación está incluida por defecto y también se puede desmarcar.
+
+**La búsqueda censal no se construye y queda fuera del alcance.** Al pulsar Enviar llamadas se
+simula esa fase usando los contactos existentes del escenario. No se consulta un censo, no se
+lee un archivo externo ni se descubre un teléfono real. La selección se aproxima por el centro
+geográfico de cada pueblo; se deduplican contactos de pueblos cubiertos por varias zonas.
+Cada ola HappyRobot conserva el límite de cuatro contactos y congela sus destinatarios al enviar.
+Una zona sin pueblos/contactos de demo no dispara llamadas a Guisando como fallback.
+
+La población completa deja de aparecer en el mapa y el listado de Personas al arrancar.
+El consentimiento activa una ubicación **sintética y etiquetada como demo**, incluso cuando
+la persona necesita asistencia o no confirma salida. Eso no es un GPS ni geocodificación de
+la dirección declarada. Los GPS voluntarios siguen mostrándose con su origen y sin animación.
+Las fichas pendientes no muestran coordenadas censales ni habilitan la comparación de rutas.
+
+Seleccionar un punto dibuja su ruta asignada desde el índice ya calculado, comprobando persona,
+localidad y destino comunicado. No solicita otra ruta ni genera un fallback recto. Si falta un
+recorrido admisible se muestra el motivo, no un camino inventado. La comparación manual permanece
+como vista previa explícita y no modifica la ruta que sigue la simulación.
+
+Verificación: **42 tests** del frontend, build correcto y lint limpio. En navegador, con fuentes
+controladas y sin nuevos chats reales: cero marcadores iniciales, recomendación visible, dos
+círculos manuales acumulados, cancelación sin perderlos, zona vacía sin envíos, aparición de
+marcadores 0 → 1 → 4 y clic sobre una persona que muestra su ruta y destino exactos sin otra
+consulta a Directions. Se conserva el movimiento de los cuatro con outcomes favorables de test,
+sin tocar a los otros 296. No implica validación de carretera real ni cuatro salidas en la ola
+real anterior, cuyos resultados no favorables siguen registrados arriba.
+
+Fuentes: petición del usuario en esta sesión (2026-09-19),
+[scenario.ts](../../apps/command-center/src/scenario.ts),
+[simulation.ts](../../apps/command-center/src/simulation.ts),
+[bridge.ts](../../apps/command-center/src/bridge.ts),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx),
+[routing.ts](../../apps/command-center/src/routing.ts) y las pruebas locales.
+
 ## Fuentes
 
 - OpenStreetMap, recinto sanitario de Arenas (40.2116975, -5.0855068) — https://www.openstreetmap.org/way/992325099 (localizado con Nominatim el 2026-09-19).

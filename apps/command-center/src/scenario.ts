@@ -29,6 +29,20 @@ function compact(lng: number, lat: number): [number, number] {
   ]
 }
 
+export const RECOMMENDED_CALL_AREA: RiskArea = {
+  id: 'recommended-contact-area',
+  name: 'Zona recomendada de contacto · demo',
+  coordinates: Array.from({ length: 73 }, (_, index): [number, number] => {
+    const angle = index % 72 / 72 * Math.PI * 2
+    const rotation = 50 * Math.PI / 180
+    const along = 3400 * Math.cos(angle)
+    const across = 2100 * Math.sin(angle)
+    const east = along * Math.sin(rotation) + across * Math.cos(rotation)
+    const north = along * Math.cos(rotation) - across * Math.sin(rotation)
+    return [FIRE_CENTER.lng + east / (111320 * Math.cos(FIRE_CENTER.lat * Math.PI / 180)), FIRE_CENTER.lat + north / 111320]
+  }),
+}
+
 export const SAFE_ZONES: SafeZone[] = [
   {
     id: 'z-dehesa', code: 'PE-01', name: 'La Dehesa · Guisando',

@@ -15,6 +15,210 @@ const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
 const forecast = buildFireForecast(footprint, settings)
 const at = (x, y) => [forecast.origin[0] + (x + 0.5) * forecast.cellSizeM / forecast.lngScale, forecast.origin[1] + (y + 0.5) * forecast.cellSizeM / 111320]
 
+test('un chat terminado sin extracción no obtiene una respuesta ficticia ni deja de sondearse', async () => {
+  const citizen = { ...INITIAL_CITIZENS[0], callDelaySec: 0, hrCall: { personId: 'wave-person', state: 'done', transcript: [], resultState: 'pending' } }
+  let current = [citizen]
+  for (const time of [600, 601, 610]) current = advanceProtocol(current, time, []).citizens
+  assert.equal(current[0].status, 'pending')
+  assert.equal(current[0].call, undefined)
+  const { needsWavePolling } = await server.ssrLoadModule('/src/bridge.ts')
+  assert.equal(needsWavePolling(current), true)
+})
+
+test('la ola limita a cuatro y respeta selección, GPS y contactos ya iniciados', async () => {
+  const { pickWaveCitizens } = await server.ssrLoadModule('/src/bridge.ts')
+  const population = INITIAL_CITIZENS.slice(0, 8).map((c, i) => ({ ...c, live: i === 0, locationSource: i === 1 ? 'gps' : 'reference', hrCall: i === 2 ? { state: 'done' } : undefined }))
+  const selected = pickWaveCitizens(population, 4, new Set(population.slice(0, 7).map(c => c.id)))
+  assert.deepEqual(selected.map(c => c.id).sort(), population.slice(3, 7).map(c => c.id).sort())
+})
+
+test('el resultado tardío se aplica una sola vez y no sobrescribe GPS', async () => {
+  const { applyWaveStatus, needsWavePolling } = await server.ssrLoadModule('/src/bridge.ts')
+  const citizen = { ...INITIAL_CITIZENS[0], hrCall: { personId: 'wave-person', zoneId: 'z-dehesa', state: 'talking', transcript: [], resultState: 'pending' } }
+  const call = { person_id: 'wave-person', state: 'done', transcript: [], resultState: 'pending', outcome: null }
+  const waiting = applyWaveStatus([citizen], [call], 10)
+  assert.equal(needsWavePolling(waiting), true)
+  assert.equal(waiting[0].call, undefined)
+  call.outcome = { answered: true, extracted: { consent_position: true, will_evacuate: true, people_at_home: 3, mobility: 'walking' } }
+  call.resultState = 'ready'
+  const confirmed = applyWaveStatus(waiting, [call], 20)
+  assert.equal(confirmed[0].status, 'tracking')
+  assert.equal(confirmed[0].householdSize, 3)
+  assert.equal(confirmed[0].mobility, 'walking')
+  assert.equal(confirmed[0].hrCall.departureAt, 26)
+  assert.equal(needsWavePolling(confirmed), false)
+  assert.equal(applyWaveStatus(confirmed, [call], 100)[0].hrCall.departureAt, 26)
+  const gps = { ...citizen, live: true, locationSource: 'gps' }
+  assert.strictEqual(applyWaveStatus([gps], [call], 20)[0], gps)
+})
+
+test('sin intención, movilidad o consentimiento explícitos no se anima una respuesta HR', async () => {
+  const { applyWaveStatus } = await server.ssrLoadModule('/src/bridge.ts')
+  const citizen = { ...INITIAL_CITIZENS[0], hrCall: { personId: 'wave-person', state: 'done', zoneId: 'z-dehesa', transcript: [] } }
+  for (const extracted of [
+    { will_evacuate: false, consent_position: true, mobility: 'car' },
+    { will_evacuate: null, consent_position: true, mobility: 'car' },
+    { will_evacuate: true, consent_position: null, mobility: 'car' },
+    { will_evacuate: true, consent_position: true, mobility: 'immobile' },
+    { will_evacuate: true, consent_position: true, mobility: null },
+  ]) {
+    const [result] = applyWaveStatus([citizen], [{ person_id: 'wave-person', state: 'done', transcript: [], outcome: { answered: true, extracted } }], 20)
+    assert.notEqual(result.status, 'tracking')
+    assert.equal(result.lng, citizen.lng)
+    assert.equal(result.lat, citizen.lat)
+  }
+})
+
+test('un fallo técnico no significa sin respuesta y un parcial no autoriza salida', async () => {
+  const { applyWaveStatus, needsWavePolling } = await server.ssrLoadModule('/src/bridge.ts')
+  const citizen = { ...INITIAL_CITIZENS[0], hrCall: { personId: 'wave-person', state: 'talking', transcript: [] } }
+  const failed = applyWaveStatus([citizen], [{ person_id: 'wave-person', state: 'failed', resultState: 'failed', transcript: [], outcome: null, outcomeError: 'Sin conexión' }], 20)
+  assert.equal(failed[0].status, 'assistance')
+  assert.equal(failed[0].call, undefined)
+  assert.equal(needsWavePolling(failed), false)
+  const partial = applyWaveStatus([citizen], [{ person_id: 'wave-person', state: 'done', transcript: [], outcome: { partial: true, answered: true, extracted: { will_evacuate: true, consent_position: true } } }], 20)
+  assert.equal(partial[0].call, undefined)
+  assert.equal(needsWavePolling(partial), true)
+})
+
+test('una ruta HR conserva el destino comunicado y el modo extraído', async () => {
+  const origin = at(8, 8)
+  const destination = { ...zones[0], lng: at(20, 20)[0], lat: at(20, 20)[1] }
+  const other = { ...destination, id: 'other' }
+  const citizen = { ...INITIAL_CITIZENS[0], lng: origin[0], lat: origin[1], mobility: 'walking', call: { consent: 'granted' }, hrCall: { zoneId: destination.id } }
+  let requests = 0
+  const plan = await planCitizenRoute('test', citizen, [destination, other], forecast, 0, undefined, async url => {
+    requests++
+    assert.ok(url.includes('/walking/'))
+    return { ok: true, json: async () => ({ routes: [{ geometry: { coordinates: [origin, [destination.lng, destination.lat]] }, duration: 200, distance: 1000 }] }) }
+  })
+  assert.equal(requests, 1)
+  assert.equal(plan.citizen.safeZoneId, destination.id)
+  const unavailable = await planCitizenRoute('test', citizen, [other], forecast, 0, undefined, async () => { throw new Error('No debe sustituir el destino comunicado') })
+  assert.equal(unavailable.citizen.status, 'assistance')
+  assert.equal(unavailable.route, undefined)
+})
+
+test('los destinos y las plazas de la ola se construyen desde el plan, no por alternancia', async () => {
+  const { buildWavePeople, reservedPeople } = await server.ssrLoadModule('/src/bridge.ts')
+  const citizens = INITIAL_CITIZENS.slice(0, 2).map((citizen, i) => ({ ...citizen, householdSize: 3, hrCall: { personId: `wave-${i}`, zoneId: SAFE_ZONES[2].id, state: 'queued', transcript: [] } }))
+  assert.equal(reservedPeople(citizens, SAFE_ZONES[2].id), 6)
+  const payload = buildWavePeople(citizens, citizens)
+  assert.ok(payload.every(p => p.agent.assigned_shelter.includes(SAFE_ZONES[2].name)))
+  assert.equal(payload[0].tracking_id, citizens[0].id)
+  assert.equal(payload[0].agent.person_id, 'wave-0')
+  const noDestination = buildWavePeople(citizens, [{ ...citizens[0], hrCall: { ...citizens[0].hrCall, zoneId: undefined } }])
+  assert.match(noDestination[0].agent.say_this, /No tiene un recorrido validado/)
+})
+
+test('recuperar una ola reutiliza sus IDs y resultados sin tocar el GPS', async () => {
+  const { restoreWave } = await server.ssrLoadModule('/src/bridge.ts')
+  const citizen = INITIAL_CITIZENS[0]
+  const call = { person_id: `${citizen.id}--wave`, trackingId: citizen.id, startedAt: new Date().toISOString(), state: 'done', resultState: 'ready', transcript: [], instruction: { exit_name: `${SAFE_ZONES[0].code} ${SAFE_ZONES[0].name}` }, outcome: { answered: true, extracted: { will_evacuate: true, consent_position: true, mobility: 'car' } } }
+  const restored = restoreWave([citizen], [call], 0)
+  assert.equal(restored[0].hrCall.personId, call.person_id)
+  assert.equal(restored[0].hrCall.outcomeApplied, true)
+  assert.equal(restored[0].hrCall.zoneId, SAFE_ZONES[0].id)
+  const gps = { ...citizen, locationSource: 'gps' }
+  assert.strictEqual(restoreWave([gps], [call], 0)[0], gps)
+})
+
+test('el viento visual escala suavemente con el zoom y limita velocidad, longitud y densidad', async () => {
+  const { windVisualStyle } = await server.ssrLoadModule('/src/wind.ts')
+  const far = windVisualStyle(8, 20, 1440, 1000)
+  const near = windVisualStyle(15, 20, 1440, 1000)
+  assert.ok(near.speedPx > far.speedPx)
+  assert.ok(near.trailPx > far.trailPx)
+  assert.ok(near.count < far.count)
+  assert.ok(windVisualStyle(24, 150, 6000, 4000).speedPx <= 28)
+  assert.ok(windVisualStyle(24, 150, 6000, 4000).trailPx <= 38)
+  assert.ok(windVisualStyle(4, 20, 6000, 4000).count <= 650)
+  assert.equal(windVisualStyle(12, 0, 1440, 1000).count, 0)
+  assert.equal(windVisualStyle(12, 20, 0, 0).count, 0)
+  const nextZoom = windVisualStyle(12.01, 20, 1440, 1000)
+  assert.ok(Math.abs(nextZoom.speedPx - windVisualStyle(12, 20, 1440, 1000).speedPx) < 0.1)
+})
+
+test('las partículas avanzan por tiempo y coordenadas, no por frames', async () => {
+  const { advanceWindPosition, windParticleOpacity } = await server.ssrLoadModule('/src/wind.ts')
+  const origin = [-5.14, 40.22]
+  const step = hz => {
+    let point = origin
+    for (let i = 0; i < hz * 2; i++) point = advanceWindPosition(point, 225, 15, 1 / hz)
+    return point
+  }
+  assert.ok(haversineMeters(...step(30), ...step(60)) < 0.05)
+  assert.ok(Math.abs(haversineMeters(...origin, ...step(60)) - 30) < 0.1)
+  assert.deepEqual(advanceWindPosition(origin, 225, 15, 0), origin)
+  assert.equal(windParticleOpacity(0, 10), 0)
+  assert.equal(windParticleOpacity(10, 10), 0)
+  assert.ok(windParticleOpacity(5, 10) > windParticleOpacity(0.2, 10))
+})
+
+test('la zona recomendada cubre pueblos y las zonas manuales se suman sin duplicarlos', async () => {
+  const { RECOMMENDED_CALL_AREA, SETTLEMENTS } = await server.ssrLoadModule('/src/scenario.ts')
+  const { selectContactLocalities, contactCandidateIds } = await server.ssrLoadModule('/src/simulation.ts')
+  const recommended = selectContactLocalities(RECOMMENDED_CALL_AREA, [])
+  assert.ok(recommended.includes('Guisando'))
+  assert.ok(recommended.includes('El Hornillo'))
+  assert.ok(!recommended.includes('Arenas de San Pedro'))
+  const arenas = SETTLEMENTS.find(place => place.name === 'Arenas de San Pedro')
+  const manual = { lng: arenas.lng, lat: arenas.lat, radiusM: 500 }
+  const combined = selectContactLocalities(RECOMMENDED_CALL_AREA, [manual, manual])
+  assert.equal(new Set(combined).size, combined.length)
+  assert.ok(combined.includes(arenas.name))
+  const ids = contactCandidateIds(INITIAL_CITIZENS, combined)
+  assert.equal(new Set(ids).size, ids.length)
+  assert.ok(ids.every(id => combined.includes(INITIAL_CITIZENS.find(citizen => citizen.id === id).locality)))
+  assert.deepEqual(selectContactLocalities(null, [{ lng: 0, lat: 0, radiusM: 100 }]), [])
+  assert.deepEqual(selectContactLocalities(null, []), [])
+})
+
+test('ningún registro censal aparece antes de obtener una ubicación compartida', async () => {
+  const { hasSharedLocation } = await server.ssrLoadModule('/src/simulation.ts')
+  const { applyWaveStatus } = await server.ssrLoadModule('/src/bridge.ts')
+  assert.equal(INITIAL_CITIZENS.filter(hasSharedLocation).length, 0)
+  const citizen = { ...INITIAL_CITIZENS[0], hrCall: { personId: 'wave-person', state: 'talking', transcript: [] } }
+  assert.equal(hasSharedLocation(citizen), false)
+  const outcome = { answered: true, extracted: { consent_position: true, will_evacuate: false, mobility: 'reduced' } }
+  const call = { person_id: 'wave-person', state: 'done', transcript: [], outcome }
+  const [located] = applyWaveStatus([citizen], [call], 0)
+  assert.equal(located.status, 'assistance')
+  assert.equal(hasSharedLocation(located), true)
+  assert.equal(located.lng, citizen.lng)
+  const [declined] = applyWaveStatus([citizen], [{ ...call, outcome: { ...outcome, extracted: { ...outcome.extracted, consent_position: false } } }], 0)
+  assert.equal(hasSharedLocation(declined), false)
+  assert.equal(hasSharedLocation({ ...citizen, live: true, locationSource: 'gps' }), true)
+})
+
+test('al seleccionar una persona se usa su geometría asignada y el destino comunicado', async () => {
+  const { assignedCitizenRoute } = await server.ssrLoadModule('/src/routing.ts')
+  const route = road('assigned', zones[0], [at(7, 8), at(8, 8)], 60)
+  const citizen = { ...INITIAL_CITIZENS[0], locality: route.group, status: 'tracking', locationSource: 'simulation', routeId: route.id, safeZoneId: zones[0].id, call: { consent: 'granted' }, hrCall: { zoneId: zones[0].id, outcomeApplied: true } }
+  const index = new Map([[route.id, route]])
+  const selected = assignedCitizenRoute(citizen, index)
+  assert.deepEqual(selected.coordinates, route.coords)
+  assert.equal(selected.zoneId, citizen.hrCall.zoneId)
+  assert.equal(assignedCitizenRoute({ ...citizen, hrCall: { ...citizen.hrCall, zoneId: 'other' } }, index), null)
+  assert.equal(assignedCitizenRoute({ ...citizen, status: 'assistance' }, index), null)
+  assert.equal(assignedCitizenRoute({ ...citizen, live: true, locationSource: 'gps' }, index), null)
+  assert.equal(assignedCitizenRoute(citizen, new Map()), null)
+})
+
+test('el fuego activo crece sin trasladar la huella inicial y avanza más a favor del viento', async () => {
+  const { activeFireFootprint } = await server.ssrLoadModule('/src/fire-model.ts')
+  const { pointInRing } = await server.ssrLoadModule('/src/geo.ts')
+  assert.strictEqual(activeFireFootprint(footprint, settings, 0), footprint)
+  const first = activeFireFootprint(footprint, settings, 1)
+  const later = activeFireFootprint(footprint, settings, 10)
+  const ring = later.features[0].geometry.coordinates[0]
+  for (const point of first.features[0].geometry.coordinates[0]) assert.ok(pointInRing(point[0], point[1], ring))
+  const xs = ring.map(point => point[0])
+  assert.ok(Math.max(...xs) - (-4.9999) > -5 - Math.min(...xs))
+  assert.ok(pointInRing(-4.99995, 40.00005, ring))
+  assert.strictEqual(activeFireFootprint(footprint, { ...settings, spreadMPerMin: 0 }, 10), footprint)
+})
+
 test('el fuego inicial permanece y el crecimiento aumenta con el horizonte', () => {
   assert.equal(exposureAt(forecast, ...at(0, 0), 0, 0).level, 'danger')
   assert.equal(forecastGeo(forecast, 0).features.length, 0)

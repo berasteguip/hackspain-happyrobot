@@ -3,7 +3,7 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import type { GeoJSONSource } from 'mapbox-gl'
 import type { FeatureCollection, Polygon, Point, LineString } from 'geojson'
-import { FIRE_CELL_SIZE_M, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
+import { FIRE_CELL_SIZE_M, INCIDENT, RECOMMENDED_CALL_AREA } from './scenario'
 import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL } from './fire-model'
@@ -21,12 +21,12 @@ function overviewBounds() {
 }
 
 function overviewPadding(width: number) {
-  return width < 680 ? { top: 290, bottom: 175, left: 35, right: 45 } : { top: 130, bottom: 175, left: 340, right: 100 }
+  return width < 680 ? { top: 135, bottom: 150, left: 30, right: 30 } : { top: 95, bottom: 125, left: 90, right: 90 }
 }
 
 const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   perimeter: ['fire-cells-fill'],
-  spread: ['spread-fill', 'spread-hatch', 'spread-edge'],
+  spread: [],
   thermal: ['thermal-core', 'thermal-satellite'],
   citizens: ['people-glow', 'people-dot', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
@@ -46,6 +46,7 @@ type Props = {
   layers: MapLayers
   onSelect: (id: string | null) => void
   projection: FeatureCollection<Polygon>
+  fireFootprint: FeatureCollection<Polygon>
   zoneExposure: Record<string, Exposure>
   horizon: number
   marginM: number
@@ -56,6 +57,8 @@ type Props = {
   windDirection: number
   windKmh: number
   callArea: CallArea | null
+  additionalAreas: CallArea[]
+  recommendedEnabled: boolean
   areaIds: string[]
   drawingArea: boolean
   onAreaChange: (area: CallArea | null) => void
@@ -101,11 +104,11 @@ function zoneAreas(zones: SafeZone[], exposure: Record<string, Exposure>): Featu
 }
 
 function routeGeo(route: RefugeRoute | null): FeatureCollection<LineString> {
-  return { type: 'FeatureCollection', features: route ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route.coordinates } }] : [] }
+  return { type: 'FeatureCollection', features: route ? [{ type: 'Feature', properties: { id: route.id, zoneId: route.zoneId }, geometry: { type: 'LineString', coordinates: route.coordinates } }] : [] }
 }
 
-function callAreaGeo(area: CallArea | null): FeatureCollection<Polygon> {
-  return { type: 'FeatureCollection', features: area && area.radiusM > 0 ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circle(area.lng, area.lat, area.radiusM)] } }] : [] }
+function callAreaGeo(area: CallArea | null, additional: CallArea[]): FeatureCollection<Polygon> {
+  return { type: 'FeatureCollection', features: [...additional, ...(area && area.radiusM > 0 ? [area] : [])].map((item, index) => ({ type: 'Feature', properties: { draft: index === additional.length }, geometry: { type: 'Polygon', coordinates: [circle(item.lng, item.lat, item.radiusM)] } })) }
 }
 
 function circle(lng: number, lat: number, radius: number) {
@@ -140,7 +143,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, fireFootprint, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, additionalAreas, recommendedEnabled, areaIds, drawingArea, onAreaChange, onAreaComplete }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -149,13 +152,13 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
   const suppressClickRef = useRef(false)
   useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds })
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, fireFootprint, zoneExposure, horizon, marginM, route, callArea, additionalAreas, recommendedEnabled, areaIds })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
   onCenterSelectRef.current = onCenterSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds }
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, fireFootprint, zoneExposure, horizon, marginM, route, callArea, additionalAreas, recommendedEnabled, areaIds }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -180,28 +183,19 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('satellite-base', { type: 'raster', url: 'mapbox://mapbox.satellite', tileSize: 256 })
       map.addLayer({ id: 'satellite-base', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.12, 'raster-brightness-max': 0.95 } }, firstLabel)
 
-      const hatch = new Uint8Array(8 * 8 * 4)
-      for (let y = 0; y < 8; y += 1) {
-        for (let x = 0; x < 8; x += 1) {
-          const offset = (y * 8 + x) * 4
-          hatch.set([210, 166, 99, (x + y) % 8 < 2 ? 85 : 0], offset)
-        }
-      }
-      map.addImage('spread-pattern', { width: 8, height: 8, data: hatch })
-      map.addSource('spread', { type: 'geojson', data: current.projection, buffer: 0 })
-      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': ['match', ['get', 'band'], 30, '#f6a84f', 60, '#eec66d', '#dfd6a3'], 'fill-opacity': 0.25 } })
-      map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.6 } })
-      map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#c2a16c', 'line-width': 1, 'line-opacity': 0.65, 'line-dasharray': [4, 4] } })
-
-      map.addSource('fire-cells', { type: 'geojson', data: SCENARIO_FIRE_CELLS, buffer: 0, tolerance: 0 })
+      map.addSource('recommended-contact', { type: 'geojson', data: { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: RECOMMENDED_CALL_AREA.name }, geometry: { type: 'Polygon', coordinates: [RECOMMENDED_CALL_AREA.coordinates] } }] } })
+      map.addLayer({ id: 'recommended-contact-fill', type: 'fill', source: 'recommended-contact', paint: { 'fill-color': '#bed4cb', 'fill-opacity': current.recommendedEnabled ? 0.025 : 0.006 } }, firstLabel)
+      map.addLayer({ id: 'recommended-contact-soft-edge', type: 'line', source: 'recommended-contact', paint: { 'line-color': '#bed4cb', 'line-width': 6, 'line-blur': 2, 'line-opacity': current.recommendedEnabled ? 0.12 : 0.04 } }, firstLabel)
+      map.addLayer({ id: 'recommended-contact-edge', type: 'line', source: 'recommended-contact', paint: { 'line-color': '#bed4cb', 'line-width': 1.2, 'line-opacity': current.recommendedEnabled ? 0.65 : 0.2 } }, firstLabel)
+      map.addSource('fire-cells', { type: 'geojson', data: current.fireFootprint, buffer: 0, tolerance: 0 })
       map.addLayer({
         id: 'fire-cells-fill', type: 'fill', source: 'fire-cells',
         paint: { 'fill-color': '#ff0000', 'fill-opacity': 1, 'fill-antialias': false },
       }, firstLabel)
 
-      map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea) })
-      map.addLayer({ id: 'call-area-fill', type: 'fill', source: 'call-area', paint: { 'fill-color': '#77c8f4', 'fill-opacity': 0.09 } })
-      map.addLayer({ id: 'call-area-edge', type: 'line', source: 'call-area', paint: { 'line-color': '#a7e1ff', 'line-width': 2, 'line-dasharray': [3, 2] } })
+      map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea, current.additionalAreas) })
+      map.addLayer({ id: 'call-area-fill', type: 'fill', source: 'call-area', paint: { 'fill-color': '#b0c7d2', 'fill-opacity': 0.025 } })
+      map.addLayer({ id: 'call-area-edge', type: 'line', source: 'call-area', paint: { 'line-color': '#b0c7d2', 'line-width': 1.3, 'line-opacity': ['case', ['get', 'draft'], 0.9, 0.65], 'line-dasharray': [4, 3] } })
       map.addSource('zones-area', { type: 'geojson', data: zoneAreas(current.zones, current.zoneExposure) })
       map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.2 } })
       map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.8 } })
@@ -242,8 +236,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       }, paint: { 'text-color': '#d3eadb', 'text-halo-color': '#121b18', 'text-halo-width': 2 } })
 
       map.addSource('refuge-route', { type: 'geojson', data: routeGeo(current.route) })
-      map.addLayer({ id: 'refuge-route-casing', type: 'line', source: 'refuge-route', paint: { 'line-color': '#12252e', 'line-width': 7 } }, 'zone-point')
-      map.addLayer({ id: 'refuge-route-line', type: 'line', source: 'refuge-route', paint: { 'line-color': '#8bddff', 'line-width': 3, 'line-dasharray': [3, 1] } }, 'zone-point')
+      map.addLayer({ id: 'refuge-route-casing', type: 'line', source: 'refuge-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#12252e', 'line-width': 5 } }, 'zone-point')
+      map.addLayer({ id: 'refuge-route-line', type: 'line', source: 'refuge-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#8bddff', 'line-width': 2.2, 'line-opacity': 0.9 } }, 'zone-point')
       map.addSource('response-centers', {
         type: 'geojson', attribution: 'Centros: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
         data: { type: 'FeatureCollection', features: RESPONSE_CENTERS.map(center => ({ type: 'Feature', properties: { id: center.id, kind: center.kind, name: center.locationSource === 'demo' ? `${center.kind === 'hospital' ? 'Hospital' : 'Bomberos'} · DEMO` : center.name, symbol: CENTER_SYMBOL[center.kind], locationSource: center.locationSource }, geometry: { type: 'Point', coordinates: [center.lng, center.lat] } })) },
@@ -399,12 +393,24 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   }, [loaded, projection, zones, zoneExposure])
 
   useEffect(() => {
+    if (loaded && mapRef.current) source(mapRef.current, 'fire-cells')?.setData(fireFootprint)
+  }, [loaded, fireFootprint])
+
+  useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'refuge-route')?.setData(routeGeo(route))
   }, [loaded, route])
 
   useEffect(() => {
-    if (loaded && mapRef.current) source(mapRef.current, 'call-area')?.setData(callAreaGeo(callArea))
-  }, [loaded, callArea])
+    if (loaded && mapRef.current) source(mapRef.current, 'call-area')?.setData(callAreaGeo(callArea, additionalAreas))
+  }, [loaded, callArea, additionalAreas])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!loaded || !map) return
+    map.setPaintProperty('recommended-contact-fill', 'fill-opacity', recommendedEnabled ? 0.025 : 0.006)
+    map.setPaintProperty('recommended-contact-soft-edge', 'line-opacity', recommendedEnabled ? 0.12 : 0.04)
+    map.setPaintProperty('recommended-contact-edge', 'line-opacity', recommendedEnabled ? 0.65 : 0.2)
+  }, [loaded, recommendedEnabled])
 
   useEffect(() => {
     const map = mapRef.current

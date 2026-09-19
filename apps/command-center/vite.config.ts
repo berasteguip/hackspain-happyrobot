@@ -69,6 +69,10 @@ export default defineConfig({
     // servicios de túnel, no `true`, que abriría el dev server a DNS rebinding.
     allowedHosts: ['.trycloudflare.com', '.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io', '.loca.lt'],
     proxy: {
+      '/bridge': {
+        target: process.env.BRIDGE_TARGET || 'http://127.0.0.1:8787',
+        rewrite: (path) => path.replace(/^\/bridge/, ''),
+      },
       '/firms': {
         target: 'https://firms.modaps.eosdis.nasa.gov',
         changeOrigin: true,

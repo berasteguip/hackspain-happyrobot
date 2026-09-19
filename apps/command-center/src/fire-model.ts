@@ -11,6 +11,42 @@ export type FireForecast = {
   initialCells: Cell[]
 }
 export const MAX_FORECAST_MIN = 120
+export const FIRE_TIME_SCALE = 12
+
+type Point = [number, number]
+function hull(points: Point[]): Point[] {
+  const sorted = points.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const cross = (a: Point, b: Point, c: Point) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+  const half = (items: Point[]) => {
+    const result: Point[] = []
+    for (const point of items) {
+      while (result.length > 1 && cross(result[result.length - 2], result[result.length - 1], point) <= 0) result.pop()
+      result.push(point)
+    }
+    return result.slice(0, -1)
+  }
+  const ring = [...half(sorted), ...half([...sorted].reverse())]
+  return [...ring, ring[0]]
+}
+
+export function activeFireFootprint(footprint: FeatureCollection<Polygon>, settings: FireSettings, elapsedMin: number): FeatureCollection<Polygon> {
+  if (!Number.isFinite(elapsedMin) || elapsedMin < 0) throw new Error('Tiempo de incendio inválido')
+  if (elapsedMin === 0 || settings.spreadMPerMin === 0) return footprint
+  const distance = Math.min(MAX_FORECAST_MIN, elapsedMin) * settings.spreadMPerMin
+  const angle = settings.windTowardDeg * Math.PI / 180
+  const east = Math.sin(angle)
+  const north = Math.cos(angle)
+  const head = distance * (1 + settings.windKmh / 20)
+  const back = distance * (settings.windKmh ? 0.12 : 1)
+  const side = distance * (settings.windKmh ? 0.3 : 1)
+  const offsets: Point[] = [[0, 0], [east * head, north * head], [-east * back, -north * back], [north * side, -east * side], [-north * side, east * side]]
+  return { type: 'FeatureCollection', features: footprint.features.map(feature => {
+    const ring = feature.geometry.coordinates[0]
+    const lngScale = 111320 * Math.cos(ring[0][1] * Math.PI / 180)
+    const expanded = hull(ring.slice(0, -1).flatMap(([lng, lat]) => offsets.map(([x, y]): Point => [lng + x / lngScale, lat + y / 111320])))
+    return { ...feature, properties: { ...feature.properties, elapsedMin, simulated: true }, geometry: { type: 'Polygon', coordinates: [expanded] } }
+  }) }
+}
 export const EXPOSURE_LABEL = { danger: 'Peligro en el escenario', warning: 'Exposición futura simulada', clear: 'Sin afectación calculada', unknown: 'Sin evaluación' }
 export const EXPOSURE_COLOR = { danger: '#f36d69', warning: '#f3bd61', clear: '#83bedf', unknown: '#a3acb7' }
 const key = (x: number, y: number) => `${x}:${y}`

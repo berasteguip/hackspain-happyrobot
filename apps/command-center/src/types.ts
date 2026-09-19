@@ -29,11 +29,27 @@ export type Citizen = {
   routeProgressM?: number
   routePhase?: 'access' | 'road'
   routeHoldReason?: string
+  fireAlert?: boolean
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
   locationUpdatedAt?: number
   accuracyM?: number
   locality?: string
   resident?: boolean
+  householdSize?: number
+  mobility?: 'car' | 'walking' | 'reduced' | 'immobile'
+  hrCall?: {
+    personId: string
+    state: 'queued' | 'talking' | 'done' | 'failed'
+    resultState?: 'pending' | 'ready' | 'failed'
+    transcript: { ts: string; speaker: string; text: string }[]
+    zoneId?: string
+    runUrl?: string
+    endReason?: string
+    outcomeError?: string
+    outcomeApplied?: boolean
+    willEvacuate?: boolean
+    departureAt?: number
+  }
   household?: { name: string; situation: string; source: string }[]
   call?: {
     answeredAt: number

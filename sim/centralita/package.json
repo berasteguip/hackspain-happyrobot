@@ -1,0 +1,22 @@
+{
+  "name": "centralita",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "bridge": "node server.mjs",
+    "test:e2e": "node e2e-integration.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@happyrobot-ai/sdk": "^0.1.48"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

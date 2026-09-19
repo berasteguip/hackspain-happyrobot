@@ -23,6 +23,13 @@ export type Route = {
 
 export type RouteIndex = Map<string, Route>
 
+export function assignedCitizenRoute(citizen: Citizen | null, routes: RouteIndex): RefugeRoute | null {
+  if (!citizen || citizen.live || citizen.locationSource !== 'simulation' || citizen.call?.consent !== 'granted' || !['tracking', 'routing', 'evacuating', 'safe'].includes(citizen.status)) return null
+  const route = citizen.routeId ? routes.get(citizen.routeId) : undefined
+  if (!route || route.zoneId !== citizen.safeZoneId || route.group !== (citizen.locality ?? '') || citizen.hrCall && (!citizen.hrCall.outcomeApplied || citizen.hrCall.zoneId !== route.zoneId)) return null
+  return { id: route.id, zoneId: route.zoneId, coordinates: route.coords, durationSec: route.durationSec, distanceM: route.lengthM, accessM: 0 }
+}
+
 const DIRECTIONS = 'https://api.mapbox.com/directions/v5/mapbox/driving'
 const CONCURRENCY = 4
 
@@ -237,17 +244,29 @@ export async function planCitizenRoute(
   token: string, citizen: Citizen, zones: SafeZone[], forecast: FireForecast, marginM: number,
   signal?: AbortSignal, request: typeof fetch = fetch,
 ): Promise<{ citizen: Citizen; route?: Route }> {
-  if (citizen.live || citizen.call?.consent !== 'granted') return { citizen }
-  const eligible = zones.filter(zone => exposureAt(forecast, zone.lng, zone.lat, 60, marginM + zone.radiusM).level === 'clear')
+  if (citizen.live || citizen.locationSource === 'gps' || citizen.call?.consent !== 'granted') return { citizen }
+  const eligible = zones.filter(zone => (!citizen.hrCall || zone.id === citizen.hrCall.zoneId) && exposureAt(forecast, zone.lng, zone.lat, 60, marginM + zone.radiusM).level === 'clear')
   const hold = (reason: string): { citizen: Citizen } => ({ citizen: { ...citizen, status: 'assistance', safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: reason } })
   if (!eligible.length) return hold('No hay refugios fuera de la zona expuesta en la próxima hora. Requiere revisión del mando.')
   const origin: [number, number] = [citizen.lng, citizen.lat]
-  const result = await fetchRefugeRoutes(token, origin, eligible, 'driving', signal, request)
+  const result = await fetchRefugeRoutes(token, origin, eligible, citizen.mobility === 'walking' || citizen.mobility === 'reduced' ? 'walking' : 'driving', signal, request)
   const selected = rankRefugeRoutes(result.routes, eligible, forecast, 60, marginM).routes.sort((a, b) => a.distanceM - b.distanceM)[0]
   if (!selected) return hold(result.errors.length ? result.errors.join(' · ') : result.unsuitable ? 'Directions devuelve accesos de más de 100 m o geometrías no válidas. Requiere revisión.' : result.routes.length ? 'Los recorridos desde esta persona intersectan la zona expuesta. Requiere otra salida.' : 'Directions no ha devuelto una carretera hacia los refugios disponibles.')
   const zone = eligible.find(item => item.id === selected.zoneId)!
   const route = buildRoute({ id: `individual-${citizen.id}-${zone.id}`, group: citizen.locality ?? '', zoneId: zone.id, from: origin, to: [zone.lng, zone.lat] }, selected.coordinates, selected.durationSec)
   return { route, citizen: { ...citizen, status: 'tracking', safeZoneId: zone.id, routeId: route.id, routeProgressM: route.cumulative[1], routePhase: 'access', routeHoldReason: undefined } }
+}
+
+export function holdUnsafeJourneys(citizens: Citizen[], routes: RouteIndex, zones: SafeZone[], forecast: FireForecast, marginM: number): Citizen[] {
+  return citizens.map(citizen => {
+    if (citizen.live || citizen.locationSource !== 'simulation' || !['tracking', 'routing', 'evacuating', 'safe'].includes(citizen.status) || !citizen.safeZoneId) return citizen
+    const zone = zones.find(zone => zone.id === citizen.safeZoneId)
+    const road = citizen.routeId ? routes.get(citizen.routeId) : undefined
+    const remaining = road ? [[citizen.lng, citizen.lat] as [number, number], ...road.coords.filter((_, index) => road.cumulative[index] > (citizen.routeProgressM ?? 0))] : []
+    const exposed = !zone || exposureAt(forecast, zone.lng, zone.lat, 0, marginM + zone.radiusM).level === 'danger'
+    if (!exposed && (!road || remaining.length < 2 || !routeBlocked(forecast, remaining, 0, marginM))) return citizen
+    return { ...citizen, status: 'assistance' as const, fireAlert: true, routeId: undefined, routeHoldReason: 'El avance simulado del fuego afecta al recorrido o al punto de encuentro. Traslado detenido; requiere nueva instrucción y apoyo del mando.' }
+  })
 }
 
 export function assignEvacuationRoutes(citizens: Citizen[], routes: RouteIndex, zones: SafeZone[], forecast: FireForecast, marginM: number): Citizen[] {

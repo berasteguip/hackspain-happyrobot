@@ -1,8 +1,8 @@
-import { destination, haversineMeters, bearingDeg } from './geo'
+import { destination, haversineMeters, bearingDeg, pointInRing } from './geo'
 import { nearestOnRoute, positionAt } from './routing'
 import type { Route, RouteIndex } from './routing'
-import { AGENTS } from './scenario'
-import type { CallArea, CallEvent, Citizen, SafeZone } from './types'
+import { AGENTS, SETTLEMENTS } from './scenario'
+import type { CallArea, CallEvent, Citizen, RiskArea, SafeZone } from './types'
 
 const RING_SEC = 2.4
 /** Tiempo entre el fin de la llamada y la salida de casa. */
@@ -15,6 +15,21 @@ const ACCESS_SPEED_KMH = 5
 export function selectAreaIds(citizens: Citizen[], area: CallArea | null): string[] {
   if (!area || ![area.lng, area.lat, area.radiusM].every(Number.isFinite) || Math.abs(area.lng) > 180 || Math.abs(area.lat) > 90 || area.radiusM <= 0 || area.radiusM > 20000) return []
   return citizens.filter(citizen => haversineMeters(area.lng, area.lat, citizen.lng, citizen.lat) <= area.radiusM + 1e-6).map(citizen => citizen.id)
+}
+
+export function selectContactLocalities(recommended: RiskArea | null, manual: CallArea[]): string[] {
+  return SETTLEMENTS.filter(place => recommended && pointInRing(place.lng, place.lat, recommended.coordinates) || manual.some(area => [area.lng, area.lat, area.radiusM].every(Number.isFinite) && Math.abs(area.lng) <= 180 && Math.abs(area.lat) <= 90 && area.radiusM > 0 && area.radiusM <= 20000 && haversineMeters(area.lng, area.lat, place.lng, place.lat) <= area.radiusM)).map(place => place.name)
+}
+
+export function contactCandidateIds(citizens: Citizen[], localities: string[]) {
+  const selected = new Set(localities)
+  return citizens.filter(citizen => citizen.resident !== false && selected.has(citizen.locality ?? '')).map(citizen => citizen.id)
+}
+
+export function hasSharedLocation(citizen: Citizen) {
+  if (!Number.isFinite(citizen.lng) || !Number.isFinite(citizen.lat)) return false
+  if (citizen.locationSource === 'gps') return true
+  return citizen.locationSource === 'simulation' && Boolean(citizen.live || citizen.call?.consent === 'granted' && (!citizen.hrCall || citizen.hrCall.outcomeApplied === true))
 }
 
 export function prepareAreaCampaign(citizens: Citizen[], selectedIds: string[], elapsedSec: number, enrolled: ReadonlySet<string>) {
@@ -37,7 +52,8 @@ export function advanceProtocol(
 ): { citizens: Citizen[]; events: CallEvent[] } {
   const events = [...prevEvents]
   const next = citizens.map((citizen, index): Citizen => {
-    if (citizen.live || campaignIds && !campaignIds.has(citizen.id)) return citizen
+    if (citizen.live || citizen.locationSource === 'gps' || campaignIds && !campaignIds.has(citizen.id)) return citizen
+    if (citizen.hrCall && (!citizen.hrCall.outcomeApplied || citizen.hrCall.state !== 'done' || citizen.hrCall.willEvacuate !== true)) return citizen
     if (citizen.status === 'safe' || citizen.status === 'refused') return citizen
     if (citizen.status === 'no_answer') return citizen
     if (citizen.status === 'informed') return citizen
@@ -103,7 +119,7 @@ export function advanceProtocol(
 
     if (
       citizen.status === 'tracking' &&
-      elapsedSec >= citizen.callDelaySec + RING_SEC + DEPARTURE_SEC
+      elapsedSec >= (citizen.hrCall?.departureAt ?? citizen.callDelaySec + RING_SEC + DEPARTURE_SEC)
     ) {
       if (!citizen.call || citizen.call.consent !== 'granted' || !citizen.routeId || !citizen.safeZoneId) return { ...citizen, status: 'assistance', routeHoldReason: citizen.routeHoldReason ?? 'Esperando un recorrido validado. No se inicia el desplazamiento.' }
       events.push({
@@ -155,7 +171,8 @@ export function moveEvacuees(
 ): Citizen[] {
   if (dtSec <= 0) return citizens
   return citizens.map((citizen): Citizen => {
-    if (citizen.live || citizen.status !== 'evacuating') return citizen
+    if (citizen.live || citizen.locationSource === 'gps' || citizen.status !== 'evacuating') return citizen
+    if (citizen.hrCall && (!citizen.hrCall.outcomeApplied || citizen.hrCall.state !== 'done' || citizen.hrCall.willEvacuate !== true || !['car', 'walking'].includes(citizen.mobility ?? '') || citizen.hrCall.zoneId !== citizen.safeZoneId)) return citizen
     if (!citizen.call || citizen.call.consent !== 'granted') return { ...citizen, status: 'assistance', routeHoldReason: 'Sin llamada respondida y consentimiento. No se inicia el movimiento.' }
     const zone = zones.find((item) => item.id === citizen.safeZoneId)
     if (!zone) return { ...citizen, status: 'assistance', routeHoldReason: 'Sin destino validado. Pendiente de revisión del mando.' }

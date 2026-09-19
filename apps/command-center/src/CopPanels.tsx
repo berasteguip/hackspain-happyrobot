@@ -9,19 +9,19 @@ import { CENTER_LABEL, CENTER_SYMBOL, createNotice, NOTICE_LABEL, RESPONSE_CENTE
 import type { DemoNotice } from './response'
 import type { Citizen } from './types'
 
-export function FireControls({ settings, horizon, onSimulate, onReset, showWind, onWind, marginM, forecast, onFocus }: {
+export function FireControls({ settings, horizon, onSimulate, onReset, showWind, onWind, marginM, forecast, onFocus, fireMinute, fireRunning, onFireToggle }: {
   settings: FireSettings; horizon: number; onSimulate: () => void; onReset: () => void
+  fireMinute: number; fireRunning: boolean; onFireToggle: () => void
   showWind: boolean; onWind: () => void; marginM: number
   forecast: FireForecast; onFocus: (point: { lng: number; lat: number }) => void
 }) {
   return <div className="cop-content">
-    <p className="eyebrow">VIENTO Y EVOLUCIÓN · DEMO</p>
-    <p className="fine">Viento del escenario hacia el sudoeste · {settings.windKmh} km/h. Las partículas muestran su dirección sobre el mapa.</p>
-    <button type="button" className="wind-toggle" role="switch" aria-checked={showWind} onClick={onWind}>Mostrar viento · {showWind ? 'ON' : 'OFF'}</button>
-    <button type="button" className="cop-primary" onClick={onSimulate}>Simular incendio dentro de 1 hora</button>
-    {horizon > 0 && <button type="button" className="cop-secondary" onClick={onReset}>Volver al incendio inicial</button>}
-    <p className="fine" role="status">{horizon ? 'Mostrando la posible extensión a +1 hora.' : 'Mostrando el incendio inicial.'} El botón utiliza el viento del escenario; ocultar las partículas no cambia el cálculo.</p>
-    <h3>Exposición de los puntos de encuentro</h3>
+    <div className="setting-row"><span><strong>Viento</strong><small>Hacia el sudoeste · {settings.windKmh} km/h</small></span><button type="button" className="wind-toggle" role="switch" aria-label="Mostrar viento en el mapa" aria-checked={showWind} onClick={onWind}>{showWind ? 'Visible' : 'Oculto'}</button></div>
+    <div className="setting-row"><span><strong>Avance del incendio</strong><small>+{fireMinute.toFixed(1)} min · reloj de demo ×12</small></span><button type="button" className="wind-toggle" role="switch" aria-label="Avance del incendio" aria-checked={fireRunning} onClick={onFireToggle}>{fireRunning ? 'Activo' : 'Pausado'}</button></div>
+    <h3>Momento del escenario</h3>
+    <div className="segmented-control" role="group" aria-label="Horizonte de simulación"><button type="button" aria-label="Volver al incendio inicial" aria-pressed={horizon === 0} onClick={onReset}>Ahora</button><button type="button" aria-label="Simular incendio dentro de 1 hora" aria-pressed={horizon > 0} onClick={onSimulate}>Dentro de 1 h</button></div>
+    <p className="fine" role="status">{horizon ? 'Exposición estimada a +1 h.' : 'Exposición del escenario inicial.'} No dibuja una zona de riesgo sobre el mapa.</p>
+    <h3>Puntos de encuentro</h3>
     <div className="cop-list">{SAFE_ZONES.map(zone => {
       const exposure = exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)
       return <button type="button" key={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
@@ -56,8 +56,9 @@ export function RefugeRoutesPanel({ citizen, token, forecast, horizon, marginM, 
   }, [request, token])
   return <section className="cop-content route-planner">
     <h3>Rutas a puntos de encuentro</h3>
+    <p className="fine">Comparación manual: una alternativa no cambia el destino comunicado ni el recorrido asignado.</p>
     <p className="fine">Desde la posición mostrada de {citizen.name}. {citizen.locationSource === 'reference' ? 'Es una referencia residencial, no su ubicación confirmada.' : 'La posición puede ser aproximada o simulada.'}</p>
-    <label className="control-label">Modo de traslado<select value={profile} onChange={e => { setProfile(e.target.value as typeof profile); setResult(null); setRequest(null); setState('') }}><option value="driving">Vehículo</option><option value="walking">A pie</option></select></label>
+    <div className="segmented-control" role="group" aria-label="Modo de traslado">{(['driving', 'walking'] as const).map(mode => <button type="button" key={mode} aria-pressed={profile === mode} onClick={() => { setProfile(mode); setResult(null); setRequest(null); setState('') }}>{mode === 'driving' ? 'Vehículo' : 'A pie'}</button>)}</div>
     <button type="button" className="cop-primary" onClick={() => { setResult(null); setChosen(''); setState('Consultando Mapbox…'); setRequest({ origin: [citizen.lng, citizen.lat], profile }) }}>Comparar rutas · Mapbox</button>
     <p className="fine">Consulta externa que consume cuota. Duración del proveedor + accesos aproximados a pie (máximo 100 m por extremo). No usa tráfico en vivo.</p>
     <p role="status" className="fine">{stale ? 'La posición o el modo ha cambiado. Vuelve a calcular.' : state}</p>
@@ -86,7 +87,7 @@ export function ResponsePanel({ selectedId, onSelect, scenario, notices, onNotic
   return <div className="cop-content">
     <p className="eyebrow">CENTROS DEL ESCENARIO · COMUNICACIONES SIMULADAS</p>
     <p className="fine">Hospital y bomberos se han acercado al incendio con posiciones ficticias para la demo. El centro de salud conserva su referencia cartográfica. No es un inventario operativo.</p>
-    <label className="control-label">Tipo de centro<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Todos</option>{Object.entries(CENTER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+    <div className="segmented-control" role="group" aria-label="Tipo de centro">{[['all', 'Todos'], ...Object.entries(CENTER_LABEL)].map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
     <div className="cop-list">{RESPONSE_CENTERS.filter(item => filter === 'all' || item.kind === filter).map(item => <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}><span className={`center-symbol ${item.kind}`}>{CENTER_SYMBOL[item.kind]}</span><span><strong>{item.name}</strong><small>{CENTER_LABEL[item.kind]} · {item.locationSource === 'demo' ? 'POSICIÓN DEMO' : 'referencia OSM'}</small></span></button>)}</div>
     {center && <section className="center-detail">
       <h3>{center.name}</h3><p className="fine">Dirección del centro real: {center.address}</p><p className="detail-warning">{center.note}</p>
