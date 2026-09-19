@@ -1,4 +1,4 @@
-import { destination, haversineMeters, bearingDeg } from './geo'
+import { destination, haversineMeters, bearingDeg, nearestZone } from './geo'
 import { AGENTS } from './scenario'
 import type { CallEvent, Citizen, SafeZone } from './types'
 
@@ -6,6 +6,7 @@ const RING_SEC = 2.4
 
 export function advanceProtocol(
   citizens: Citizen[],
+  zones: SafeZone[],
   elapsedSec: number,
   prevEvents: CallEvent[],
 ): { citizens: Citizen[]; events: CallEvent[] } {
@@ -50,9 +51,10 @@ export function advanceProtocol(
         name: citizen.name,
         detail,
       })
+      const nearest = nearestZone(citizen.lng, citizen.lat, zones)
       const status: Citizen['status'] =
         citizen.outcome === 'tracking' ? 'evacuating' : citizen.outcome
-      return { ...citizen, status }
+      return { ...citizen, status, safeZoneId: nearest.zone.id }
     }
 
     return citizen

@@ -14,6 +14,8 @@ export type Citizen = {
   phone: string
   lng: number
   lat: number
+  originLng: number
+  originLat: number
   status: CitizenStatus
   vulnerable: boolean
   safeZoneId: string

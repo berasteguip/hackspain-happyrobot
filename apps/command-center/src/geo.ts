@@ -62,6 +62,24 @@ export function destination(
   return [toDeg(λ2), toDeg(φ2)]
 }
 
+export function pointInRing(lng: number, lat: number, ring: number[][]) {
+  const last = ring[ring.length - 1]
+  const closed = last && last[0] === ring[0][0] && last[1] === ring[0][1]
+  const verts = closed ? ring.slice(0, -1) : ring
+  let inside = false
+  for (let i = 0, j = verts.length - 1; i < verts.length; j = i++) {
+    const xi = verts[i][0]
+    const yi = verts[i][1]
+    const xj = verts[j][0]
+    const yj = verts[j][1]
+    const crosses = yi > lat !== yj > lat
+    if (crosses && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
 export function nearestZone<T extends { lng: number; lat: number }>(
   lng: number,
   lat: number,

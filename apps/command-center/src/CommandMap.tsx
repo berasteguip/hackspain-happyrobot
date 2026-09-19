@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import type { GeoJSONSource } from 'mapbox-gl'
+import type { GeoJSONSource, ExpressionSpecification } from 'mapbox-gl'
 import type { FeatureCollection, Polygon, Point } from 'geojson'
 import { INCIDENT, RISK_AREA } from './scenario'
 import type { Citizen, FireSpot, SafeZone } from './types'
@@ -21,9 +21,70 @@ type Props = {
   token: string
   citizens: Citizen[]
   fires: FireSpot[]
+  satelliteFires?: FireSpot[]
   zones: SafeZone[]
   selectedId: string | null
+  fireScale: number
   onSelect: (id: string | null) => void
+}
+
+function fireHeatRadius(scale: number): ExpressionSpecification {
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    9,
+    22 * scale,
+    11,
+    42 * scale,
+    13,
+    64 * scale,
+  ]
+}
+
+function fireHeatIntensity(scale: number): ExpressionSpecification {
+  const t = Math.min(Math.max((scale - 1) / 1.2, 0), 1)
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    9,
+    1.05 + t * 0.7,
+    12,
+    1.7 + t * 1.1,
+  ]
+}
+
+function fireHaloRadius(scale: number): ExpressionSpecification {
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    10,
+    ['interpolate', ['linear'], ['get', 'frp'], 5, 10 * scale, 40, 18 * scale, 120, 28 * scale],
+    13,
+    ['interpolate', ['linear'], ['get', 'frp'], 5, 18 * scale, 40, 32 * scale, 120, 44 * scale],
+  ]
+}
+
+function fireGlowRadius(scale: number): ExpressionSpecification {
+  return [
+    'interpolate',
+    ['linear'],
+    ['zoom'],
+    10,
+    ['interpolate', ['linear'], ['get', 'frp'], 5, 5.5 * scale, 40, 10 * scale, 120, 16 * scale],
+    13,
+    ['interpolate', ['linear'], ['get', 'frp'], 5, 9 * scale, 40, 16 * scale, 120, 24 * scale],
+  ]
+}
+
+function applyFireScale(map: mapboxgl.Map, scale: number) {
+  if (!map.getLayer('fires-heat')) return
+  map.setPaintProperty('fires-heat', 'heatmap-radius', fireHeatRadius(scale))
+  map.setPaintProperty('fires-heat', 'heatmap-intensity', fireHeatIntensity(scale))
+  map.setPaintProperty('fires-halo', 'circle-radius', fireHaloRadius(scale))
+  map.setPaintProperty('fires-glow', 'circle-radius', fireGlowRadius(scale))
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
@@ -92,17 +153,19 @@ export function CommandMap({
   token,
   citizens,
   fires,
+  satelliteFires = [],
   zones,
   selectedId,
+  fireScale,
   onSelect,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
   const onSelectRef = useRef(onSelect)
-  const dataRef = useRef({ citizens, fires, zones, selectedId })
+  const dataRef = useRef({ citizens, fires, satelliteFires, zones, selectedId, fireScale })
   onSelectRef.current = onSelect
-  dataRef.current = { citizens, fires, zones, selectedId }
+  dataRef.current = { citizens, fires, satelliteFires, zones, selectedId, fireScale }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -153,11 +216,23 @@ export function CommandMap({
         type: 'circle',
         source: 'zones',
         paint: {
-          'circle-radius': 28,
+          'circle-radius': 12,
           'circle-color': '#3ee0a5',
-          'circle-opacity': 0.14,
-          'circle-stroke-width': 1.4,
+          'circle-opacity': 0.18,
+          'circle-stroke-width': 1.2,
           'circle-stroke-color': '#3ee0a5',
+        },
+      })
+      map.addLayer({
+        id: 'zones-core',
+        type: 'circle',
+        source: 'zones',
+        paint: {
+          'circle-radius': 4.5,
+          'circle-color': '#3ee0a5',
+          'circle-opacity': 0.9,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#d7fff0',
         },
       })
       map.addLayer({
@@ -167,7 +242,7 @@ export function CommandMap({
         layout: {
           'text-field': ['get', 'name'],
           'text-size': 11,
-          'text-offset': [0, 1.8],
+          'text-offset': [0, 1.35],
           'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Regular'],
         },
         paint: {
@@ -183,19 +258,31 @@ export function CommandMap({
         type: 'heatmap',
         source: 'fires',
         paint: {
-          'heatmap-weight': ['interpolate', ['linear'], ['get', 'frp'], 0, 0.2, 40, 0.7, 120, 1],
-          'heatmap-intensity': 1.15,
-          'heatmap-radius': 28,
-          'heatmap-opacity': 0.7,
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'frp'], 0, 0.45, 30, 0.85, 120, 1],
+          'heatmap-intensity': fireHeatIntensity(dataRef.current.fireScale),
+          'heatmap-radius': fireHeatRadius(dataRef.current.fireScale),
+          'heatmap-opacity': 0.92,
           'heatmap-color': [
             'interpolate',
             ['linear'],
             ['heatmap-density'],
             0, 'rgba(0,0,0,0)',
-            0.2, 'rgba(255,140,40,0.25)',
-            0.5, 'rgba(255,80,20,0.55)',
-            0.85, 'rgba(255,30,10,0.85)',
+            0.08, 'rgba(255,170,40,0.35)',
+            0.25, 'rgba(255,110,20,0.7)',
+            0.5, 'rgba(255,50,8,0.9)',
+            0.8, 'rgba(255,220,140,1)',
           ],
+        },
+      })
+      map.addLayer({
+        id: 'fires-halo',
+        type: 'circle',
+        source: 'fires',
+        paint: {
+          'circle-radius': fireHaloRadius(dataRef.current.fireScale),
+          'circle-color': '#ff6a1a',
+          'circle-opacity': 0.28,
+          'circle-blur': 0.85,
         },
       })
       map.addLayer({
@@ -203,18 +290,32 @@ export function CommandMap({
         type: 'circle',
         source: 'fires',
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['get', 'frp'], 5, 6, 40, 10, 120, 16],
+          'circle-radius': fireGlowRadius(dataRef.current.fireScale),
           'circle-color': [
             'match',
             ['get', 'confidence'],
-            'high', '#ff4d1a',
-            'nominal', '#ff8a2b',
+            'high', '#ff3b0a',
+            'nominal', '#ff7a1a',
             '#ffc14d',
           ],
-          'circle-opacity': 0.9,
-          'circle-blur': 0.15,
-          'circle-stroke-width': 1,
-          'circle-stroke-color': '#fff3d8',
+          'circle-opacity': 0.95,
+          'circle-blur': 0.25,
+          'circle-stroke-width': 1.2,
+          'circle-stroke-color': '#ffe7b0',
+        },
+      })
+
+      map.addSource('satellite', { type: 'geojson', data: firesGeo(dataRef.current.satelliteFires) })
+      map.addLayer({
+        id: 'satellite-dots',
+        type: 'circle',
+        source: 'satellite',
+        paint: {
+          'circle-radius': 3.2,
+          'circle-color': '#ffb347',
+          'circle-opacity': 0.7,
+          'circle-stroke-width': 0.6,
+          'circle-stroke-color': '#ffe7b0',
         },
       })
 
@@ -225,14 +326,14 @@ export function CommandMap({
         source: 'citizens',
         filter: ['in', ['get', 'status'], ['literal', ['tracking', 'evacuating', 'ringing']]],
         paint: {
-          'circle-radius': 11,
+          'circle-radius': 7,
           'circle-color': [
             'match',
             ['get', 'status'],
             'ringing', '#f5c84c',
             '#5cc8ff',
           ],
-          'circle-opacity': 0.22,
+          'circle-opacity': 0.18,
         },
       })
       map.addLayer({
@@ -243,10 +344,10 @@ export function CommandMap({
           'circle-radius': [
             'case',
             ['==', ['get', 'id'], dataRef.current.selectedId ?? ''],
-            7.5,
-            ['get', 'vulnerable'],
             6.2,
+            ['get', 'vulnerable'],
             5,
+            4,
           ],
           'circle-color': [
             'match',
@@ -317,16 +418,18 @@ export function CommandMap({
     const map = mapRef.current
     if (!map?.isStyleLoaded()) return
     source(map, 'fires')?.setData(firesGeo(fires))
+    source(map, 'satellite')?.setData(firesGeo(satelliteFires))
     source(map, 'citizens')?.setData(citizensGeo(citizens))
     source(map, 'zones')?.setData(zonesGeo(zones))
+    applyFireScale(map, fireScale)
     if (map.getLayer('citizens-dot')) {
       map.setPaintProperty('citizens-dot', 'circle-radius', [
         'case',
         ['==', ['get', 'id'], selectedId ?? ''],
-        7.5,
-        ['get', 'vulnerable'],
         6.2,
+        ['get', 'vulnerable'],
         5,
+        4,
       ])
       map.setPaintProperty('citizens-dot', 'circle-stroke-width', [
         'case',
@@ -345,7 +448,7 @@ export function CommandMap({
         '#0b0f14',
       ])
     }
-  }, [citizens, fires, zones, selectedId])
+  }, [citizens, fires, satelliteFires, zones, selectedId, fireScale])
 
   return <div ref={rootRef} className="map-root" />
 }
