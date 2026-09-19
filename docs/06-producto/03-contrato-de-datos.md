@@ -7,16 +7,16 @@
 ## 0. Arquitectura y quién escribe qué
 
 ```
-motor de escenario (engine/)  ──POST /events/*──────┐
-página GPS (web/gps/)         ──POST /positions─────┤
-HappyRobot workflows          ──POST /calls/outcome─┼──►  API estado de crisis (api/)
+motor de escenario (backend/engine/)  ──POST /events/*──────┐
+página GPS (frontend/gps/)         ──POST /positions─────┤
+HappyRobot workflows          ──POST /calls/outcome─┼──►  API estado de crisis (backend/api/)
                               ◄──GET  /instructions─┤         │  estado en memoria + JSONL append-only
-dashboard (web/dashboard/)    ◄──GET  /state,/diff──┘         │
-simulador (sim/)              ◄──GET  /state, POST /sim/run───┘
+dashboard (frontend/dashboard/)    ◄──GET  /state,/diff──┘         │
+simulador (backend/sim/)              ◄──GET  /state, POST /sim/run───┘
 ```
 
-Una sola fuente de verdad en runtime: el proceso de `api/`. Twin de HappyRobot se usa como espejo para
-que los agentes de voz consulten sin salir de la plataforma, pero **el cálculo vive en `api/`**.
+Una sola fuente de verdad en runtime: el proceso de `backend/api/`. Twin de HappyRobot se usa como espejo para
+que los agentes de voz consulten sin salir de la plataforma, pero **el cálculo vive en `backend/api/`**.
 
 > ⚠️ **Dos límites de plataforma verificados** (`docs/02-happyrobot/04-api-y-sdk.md`) que condicionan este
 > diagrama, y conviene tenerlos claros antes de escribir código contra ellos:
@@ -24,10 +24,10 @@ que los agentes de voz consulten sin salir de la plataforma, pero **el cálculo 
 >    pytz, re, dateutil, random, collections, json, _strptime, time, base64`). O sea que `requests` no
 >    funciona ahí y **ningún nodo de Python puede llamar a nuestra API**. Todo lo que salga de la
 >    plataforma hacia nosotros va por nodos `webhook.*`. Esto refuerza la decisión de que el cálculo
->    viva en `api/`: en el Sandbox no cabía.
+>    viva en `backend/api/`: en el Sandbox no cabía.
 > 2. **Twin no tiene API REST pública confirmada fuera de un workflow** (se accede por nodos
 >    `twin.read`/`twin.write` o por su MCP). Así que Twin sirve como espejo *para los agentes*, pero
->    el dashboard **lee de `api/`, nunca de Twin**. Si Twin resulta inaccesible desde fuera, no se cae
+>    el dashboard **lee de `backend/api/`, nunca de Twin**. Si Twin resulta inaccesible desde fuera, no se cae
 >    nada: es espejo, no fuente.
 
 Regla de oro: el estado solo cambia por un evento con motivo. Todo cambio escribe una entrada en el
@@ -104,8 +104,8 @@ esto fuese producto necesitaría acceso restringido y base jurídica propia docu
 
 ⚠️ **`last_instruction.text` se redacta SIEMPRE en usted**, y en imperativo ("Salga", "No coja"), nunca
 en tuteo. No es cortesía: el agente de voz lee este texto **literalmente** (`say_this` de los guiones de
-`prompts/`), así que un tuteo aquí sale por el altavoz en medio de una llamada institucional a un vecino
-de 70 años. Quien genere instrucciones en `api/planner.py` respeta el registro; quien escriba fixtures,
+`happyrobot/prompts/`), así que un tuteo aquí sale por el altavoz en medio de una llamada institucional a un vecino
+de 70 años. Quien genere instrucciones en `backend/api/planner.py` respeta el registro; quien escriba fixtures,
 también.
 
 `seats_free` son los asientos libres que la persona declara en la llamada. Es el campo que hace posible
@@ -264,7 +264,7 @@ Tres reglas sobre el log que salieron de construir la API contra este contrato:
   registrar algo que no muta una entidad (un plan descartado, un recálculo global). El estado solo cambia
   por un evento con motivo, pero no todo evento con motivo cambia una entidad.
 
-## 3. API HTTP (`api/`, FastAPI, puerto 8000)
+## 3. API HTTP (`backend/api/`, FastAPI, puerto 8000)
 
 Autenticación: header `x-api-key` con el valor de `HR_SHARED_SECRET`. En la demo un secreto en `.env`
 compartido con HappyRobot. Sin auth no se puede aceptar webhooks de la plataforma.

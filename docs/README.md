@@ -29,7 +29,7 @@ cercana.
 4. [`02-happyrobot/03-workspace-y-limites-verificados.md`](02-happyrobot/03-workspace-y-limites-verificados.md): qué nos deja hacer la plataforma de verdad.
 5. [`07-decisiones/README.md`](07-decisiones/README.md): qué está cerrado y qué falta por decidir.
 
-Si vas a construir el agente de HappyRobot: [`06-producto/04-brief-equipo-agente.md`](06-producto/04-brief-equipo-agente.md) y [`../prompts/`](../prompts/README.md).
+Si vas a construir el agente de HappyRobot: [`06-producto/04-brief-equipo-agente.md`](06-producto/04-brief-equipo-agente.md) y [`../happyrobot/prompts/`](../happyrobot/prompts/README.md).
 
 ## Estado del conocimiento
 

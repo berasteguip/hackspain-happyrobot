@@ -42,20 +42,20 @@ El director de extinción decide dónde descarga el helicóptero por dónde est�
 
 | Pregunta | Cómo la responde el sistema | Nodos HappyRobot |
 |---|---|---|
-| Qué información importa | De cada llamada se extrae solo lo que decide: cuántos, dónde, movilidad, coche, hacia dónde. Posiciones GPS y fuego se funden en un solo estado. | AI Extract, Webhook → `api/`, Twin |
-| Qué va primero | Cola por minutos hasta el frente, no por distancia. Casas sin contestar ordenadas igual. | `api/` (`/queue`), Twin como espejo |
+| Qué información importa | De cada llamada se extrae solo lo que decide: cuántos, dónde, movilidad, coche, hacia dónde. Posiciones GPS y fuego se funden en un solo estado. | AI Extract, Webhook → `backend/api/`, Twin |
+| Qué va primero | Cola por minutos hasta el frente, no por distancia. Casas sin contestar ordenadas igual. | `backend/api/` (`/queue`), Twin como espejo |
 | A quién se avisa y cuándo | Cada persona recibe su instrucción, el guía del convoy recibe la ruta, la patrulla recibe casas, el puesto de mando recibe sectores. Nadie recibe lo del otro. | Agente de voz outbound, Send SMS, Loop, Paths |
-| Dónde van los recursos | Zonas de salida por capacidad y ruta, patrulla a casas concretas, prioridad de descarga aérea por personas dentro. | `api/` + Valhalla (rutas), Webhook |
+| Dónde van los recursos | Zonas de salida por capacidad y ruta, patrulla a casas concretas, prioridad de descarga aérea por personas dentro. | `backend/api/` + Valhalla (rutas), Webhook |
 | Qué se hace ahora | Cada persona tiene una acción concreta (sal por X, sigue a Y, quédate en Z), cada patrulla una casa, cada medio aéreo un sector. | Agente de voz, Send SMS, Webhook, Slack/Sheets |
-| Cuándo tirar el plan | El fuego se mueve: se recalculan rutas, se reagrupan convoyes, cambia la lista de casas y la prioridad aérea. El dashboard muestra el diff con motivo. | Webhook trigger, `api/`, Twin |
+| Cuándo tirar el plan | El fuego se mueve: se recalculan rutas, se reagrupan convoyes, cambia la lista de casas y la prioridad aérea. El dashboard muestra el diff con motivo. | Webhook trigger, `backend/api/`, Twin |
 
 > ⚠️ **Corregido tras investigar** (`docs/02-happyrobot/04-api-y-sdk.md`). Esta tabla decía "Python Sandbox"
 > en cuatro filas, y el Sandbox de HappyRobot **no tiene red saliente**: su lista blanca de módulos es
 > `math, datetime, pytz, re, dateutil, random, collections, json, _strptime, time, base64`, así que
 > `requests` no existe ahí y **ningún nodo de Python puede llamar a nuestra API**. Todo lo que sale de
 > la plataforma hacia nosotros va por nodos `webhook.*`. No es un problema: confirma la decisión de que
-> el cálculo viva en `api/`, porque en el Sandbox nunca habría cabido. Twin sigue siendo el espejo que
-> consultan los agentes, pero **el dashboard lee de `api/`, nunca de Twin** (Twin no tiene API REST
+> el cálculo viva en `backend/api/`, porque en el Sandbox nunca habría cabido. Twin sigue siendo el espejo que
+> consultan los agentes, pero **el dashboard lee de `backend/api/`, nunca de Twin** (Twin no tiene API REST
 > confirmada fuera de un workflow).
 
 ## 6. Cambio de escenario (componente de primera clase)
@@ -93,7 +93,7 @@ Para la hackathon: dataset sintético de 3 pueblos con unas 120 casas (direcció
 
 | HappyRobot | Nosotros |
 |---|---|
-| Workflows, agentes de voz (inbound y outbound), SMS y WhatsApp, AI Extract, Twin como espejo del estado, nodos Webhook, Transfer, Runs, Northstars | `api/` con el estado y **todo el cálculo** (prioridad, rutas, convoyes, patrullas, prioridad aérea), página del enlace GPS, motor de escenario, dashboard con el mapa, dataset sintético, guiones de los agentes, rutas con Valhalla |
+| Workflows, agentes de voz (inbound y outbound), SMS y WhatsApp, AI Extract, Twin como espejo del estado, nodos Webhook, Transfer, Runs, Northstars | `backend/api/` con el estado y **todo el cálculo** (prioridad, rutas, convoyes, patrullas, prioridad aérea), página del enlace GPS, motor de escenario, dashboard con el mapa, dataset sintético, guiones de los agentes, rutas con Valhalla |
 
 Con un número español comprado (Telnyx, 0,80 USD) las llamadas y SMS salen de verdad. El trigger Web call permite que el jurado hable con el agente desde el navegador; el SDK oficial expone además `should_takeover` (tomar el control de una llamada en curso) y `.listen()` (escuchar en silencio), que es justo lo que pide el criterio "Control" de la rúbrica.
 
@@ -135,7 +135,7 @@ pitch y con lo que quedó sin verificar; **nada marcado "NO VERIFICADO" se dice 
 | Competencia y estado del arte | en curso | `../03-dominio-crisis/07-estado-del-arte.md` |
 | Geografía real de la zona | ✅ verificada, ya en el generador | `../03-dominio-crisis/05-geografia-sierra-culebra.md` |
 
-**La zona, con nombres y coordenadas reales** (ya cargada en `data/generate.py`): Losacio (90 hab.,
+**La zona, con nombres y coordenadas reales** (ya cargada en `backend/data/generate.py`): Losacio (90 hab.,
 donde se originó el incendio real de julio de 2022), Ferreruela de Tábara (409) y Sesnández de Tábara
 (136), los tres a menos de 12 km entre sí. Zona segura primaria: Tábara, a 10-14 km. Y la pieza
 dramática que hace creíble el escenario: la **ZA-P-2434** es la única vía provincial que da salida a
@@ -265,7 +265,7 @@ y el art. 50.5 exige que la información se dé "a más tardar en el momento de 
 Por el art. 113 el Reglamento se aplica con carácter general **desde el 2 de agosto de 2026**, y el art.
 50 no está entre las excepciones con fecha distinta: **a fecha de esta hackathon ya está en aplicación**.
 No es una obligación futura que prometemos cumplir, es una que cumplimos. Por eso la regla 6 del
-contrato de datos es vinculante y todos los guiones de `prompts/` abren identificándose.
+contrato de datos es vinculante y todos los guiones de `happyrobot/prompts/` abren identificándose.
 
 Y lo decimos nosotros primero, antes de que lo pregunte el jurado: el **Anexo III.5.d** clasifica como
 alto riesgo los sistemas destinados a evaluar y clasificar llamadas de emergencia o a **priorizar el

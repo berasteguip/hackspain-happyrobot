@@ -29,7 +29,7 @@ workflow, o por su MCP con `execute_sql`. Lo que no sabemos es si hay una URL qu
 nuestro backend. Si la hay, Twin puede ser el espejo de estado que los agentes consultan sin salir de la
 plataforma y nos ahorra latencia.
 
-**Si la respuesta es "no":** ya está decidido y no se cae nada. El dashboard lee de `api/`, Twin es
+**Si la respuesta es "no":** ya está decidido y no se cae nada. El dashboard lee de `backend/api/`, Twin es
 espejo y no fuente (`docs/06-producto/03-contrato-de-datos.md` §0). Solo confirma la arquitectura que ya tenemos.
 
 ### 3. ¿Nos dais número español para llamadas salientes? ¿Y cuántos créditos tiene la cuenta?

@@ -11,7 +11,7 @@
 > refugios con capacidad, convoyes, lista de casas sin respuesta) está en
 > [`02-escenario-incendio.md`](02-escenario-incendio.md). Donde los dos discrepen, manda el 02.
 > Diferencias conocidas: dataset (aquí Ávila; en el 02 Zamora) y mapa (aquí Mapbox; en
-> `web/dashboard` MapLibre). Ambas están abiertas en [`../07-decisiones/`](../07-decisiones/README.md).
+> `frontend/dashboard` MapLibre). Ambas están abiertas en [`../07-decisiones/`](../07-decisiones/README.md).
 
 ## Problema
 
@@ -39,7 +39,7 @@ el **saliente preventivo**, no en el triaje de llamadas de emergencia.
 
 ## Frontend inicial
 
-Código en `apps/command-center`. Vite + React + Mapbox GL. El protocolo de
+Código en `frontend/command-center`. Vite + React + Mapbox GL. El protocolo de
 llamadas y el movimiento de personas van simulados; la página `/track` ya puede
 pintar un consentimiento real contra `/api/locations`.
 
@@ -81,11 +81,11 @@ periféricos. El rojo es opaco y la base satélite se muestra menos oscura. Esta
 morfología es una composición gráfica inspirada en la referencia, no un cálculo
 basado en terreno, meteorología ni detecciones reales.
 
-Verificación local desde `apps/command-center`: `npm run build`, `npm run lint`.
+Verificación local desde `frontend/command-center`: `npm run build`, `npm run lint`.
 
 ## Fuentes
 
-- Implementación local: [scenario.ts](../../apps/command-center/src/scenario.ts), [CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx), [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx), [simulation.ts](../../apps/command-center/src/simulation.ts) y [vite.config.ts](../../apps/command-center/vite.config.ts) (revisada 2026-09-19).
+- Implementación local: [scenario.ts](../../frontend/command-center/src/scenario.ts), [CommandMap.tsx](../../frontend/command-center/src/CommandMap.tsx), [CommandCenter.tsx](../../frontend/command-center/src/CommandCenter.tsx), [simulation.ts](../../frontend/command-center/src/simulation.ts) y [vite.config.ts](../../frontend/command-center/vite.config.ts) (revisada 2026-09-19).
 - Arenas de San Pedro, coordenadas del núcleo — https://es.wikipedia.org/wiki/Arenas_de_San_Pedro (consultado 2026-09-19).
 - Guisando, referencia geográfica — https://www.ayuntamiento.es/guisando/ (consultado 2026-09-19).
 - AEMET, coordenadas de El Hornillo — https://www.aemet.es/es/eltiempo/prediccion/municipios/hornillo-el-id05100 (consultado 2026-09-19).

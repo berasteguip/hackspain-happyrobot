@@ -25,12 +25,12 @@ __pycache__/
 *.egg-info/
 
 # Artefactos de ejecucion
-api/state.jsonl
-api/tests/.state-test.jsonl
+backend/api/state.jsonl
+backend/api/tests/.state-test.jsonl
 **/build.log
-sim/out/
-sim/cache/
-engine/logs/
+backend/sim/out/
+backend/sim/cache/
+backend/engine/logs/
 
 # macOS
 .DS_Store
@@ -42,7 +42,7 @@ engine/logs/
 # Mirror de la documentación oficial de HappyRobot.
 # Es material del proveedor, que en público está tras un access code: no se
 # publica en este repo (que es público). Se distribuye por privado al equipo.
-# Regenerar: HR_DOCS_CODE=<access-code> python3 scripts/scrape_docs.py
+# Regenerar: HR_DOCS_CODE=<access-code> python3 docs/_inbox/scrape_docs.py
 docs/_inbox/*happyrobot-docs-oficiales/
 docs/_inbox/*happyrobot-docs*.zip
 happyrobot-docs*.zip

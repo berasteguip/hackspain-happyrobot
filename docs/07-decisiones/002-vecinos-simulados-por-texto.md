@@ -20,7 +20,7 @@ propio: caro, frágil y no aporta nada al jurado frente a la alternativa.
 - Las conversaciones son reales y quedan en los Runs de HappyRobot.
 - **3 o 4 llamadas de voz reales**, mismo guion, a móviles del equipo o del jurado, cubren el
   criterio "interacción real" del reto.
-- Todo el cálculo geográfico (refugios, capacidad, rutas, prioridad) vive en `api/`; el agente
+- Todo el cálculo geográfico (refugios, capacidad, rutas, prioridad) vive en `backend/api/`; el agente
   pregunta `GET /instructions/{person_id}` y lee `say_this`. Motivo: el Python Sandbox de
   HappyRobot no tiene red saliente.
 

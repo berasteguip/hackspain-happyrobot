@@ -28,23 +28,26 @@ con el agente de HappyRobot, más unas pocas llamadas de voz reales.
 ## Componentes
 
 ```
-engine/  motor de escenario: el incendio avanza y la situación cambia en runtime
-  │      (POST /events/* con el perímetro que crece, el viento que gira, la carretera cortada)
+backend/engine/   motor de escenario: el incendio avanza y la situación cambia en runtime
+  │               (POST /events/* con el perímetro que crece, el viento que gira, la carretera cortada)
   ▼
-api/     estado de crisis: única fuente de verdad. Decide prioridad, rutas, convoyes,
-  │      patrullas y prioridad aérea. Cada cambio deja una entrada con motivo en el decision_log.
-  ├──────► web/dashboard/       puesto de mando (MapLibre + OSM): mapa, timeline, intervención
-  ├──────► apps/command-center/ CECOP (Vite + React + Mapbox), frontend de Vigía
-  ├──────► web/gps/             la página del enlace que comparte la ubicación del vecino
-  ├──────► sim/                 simula la evacuación completa y elige el plan que pierde a menos gente
-  └──◄──── HappyRobot           conversaciones con los 300 vecinos, llamadas, SMS, Slack
-data/    dataset sintético de ~120 casas / 300 personas, reproducible por semilla
-prompts/ guiones del agente de HappyRobot (onboarding, rerruta, patrulla, extracción) y guion de la demo
-docs/    base de conocimiento (ver docs/README.md); docs/_inbox/ es material crudo
+backend/api/      estado de crisis: única fuente de verdad. Decide prioridad, rutas, convoyes,
+  │               patrullas y prioridad aérea. Cada cambio deja una entrada con motivo en el decision_log.
+  ├──────► frontend/dashboard/       puesto de mando (MapLibre + OSM): mapa, timeline, intervención
+  ├──────► frontend/command-center/  CECOP (Vite + React + Mapbox), frontend de Vigía
+  ├──────► frontend/gps/             la página del enlace que comparte la ubicación del vecino
+  ├──────► backend/sim/              simula la evacuación completa y elige el plan que pierde a menos gente
+  └──◄──── HappyRobot                conversaciones con los 300 vecinos, llamadas, SMS, Slack
+backend/data/     dataset sintético de ~120 casas / 300 personas, reproducible por semilla
+happyrobot/       prompts/ (guiones del agente y de la demo) y workflows/ (exports de la plataforma)
+docs/             base de conocimiento (ver docs/README.md); docs/_inbox/ es material crudo
 ```
 
-Hay dos frontends (`web/dashboard` y `apps/command-center`). Unificarlos es una decisión pendiente
-del equipo; hasta entonces ambos consumen la misma `api/`.
+Cuatro carpetas en la raíz y nada más: `backend/` (Python), `frontend/` (navegador), `happyrobot/`
+(plataforma), `docs/` (conocimiento).
+
+Hay dos frontends (`frontend/dashboard` y `frontend/command-center`). Unificarlos es una decisión pendiente
+del equipo; hasta entonces ambos consumen la misma `backend/api/`.
 
 ## Arranque
 
@@ -71,9 +74,7 @@ make engine         #        empieza a moverse el escenario
 CECOP (Mapbox):
 
 ```bash
-cd apps/command-center
-npm install
-npm run dev
+make cecop          # equivale a: cd frontend/command-center && npm install && npm run dev
 ```
 
 Hace falta un token público de Mapbox. La app lo pide al abrir si no está en `.env`.

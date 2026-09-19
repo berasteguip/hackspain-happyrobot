@@ -15,7 +15,7 @@ Dos fuentes, no dupliques su contenido aquí:
 - **Docs de producto:** `docs/06-producto/02-escenario-incendio.md` (alcance, demo, backlog), `docs/06-producto/03-contrato-de-datos.md` (vinculante para el código), `docs/06-producto/04-brief-equipo-agente.md` (qué construye el equipo del agente), `docs/06-producto/01-vigia.md` (tesis Vigía y marco regulatorio).
 - **Qué expone HappyRobot de verdad:** `docs/02-happyrobot/03-workspace-y-limites-verificados.md` (verificado, marcas [OK] / [?]) y el mirror de docs oficiales en `docs/_inbox/` (ver `docs/02-happyrobot/00-documentacion-oficial.md`).
 - **MCP oficial de HappyRobot** en `.mcp.json` (Claude Code) y `.kiro/settings/mcp.json` (Kiro). Requiere autorizar OAuth una vez por máquina con la cuenta del equipo.
-- **Código:** `api/` (estado de crisis, fuente de verdad), `engine/` (motor de escenario), `sim/` (simulador de evacuación), `data/` (dataset sintético), `web/dashboard/` y `web/gps/` (MapLibre), `apps/command-center/` (CECOP en Vite + React + Mapbox). Hay dos frontends: unificarlos es decisión pendiente del equipo.
+- **Código:** `backend/api/` (estado de crisis, fuente de verdad), `backend/engine/` (motor de escenario), `backend/sim/` (simulador de evacuación), `backend/data/` (dataset sintético), `frontend/dashboard/` y `frontend/gps/` (MapLibre), `frontend/command-center/` (CECOP en Vite + React + Mapbox). Hay dos frontends: unificarlos es decisión pendiente del equipo.
 
 ## Convenciones
 

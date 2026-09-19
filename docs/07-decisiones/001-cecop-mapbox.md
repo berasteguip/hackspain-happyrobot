@@ -10,7 +10,7 @@ cerrados, y Mapbox no vive de serie en esa superficie.
 
 ## Decisión
 
-El mando va en `apps/command-center` (Vite + React + Mapbox GL JS). HappyRobot
+El mando va en `frontend/command-center` (Vite + React + Mapbox GL JS). HappyRobot
 entra por las llamadas; el mapa es nuestro. Las Apps de la plataforma se
 evalúan más tarde si hay que incrustar el CECOP dentro de HappyRobot.
 

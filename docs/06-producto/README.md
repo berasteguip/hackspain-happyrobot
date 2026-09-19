@@ -12,13 +12,15 @@ refugios con capacidad, lista viva de casas sin respuesta.
 | [`02-escenario-incendio.md`](02-escenario-incendio.md) | **El producto**: qué hacemos, cómo decide, qué se enseña en la demo, backlog (sección 14) | Todo el equipo |
 | [`03-contrato-de-datos.md`](03-contrato-de-datos.md) | **Vinculante**: entidades, API, prioridad. Ningún componente inventa campos | Quien escribe código |
 | [`04-brief-equipo-agente.md`](04-brief-equipo-agente.md) | Qué construye el equipo del agente de HappyRobot y qué le da la API | Equipo del agente |
-| [`05-routing-zonas-evitar.md`](05-routing-zonas-evitar.md) | Qué proveedor de rutas evita polígonos (Google no); base de `api/` y `sim/` | Quien toca rutas |
+| [`05-routing-zonas-evitar.md`](05-routing-zonas-evitar.md) | Qué proveedor de rutas evita polígonos (Google no); base de `backend/api/` y `backend/sim/` | Quien toca rutas |
 
-Guiones del agente y de la demo: [`../../prompts/`](../../prompts/README.md)
+Guiones del agente y de la demo: [`../../happyrobot/prompts/`](../../happyrobot/prompts/README.md)
 (onboarding, rerruta urgente, patrulla y mando, extracción, workflows, guion de demo).
 
-Código: [`../../api`](../../api) (estado de crisis), [`../../engine`](../../engine)
-(el escenario se mueve), [`../../sim`](../../sim) (simulador), [`../../data`](../../data)
-(dataset sintético), [`../../web`](../../web) (dashboard MapLibre + página GPS),
-[`../../apps/command-center`](../../apps/command-center) (CECOP Mapbox).
+Código: [`../../backend/api`](../../backend/api) (estado de crisis),
+[`../../backend/engine`](../../backend/engine) (el escenario se mueve),
+[`../../backend/sim`](../../backend/sim) (simulador), [`../../backend/data`](../../backend/data)
+(dataset sintético), [`../../frontend/dashboard`](../../frontend/dashboard) (puesto de mando MapLibre),
+[`../../frontend/gps`](../../frontend/gps) (página GPS del vecino),
+[`../../frontend/command-center`](../../frontend/command-center) (CECOP Mapbox).
 Hay dos frontends; ver [decisión 003](../07-decisiones/003-frontend-y-dataset-unicos.md).

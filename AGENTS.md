@@ -15,7 +15,7 @@ este.
 - **Estado actual (19 sep, mediodía):** alcance de producto cerrado en
   `docs/06-producto/02-escenario-incendio.md` (guiado individual de evacuación en incendios
   forestales; 300 vecinos simulados con personalidad que hablan con HappyRobot por texto,
-  decisión 002). Hay dos frontends (`web/dashboard`, `apps/command-center`) y dos datasets
+  decisión 002). Hay dos frontends (`frontend/dashboard`, `frontend/command-center`) y dos datasets
   (Zamora, Ávila): unificarlos es la decisión 003, pendiente del equipo. La base de
   conocimiento sigue siendo obligatoria.
 
@@ -23,15 +23,19 @@ este.
 ## 2. Cómo está organizado el repo
 
 ```
-api/                 Estado de crisis (FastAPI): única fuente de verdad, decide prioridad, rutas, refugios
-engine/              Motor de escenario: el incendio avanza y cambia la situación en runtime
-sim/                 Simulador de evacuación: elige el plan que pierde a menos gente
-data/                Dataset sintético (~120 casas / 300 personas, semilla fija) y validador
-web/dashboard        Puesto de mando (MapLibre + OSM)      } dos frontends; ver docs/07-decisiones/003
-apps/command-center  CECOP (Vite + React + Mapbox)         }
-web/gps              Página del enlace que comparte la ubicación del vecino
-prompts/             Guiones del agente de HappyRobot y guion de la demo
-docs/                Base de conocimiento. OCHO carpetas, no crear más:
+backend/     Todo el Python. Un venv por paquete (make install). Tests: make test
+  api/         Estado de crisis (FastAPI): única fuente de verdad, decide prioridad, rutas, refugios
+  engine/      Motor de escenario: el incendio avanza y cambia la situación en runtime
+  sim/         Simulador de evacuación: elige el plan que pierde a menos gente
+  data/        Dataset sintético (~120 casas / 300 personas, semilla fija) y validador
+frontend/    Todo lo que se abre en un navegador
+  dashboard/       Puesto de mando (MapLibre + OSM)      } dos frontends; ver docs/07-decisiones/003
+  command-center/  CECOP (Vite + React + Mapbox)         }
+  gps/             Página del enlace que comparte la ubicación del vecino
+happyrobot/  Lo que vive en la plataforma de HappyRobot
+  prompts/     Guiones del agente (onboarding, rerruta, patrulla, extracción) y guion de la demo
+  workflows/   Exports JSON de los workflows (vacía hoy)
+docs/        Base de conocimiento. OCHO carpetas, no crear más:
   00-meta/           Convenciones de escritura
   01-evento/         HackSpain y el enunciado oficial del reto (02-reto-happyrobot.md)
   02-happyrobot/     Empresa, plataforma, qué expone de verdad, API/SDK, preguntas para el stand
@@ -42,6 +46,12 @@ docs/                Base de conocimiento. OCHO carpetas, no crear más:
   07-decisiones/     Decisiones cerradas y propuestas abiertas (ADR ligero)
   _inbox/            Material crudo sin procesar (el mirror de docs.happyrobot.ai no se versiona)
 ```
+
+**Regla de estructura:** en la raíz solo esas cuatro carpetas más `README.md`, `AGENTS.md`,
+`CLAUDE.md`, `Makefile`, `.env.example` y la config de herramientas (`.kiro`, `.cursor`, `.devin`,
+`.mcp.json`). Un componente nuevo va dentro de `backend/`, `frontend/` o `happyrobot/`; no se crean
+carpetas nuevas en la raíz. Cada paquete de `backend/` es autónomo (su `requirements.txt`, su
+`tests/`) y se arranca desde el `Makefile` de la raíz.
 
 Índice y ruta de lectura: [`docs/README.md`](docs/README.md).
 

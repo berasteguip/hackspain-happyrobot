@@ -8,7 +8,7 @@
 - **Vosotros**: el workflow de HappyRobot que habla por texto con 300 vecinos simulados, extrae los datos
   de cada casa, se los manda a nuestra API, recibe la instrucción y se la dice al vecino. Mismo guion en
   voz para 3 o 4 llamadas reales a móviles del equipo o del jurado. Y el workflow que avisa a la patrulla.
-- **Nosotros (api/)**: mapa, refugios, capacidad, rutas, prioridad. El agente **no calcula nada geográfico**:
+- **Nosotros (backend/api/)**: mapa, refugios, capacidad, rutas, prioridad. El agente **no calcula nada geográfico**:
   pregunta a `GET /instructions/{person_id}` y lee `say_this`. Motivo: el Python Sandbox de HappyRobot no
   tiene red saliente, así que dentro de la plataforma no se puede consultar nada externo.
 

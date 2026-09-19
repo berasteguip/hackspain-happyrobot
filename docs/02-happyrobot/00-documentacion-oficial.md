@@ -23,7 +23,7 @@ no la tienes, consíguela de una de estas dos formas:
 2. **Regenérala tú**, que tarda un par de minutos:
 
 ```bash
-HR_DOCS_CODE=<access-code> python3 scripts/scrape_docs.py
+HR_DOCS_CODE=<access-code> python3 docs/_inbox/scrape_docs.py
 ```
 
 El access code es el del hackathon; no lo escribas en ningún fichero del repo.
