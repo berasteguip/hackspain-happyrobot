@@ -75,6 +75,7 @@ export type Citizen = {
     runUrl?: string
     endReason?: string
     outcomeApplied?: boolean
+    zoneId?: string
   }
 }
 

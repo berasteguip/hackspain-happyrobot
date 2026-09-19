@@ -9,7 +9,7 @@ import type { Citizen, SafeZone } from './types'
 
 export const BRIDGE_URL = (import.meta.env.VITE_BRIDGE_URL as string | undefined) ?? 'http://127.0.0.1:8787'
 
-const WAVE_LOCALITIES = new Set(['Guisando', 'Arenas de San Pedro'])
+const WAVE_LOCALITIES = new Set(['Guisando'])
 const PERSONALITIES = ['cooperative', 'anxious', 'reluctant', 'confused']
 
 export type BridgeInstruction = {
@@ -51,7 +51,12 @@ function idNumber(id: string) {
   return Number(digits || '0')
 }
 
-// Mismo criterio que el simulador: el punto más cercano con plazas para todo el grupo.
+// Demo: los dos puntos de encuentro de Guisando, alternados (2 y 2) entre los llamados.
+const WAVE_ZONE_IDS = ['z-dehesa', 'z-risquillo']
+export function waveZoneFor(index: number, zones: SafeZone[] = SAFE_ZONES) {
+  return zones.find((zone) => zone.id === WAVE_ZONE_IDS[index % WAVE_ZONE_IDS.length]) ?? zones[0]
+}
+
 function zoneFor(citizen: Citizen, citizens: Citizen[], zones: SafeZone[] = SAFE_ZONES) {
   const size = groupSize(citizen)
   return [...zones]
@@ -102,7 +107,7 @@ function householdText(citizen: Citizen) {
 export function buildWavePeople(citizens: Citizen[], selected: Citizen[]): WavePerson[] {
   return selected.map((citizen, index) => {
     const n = idNumber(citizen.id)
-    const zone = zoneFor(citizen, citizens)!
+    const zone = waveZoneFor(index)
     const address = `Calle Real ${1 + (n % 60)}`
     const group = citizen.group
     const mobility = group?.mobility ?? 'walking'

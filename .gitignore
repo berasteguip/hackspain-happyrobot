@@ -18,3 +18,7 @@ dist/
 docs/_inbox/*happyrobot-docs-oficiales/
 docs/_inbox/*happyrobot-docs*.zip
 happyrobot-docs*.zip
+
+# Claves y estado local del puente
+.env
+sim/centralita/out/

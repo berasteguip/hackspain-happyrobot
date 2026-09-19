@@ -36,9 +36,18 @@ export function createHappyRobotClient(env) {
 
 // createToken con captura del cuerpo exacto en caso de error.
 async function createToken(client, apiKey, workflow_id, data, label) {
-  try {
-    return await client.chat.createToken({ workflow_id, data, ttl_seconds: 900 });
-  } catch (err) {
+  // Cortes breves del hotspot: reintenta antes de dar la conversación por perdida.
+  let err;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      return await client.chat.createToken({ workflow_id, data, ttl_seconds: 900 });
+    } catch (e) {
+      err = e;
+      if (!/fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|network/i.test(String(e?.message))) break;
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
+    }
+  }
+  {
     let raw = "";
     let status = "n/a";
     try {
@@ -239,5 +248,5 @@ export async function runConversation(client, agentData, personaData, opts = {})
       }
     }
   }
-  return { endReason, messages };
+  return { endReason, messages, agentSessionId: A.session_id, personaSessionId: V.session_id };
 }

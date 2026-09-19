@@ -5,9 +5,10 @@
 
 import { createServer } from "node:http";
 import { HERE, loadEnv, createHappyRobotClient, runConversation } from "./conversation.mjs";
+import { fetchOutcomeForSession, normalize } from "./pull.mjs";
 
 const env = loadEnv();
-const PORT = Number(env.BRIDGE_PORT || 8787);
+const PORT = Number(process.env.BRIDGE_PORT || env.BRIDGE_PORT || 8787);
 const BRIDGE_API_KEY = env.BRIDGE_API_KEY || "";
 const PUBLIC_BASE_URL = env.PUBLIC_BASE_URL || "http://127.0.0.1:5173";
 
@@ -61,18 +62,68 @@ function readBody(req) {
   });
 }
 
-// La plataforma a veces serializa booleanos/null como cadenas.
-function normalize(value) {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  if (value === "null" || value === "") return null;
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === "object") {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = normalize(v);
-    return out;
+// Mismo merge que POST /calls/outcome: parcial → añade campos presentes de
+// extracted a outcome.extracted sin tocar answered; completo → sustituye
+// conservando lo mergeado cuando el campo viene null. Devuelve state_version.
+function applyOutcome(call, body) {
+  call.version = (call.version ?? 0) + 1;
+  const extracted = body.extracted && typeof body.extracted === "object" ? body.extracted : {};
+  if (body.partial === true) {
+    call.partials.push(body);
+    call.outcome = call.outcome ?? { person_id: body.person_id, extracted: {} };
+    call.outcome.extracted = { ...(call.outcome.extracted ?? {}) };
+    for (const [k, v] of Object.entries(extracted)) {
+      if (v !== undefined) call.outcome.extracted[k] = v;
+    }
+  } else {
+    const prevExtracted = call.outcome?.extracted ?? {};
+    const mergedExtracted = { ...prevExtracted };
+    for (const [k, v] of Object.entries(extracted)) {
+      if (v !== null && v !== undefined) mergedExtracted[k] = v;
+    }
+    call.outcome = { ...body, extracted: mergedExtracted };
   }
-  return value;
+  return call.version;
+}
+
+// Tras terminar la conversación, si el webhook no ha traído el outcome en 5 s,
+// va a buscarlo a la API de HappyRobot (el túnel es frágil).
+function scheduleOutcomePull(call) {
+  setTimeout(async () => {
+    if (call.outcome && call.outcome.partial !== true) return;
+    try {
+      const r = await fetchOutcomeForSession(client, env.HR_WF_VIGIA_CHAT, call.agentSessionId, call.person_id, {
+        timeoutMs: 90000,
+        intervalMs: 6000,
+        sinceMs: Date.parse(call.startedAt ?? 0) || 0,
+      });
+      if (call.outcome && call.outcome.partial !== true) return; // llegó por webhook mientras tanto
+      if (!r.extracted) {
+        console.log(`[bridge] sin outcome tras 90 s · ${call.person_id}${r.error ? ` (${r.error})` : ""}`);
+        return;
+      }
+      const payload = {
+        source: "pull",
+        run_id: r.run_id,
+        person_id: call.person_id,
+        phone: call.agentData?.phone ?? null,
+        answered: r.answered ?? r.extracted.answered ?? true,
+        duration_s: null,
+        channel: "chat",
+        extracted: r.extracted,
+        agent_notes: r.extracted.agent_notes ?? null,
+        transcript_url: r.run_url,
+      };
+      applyOutcome(call, payload);
+      if (r.extracted.consent_position === true && !call.consent_position) {
+        call.consent_position = true;
+        call.links.push({ ts: new Date().toISOString(), simulated: true, url: `${PUBLIC_BASE_URL}/track?id=${encodeURIComponent(call.person_id)}` });
+      }
+      console.log(`[bridge] outcome por pull · ${call.person_id} · run ${r.run_id}`);
+    } catch (err) {
+      console.error(`[bridge] pull falló · ${call.person_id}:`, err?.message ?? err);
+    }
+  }, 5000);
 }
 
 function authOk(req) {
@@ -95,9 +146,11 @@ function pumpQueue() {
       },
       onEvent: (kind, detail) => console.log(`[${call.person_id}] evento ${kind}`, detail),
     })
-      .then(({ endReason }) => {
+      .then(({ endReason, agentSessionId, personaSessionId }) => {
         call.state = "done";
         call.endReason = endReason;
+        call.agentSessionId = agentSessionId;
+        call.personaSessionId = personaSessionId;
       })
       .catch((err) => {
         call.state = "failed";
@@ -107,6 +160,7 @@ function pumpQueue() {
       .finally(() => {
         call.endedAt = new Date().toISOString();
         running--;
+        scheduleOutcomePull(call);
         pumpQueue();
       });
   }
@@ -198,25 +252,11 @@ const server = createServer(async (req, res) => {
         if (body.person_id) calls.set(body.person_id, c);
         return c;
       })();
-      call.version = (call.version ?? 0) + 1;
-      const extracted = body.extracted && typeof body.extracted === "object" ? body.extracted : {};
-      if (body.partial === true) {
-        call.partials.push(body);
-        call.outcome = call.outcome ?? { person_id: body.person_id, extracted: {} };
-        call.outcome.extracted = { ...(call.outcome.extracted ?? {}) };
-        for (const [k, v] of Object.entries(extracted)) {
-          if (v !== undefined) call.outcome.extracted[k] = v;
-        }
-      } else {
-        const prevExtracted = call.outcome?.extracted ?? {};
-        const mergedExtracted = { ...prevExtracted };
-        for (const [k, v] of Object.entries(extracted)) {
-          if (v !== null && v !== undefined) mergedExtracted[k] = v;
-        }
-        call.outcome = { ...body, extracted: mergedExtracted };
+      applyOutcome(call, body);
+      if (body.partial !== true) {
         // Sin tools en el agente: el consentimiento llega por la extracción y el
         // enlace de ubicación lo "envía" el puente (simulado si no hay SMS real).
-        if (mergedExtracted.consent_position === true && !call.links.length) {
+        if (call.outcome?.extracted?.consent_position === true && !call.links.length) {
           call.consent_position = true;
           call.links.push({ ts: new Date().toISOString(), channel: "sms", simulated: true, url: `${PUBLIC_BASE_URL}/track?id=${body.person_id}`, source: "extracted" });
           console.log(`[bridge] enlace de ubicación (simulado) · ${body.person_id}`);

@@ -90,6 +90,13 @@ equipo; no las reabras sin hablarlo. La arquitectura objetivo (cinco capas, dos 
 contratos) y el hueco entre ella y el código está en
 [`docs/06-producto/02-pipeline-evacuacion.md`](docs/06-producto/02-pipeline-evacuacion.md).
 
+**Conexión con HappyRobot (funcionando, 19 sep tarde):** el mapa lanza conversaciones reales
+agente↔vecino simulado en la plataforma a través del puente `sim/centralita/`. Cómo funciona,
+cómo arrancarlo y el contrato para conectar otra app está en
+[`docs/06-producto/07-conexion-happyrobot.md`](docs/06-producto/07-conexion-happyrobot.md).
+Los workflows `Vigía · vecino (chat)` y `Vigía · vecino simulado` están publicados; no los
+edites en caliente (fork → cambios → publish).
+
 ### 7.1 Ramas
 
 | Rama | Qué contiene |

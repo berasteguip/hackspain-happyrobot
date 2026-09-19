@@ -5,7 +5,7 @@ import { INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS } fro
 import { advanceProtocol, DEMO_TIME_SCALE, groupSize, zoneUsage } from './simulation'
 import { createFireChecker } from './geo'
 import { createRoutePlanner } from './routing'
-import { applyWaveStatus, buildWavePeople, fetchWaveStatus, pickWaveCitizens, startWave } from './bridge'
+import { applyWaveStatus, buildWavePeople, fetchWaveStatus, pickWaveCitizens, startWave, waveZoneFor } from './bridge'
 import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
 const STATUS_LABEL: Record<Citizen['status'], string> = {
@@ -100,7 +100,7 @@ export function CommandCenter({ token }: { token: string }) {
       const now = performance.now()
       elapsedRef.current += Math.min((now - last) / 1000, 0.25) * DEMO_TIME_SCALE
       last = now
-      const advanced = advanceProtocol(citizensRef.current, elapsedRef.current, [], SAFE_ZONES)
+      const advanced = advanceProtocol(citizensRef.current, elapsedRef.current, [], SAFE_ZONES, { onlyHr: citizensRef.current.some((citizen) => citizen.hrCall) })
       updatePopulation(() => advanced.citizens)
       setElapsed(elapsedRef.current)
       if (advanced.events.length) setEvents((previous) => [...advanced.events.reverse(), ...previous].slice(0, 1800))
@@ -176,7 +176,8 @@ export function CommandCenter({ token }: { token: string }) {
     if (!selected.length) return
     const people = buildWavePeople(citizensRef.current, selected)
     const ids = new Set(selected.map((citizen) => citizen.id))
-    updatePopulation((current) => current.map((citizen) => ids.has(citizen.id) ? { ...citizen, hrCall: { state: 'queued' as const, transcript: [] } } : citizen))
+    const zoneById = new Map(selected.map((citizen, index) => [citizen.id, waveZoneFor(index).id]))
+    updatePopulation((current) => current.map((citizen) => ids.has(citizen.id) ? { ...citizen, hrCall: { state: 'queued' as const, transcript: [], zoneId: zoneById.get(citizen.id) } } : citizen))
     startWave(people).catch(() => {
       setRouteNotice('Puente HappyRobot no disponible; esos grupos siguen la simulación de demo.')
       updatePopulation((current) => current.map((citizen) => ids.has(citizen.id) ? { ...citizen, hrCall: undefined } : citizen))
@@ -293,6 +294,7 @@ function PersonDetail({ citizen, events, now, elapsed, onClose, onZoneSelect }: 
         <dl className="detail-fields"><div><dt>Agente</dt><dd>{citizen.call?.agent ?? 'No asignado'}</dd></div><div><dt>Respuesta</dt><dd>{citizen.call ? formatClock(new Date(citizen.call.answeredAt)) : 'Sin información'}</dd></div><div><dt>Comparte ubicación</dt><dd>{citizen.call ? citizen.call.consent === 'granted' ? 'Sí · demo' : 'No · demo' : 'No registrado'}</dd></div></dl>
       </section>
       {citizen.hrCall && <section className="detail-section"><h3>Conversación HappyRobot</h3>
+        {citizen.hrCall.zoneId && <p className="fine">Punto comunicado: {SAFE_ZONES.find((zone) => zone.id === citizen.hrCall?.zoneId)?.code} · {SAFE_ZONES.find((zone) => zone.id === citizen.hrCall?.zoneId)?.name}</p>}
         <p className="fine">Estado: {{ queued: 'En cola', talking: 'En curso', done: 'Terminada', failed: 'Fallida' }[citizen.hrCall.state]}{citizen.hrCall.endReason ? ` · ${citizen.hrCall.endReason}` : ''}</p>
         {citizen.hrCall.transcript.length ? <ol className="feed hr-transcript">{citizen.hrCall.transcript.map((line, index) => <li key={index}><time>{formatClock(new Date(line.ts))}</time><div><p><strong>{line.speaker === 'A' ? 'VIGÍA' : 'VECINO'}</strong> · {line.text}</p></div></li>)}</ol> : <p className="fine">Sin mensajes todavía.</p>}
         {citizen.hrCall.runUrl && <a className="source-link" href={citizen.hrCall.runUrl} target="_blank" rel="noreferrer">Ver run ↗</a>}

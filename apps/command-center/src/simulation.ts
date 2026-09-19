@@ -23,6 +23,7 @@ export function advanceProtocol(
   elapsedSec: number,
   prevEvents: CallEvent[],
   zones: SafeZone[] = SAFE_ZONES,
+  options: { onlyHr?: boolean } = {},
 ): { citizens: Citizen[]; events: CallEvent[] } {
   const events = [...prevEvents]
   const reserved = new Map(zones.map((zone) => [zone.id, zoneUsage(citizens, zone.id).reservedPeople]))
@@ -31,6 +32,8 @@ export function advanceProtocol(
   }
   const next = citizens.map((citizen, index): Citizen => {
     if (citizen.live || citizen.locationSource === 'gps') return citizen
+    // Con una ola real en marcha solo se mueve a quien se ha llamado de verdad.
+    if (options.onlyHr && !citizen.hrCall) return citizen
     // Un grupo con conversación real de HappyRobot en curso espera su resultado;
     // no lo mueve la máquina simulada. Al terminar (done/failed) vuelve al flujo.
     if (citizen.hrCall && citizen.hrCall.state !== 'done' && citizen.hrCall.state !== 'failed') return citizen
@@ -78,7 +81,9 @@ export function advanceProtocol(
       return { ...citizen, status: 'routing', routeState: undefined }
     }
     if (citizen.status === 'routing' && citizen.routeState === 'ready') {
-      const option = [...(citizen.routeOptions ?? [])].sort((a, b) => a.distanceM - b.distanceM).find((route) => {
+      // El punto comunicado en la conversación real va primero; si no es alcanzable, el más corto.
+      const preferred = citizen.hrCall?.zoneId
+      const option = [...(citizen.routeOptions ?? [])].sort((a, b) => Number(b.zoneId === preferred) - Number(a.zoneId === preferred) || a.distanceM - b.distanceM).find((route) => {
         const zone = zones.find((item) => item.id === route.zoneId)
         return zone && (reserved.get(zone.id) ?? 0) + groupSize(citizen) <= zone.capacity
       })
