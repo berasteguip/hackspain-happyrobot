@@ -262,6 +262,22 @@ def _dispatch(
         ok = False
         detail = "sin teléfono en la ficha"
         log.warning("no se puede contactar a %s: sin teléfono", person.id)
+    elif settings.secret_is_public:
+        # El cerrojo vive AQUÍ y no solo en `/calls/dispatch` porque el planner marca por su
+        # cuenta —convoy roto, persona en riesgo, instrucción que cambia— sin pasar por el
+        # despachador. Esa es precisamente la vía que dispara sin que nadie esté mirando, así
+        # que dejarla fuera del cerrojo lo convertía en decorativo.
+        simulated = True
+        ok = True
+        detail = (
+            "BLOQUEADO: HR_SHARED_SECRET es un valor de ejemplo del repo, y el repo es público. "
+            "Cámbialo (`openssl rand -hex 32`) antes de marcar de verdad."
+        )
+        log.error(
+            "[BLOQUEADO] %s a %s: la clave de esta API está publicada en el repo",
+            "llamada" if channel == Channel.call else "SMS",
+            person.name or person.id,
+        )
     elif not phone_allowed(person.phone):
         # No es un error: es el cerrojo haciendo su trabajo. Se registra igual para que en el
         # tablero se vea POR QUÉ ese punto del círculo no sonó.
