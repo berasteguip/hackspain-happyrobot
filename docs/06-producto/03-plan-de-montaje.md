@@ -13,10 +13,11 @@
 | Fuente de verdad en runtime | **`api/`** (FastAPI, estado en memoria + `decision_log`) | Ya existe con prioridad, aforo, rutas y bucles. El mapa pasa a ser un cliente. |
 | Rutas | **Mapbox Directions `alternatives=true` + filtro contra polígono en `api/`**, sin Valhalla | Sin infraestructura extra; es literalmente el dibujo de la biblia. Valhalla queda como opción si sobra tiempo. |
 | Sin ruta segura | **No se emite ruta.** Estado `needs_rescue`, decisión `rescue_required`, sube a patrulla | Principio de la biblia. Se elimina el suelo `StraightProvider` de la cadena por defecto. |
-| Workflows HappyRobot | **Nuevos, con prefijo `Vigía ·`**; `Triaje incendios — MVP` y `test` de Pablo **no se tocan** | Se reutiliza el prompt de Triaje como base (fork del contenido, no de la versión). Nada publicado ni llamadas reales sin revisión del equipo. |
-| Vecinos simulados | **LLM en `api/` interpretando personas (`POST /persona/{id}/reply`)** como camino seguro; **canal chat/e2e de HappyRobot** como camino preferido si se verifica mañana | El primero depende solo de nosotros; el segundo "exprime HappyRobot" y deja transcripciones en Runs. |
+| Workflows HappyRobot | **Nuevos, en la carpeta `Vigía`**; `Triaje incendios — MVP` y `test` de Pablo **no se tocan** | Se reutilizan los guiones de `prompts/01` y `05`. Nada publicado ni llamadas reales sin revisión del equipo. |
+| Vecinos simulados | **Chat de HappyRobot**: trigger *Chatbot Request* + *Inbound Text Agent* (canal chatbot). `api/` abre las sesiones con `chat.createToken` y un LLM contesta en carácter | Verificado el 19 sep por MCP: los dos nodos existen. Es "agentes que se contestan" dentro de la plataforma, con transcripciones en Runs y sin números de teléfono. Respaldo: `POST /persona/{id}/reply` con `Generate` + `Loop` (decisión 002). |
+| Demo | **Ejecutada antes de presentar y grabada.** El jurado no llama ni recibe nada | Lo que se enseña son los Runs de HappyRobot, el mapa y el `decision_log`. No hay workflow "web call para el jurado". |
 | Datos sintéticos | Teléfonos en `+3460099xxxx`, etiqueta "DATOS SINTÉTICOS" visible, `ALLOW_REAL_CALLS=false` | Regla del contrato §6. |
-| Rama de trabajo | `integracion/vigia`, creada desde `context/reto-happyrobot` + `devin/vigia-grupos-puntos-encuentro` | `main` no se toca hasta que haya demo end-to-end. |
+| Rama de trabajo | `main` ya integra `context/reto-happyrobot`. El trabajo de Mapbox se integra desde `devin/vigia-grupos-puntos-encuentro` | Sin force-push. |
 
 ## 1. Lo que ya está y se reutiliza (no se reescribe)
 
@@ -93,60 +94,68 @@ estado y rutas apareciendo; `npm test`, `build`, `lint` limpios; test de navegad
 **Verificación:** `pytest api`; en el mapa, arrastrar el polígono sobre una carretera reasigna a los afectados y
 alguien queda en rescate con motivo visible.
 
-### F4 · Entregable HappyRobot (workflows nuevos `Vigía ·`)
+### F4 · Entregable HappyRobot (carpeta `Vigía`)
 
-**Entregable:** tres workflows en borrador, probados con `test_all`, revisados por Pablo antes de publicar.
+**Estado 19 sep, 12:40 — WF-1 ya creado en borrador por MCP** (no publicado, `test_all` pendiente):
+`Vigía · vecino (chat)`, id `01a0b937-7bf9-7a6d-be1a-ad6b824dedc0`, versión `01a0b937-7c0a-776b-a36a-d70a17fd6dbb`,
+editor: https://platform.eu.happyrobot.ai/hackspainteam11/workflows/z38ck8uuypre/editor/fr4t4hipau37
 
-**WF-1 `Vigía · llamada vecino`**
-- Trigger **Webhook** con el contrato 02→03: `person_id, phone, name, priority, assigned_shelter,
-  known_context{village, address, household_hint, prior_level}`, `channel` (`text|voice`).
-- **Agente** (texto para simulados, voz para reales; mismo prompt). Prompt = Triaje de Pablo +
-  secciones nuevas: identificarse como IA (art. 50), pedir consentimiento y **enviar enlace de ubicación**,
-  preguntar **composición del grupo y movilidad**, comunicar el **punto de encuentro que diga
-  `get_instructions`** (el agente no decide destino), preguntar por **vecinos**, nunca ordenar evacuar.
-- Tools: `get_instructions` → Webhook GET `/instructions/{person_id}`; `send_location_link` → Webhook POST
-  `/links/send` (api simula el SMS si `ALLOW_REAL_CALLS=false`, y devuelve la URL `/track?id=`);
-  `report_neighbor` → Webhook POST `/calls/outcome` parcial. Transfer al operador en los cinco criterios.
-- **AI Extract** con el contrato 03→05 exacto (`declared_location, will_evacuate, casualty, mobility,
-  vulnerable_people[], neighbor_mention[], location_coords, location_confidence, consent_position,
-  people_at_home[]`), `null` cuando no se dijo. Descripción obligatoria en cada parámetro.
-- **Webhook POST `/calls/outcome`** al final, también en `answered: false`.
-- Variables de workflow: `API_BASE_URL` (túnel), `API_KEY` (`x-api-key`).
+```
+Trigger Chatbot Request  params: person_id, house_id, phone, first_name, village, address,
+   │                             priority, assigned_shelter, vulnerable_flag, known_context
+   ▼
+Inbound Text Agent "Vigía" (canal chatbot, es, gpt-5.6-luna, máx 6 min, cierre fijo)
+   ├─ Prompt: guion prompts/01 adaptado a Gredos/Ávila y a texto (usted, límite duro de cifras,
+   │          say_this literal, consentimiento libre, vulnerables, negativa, estafa, vecinos, 5 casos de humano)
+   ├─ tool get_instructions      → GET  {{API_BASE_URL}}/instructions/{{person_id}}   (x-api-key)
+   ├─ tool send_gps_link         → POST {{API_BASE_URL}}/links/send  {person_id, phone, channel, consent_quote}
+   ├─ tool register_vulnerable   → POST {{API_BASE_URL}}/calls/outcome  {partial: true, extracted.vulnerable_people[]}
+   └─ AI Extract "Extraer datos de la casa": los 12 campos de prompts/05 + agent_notes + answered
+        └─ POST {{API_BASE_URL}}/calls/outcome  payload completo del contrato §3 (+ channel: "chat", transcript_url)
+Variables: API_BASE_URL (dev: http://localhost:8000; prod: túnel), API_KEY (oculta), ORGANISMO
+```
 
-**WF-2 `Vigía · rellamada`** — trigger webhook `{person_id, reason, say_this, urgency}`, un turno, extrae
-`acknowledged`, POST `/calls/outcome`. Lo dispara `notify` en `route_recalculated`, `exit_reassigned`, `at_risk`.
+**Pendiente en WF-1 (bloquea `test_all`):** el validador de la plataforma sigue diciendo "Missing name;
+Channel must be selected" en el nodo del agente aunque la configuración lleva `name` y `channel: chatbot`.
+Falta un ajuste en el editor (seleccionar el canal Chatbot a mano) o descubrir el campo exacto. El nodo
+Extract ya se probó solo y devuelve `null` en todo con transcript vacío, como debe.
 
-**WF-3 `Vigía · llamada web (jurado)`** — trigger Web call, mismo agente de voz, `person_id` elegido desde
-el mapa ("añadir como una casa más"). Es la demo sin número de teléfono.
+**Dos endpoints nuevos que `api/` tiene que aceptar** (añadir al contrato `03-contrato-de-datos.md`):
+- `POST /links/send {person_id, phone, channel, consent_quote}` → simula/envía el SMS con `/track?id=` y
+  registra `consent_position: true` con la cita literal.
+- `POST /calls/outcome` con `partial: true`: actualiza solo los campos presentes sin mover el `status`.
 
-**Recorte:** WF-4 aviso a patrulla (SMS/Slack con aprobación humana) solo si sobra tiempo.
+**WF-2 `Vigía · rellamada`** — igual que WF-1 pero trigger webhook `{person_id, reason, say_this, urgency}`
+lanzado por `notify` en `route_recalculated` / `exit_reassigned` / `at_risk`; un turno; extrae
+`acknowledged`; POST `/calls/outcome`. Para el canal chat, `api/` abre la sesión y el vecino simulado contesta.
 
-**Pendiente de la organización:** número de teléfono / SIP trunk para 3–4 llamadas reales (pedir en el stand),
-créditos disponibles, límite de conversaciones en paralelo, y si el nodo Webhook espera respuesta síncrona.
+**WF-3 `Vigía · vecino (voz)`** — mismo agente y prompt con *Outbound Voice Agent*, para las 3–4 llamadas
+reales a móviles del equipo. **Solo si la organización consigue número/SIP.** No es para el jurado.
 
-**Verificación:** `test_all` en desarrollo; un run manual por webhook con una persona sintética y
-`ALLOW_REAL_CALLS=false`; la ficha de esa persona en el mapa cambia con lo extraído.
+**Recorte:** WF-4 aviso a patrulla (Slack con aprobación humana) solo si sobra tiempo.
+
+**Pendiente de la organización (stand):** número/SIP, créditos (150 chats × ~8 mensajes × ~7 créditos ≈ 8–9k
+por pasada), límite de sesiones de chat en paralelo, y si el `chat.createToken` está habilitado en la cuenta.
 
 ### F5 · Vecinos simulados que contestan (el canal de mensajería)
 
-**Entregable:** 150 conversaciones sintéticas por pasada, el resto de la población simulada solo en estado.
+**Entregable:** 150 conversaciones por pasada dentro de HappyRobot; el resto de la población simulada solo
+en estado.
 
-**Camino A (preferido, a verificar mañana a primera hora):** HappyRobot habla consigo mismo.
-- Opción A1: tokens de chat (`/chat/tokens`) para abrir sesiones de texto con el agente de WF-1; un proceso
-  nuestro (`sim/personas.py`) actúa de "usuario" con el LLM de persona. Transcripciones y Northstars en Runs.
-- Opción A2: `e2eScenarios` (tests adversariales con interlocutor simulado) si permiten definir la persona
-  y disparar en lote.
-
-**Camino B (seguro, solo depende de nosotros):**
-- `POST /persona/{person_id}/reply {run_id, turn, agent_text}` → `{persona_text, ended}` en `api/`, con el
-  LLM que tengamos en `.env` (`PERSONA_LLM_API_KEY`), prompt por personalidad y ficha del vecino
-  (casa, familia, movilidad, vecinos conocidos, si miente sobre dónde está).
-- En HappyRobot, WF-1 en modo texto: `Loop` de `Generate` (turno del agente) + Webhook POST a
-  `/persona/{id}/reply`, 4–6 turnos, después el mismo Extract y `/calls/outcome`. Si `Loop` falla, el
-  fan-out de turnos lo hace `api/` disparando un workflow-turno por webhook.
-- Si los créditos no dan para 150, `WAVE_HR_LIMIT=N` en `api/`: N conversaciones van por HappyRobot y el
-  resto se resuelven con el LLM de persona contra un "agente Vigía" local con el mismo prompt, marcadas
-  `source: local`. Que se vea la diferencia en la ficha.
+- `sim/personas.py` (nuevo): para cada persona de la cola, `POST /chat/tokens` de la API v2 de HappyRobot
+  (`Authorization: Bearer HR_API_KEY`, `workflow_id` de WF-1, `data` = payload del trigger 02→03), abre el
+  WebSocket del chat, recibe el mensaje inicial del agente y responde con el LLM de persona hasta que el
+  agente cierra o se llega a 8 turnos. Concurrencia configurable (`WAVE_CONCURRENCY`, empezar en 5).
+- LLM de persona: clave en `.env` (`PERSONA_LLM_API_KEY`, `PERSONA_LLM_MODEL`). Prompt por personalidad
+  (`cooperative 60 % · anxious 15 % · reluctant 10 % · confused 7 % · no_answer 5 % · wrong_info 3 %`) con
+  la ficha del vecino: casa, familia, movilidad, coche, smartphone, vecinos conocidos, si está fuera. Los
+  `no_answer` no abren sesión: `api/` registra `answered: false` directamente. Los `wrong_info` declaran un
+  sitio y su GPS simulado los pone en otro.
+- Opción para enseñar "los dos lados en la plataforma": WF-P `Vigía · vecino simulado` (webhook → AI Generate
+  en carácter). Solo si sobran créditos; por defecto la persona vive en `api/`.
+- Si `chat.createToken` no está disponible: respaldo de la decisión 002 (`POST /persona/{id}/reply` +
+  `Generate` + `Loop` en HappyRobot), o `WAVE_HR_LIMIT=N` con el resto resuelto por un agente local con el
+  mismo prompt y marcado `source: local`.
 
 **Movimiento de la población:** `engine/population.py` (nuevo) mueve a los sintéticos por
 `assigned_route` a la velocidad del más lento del núcleo, a escala del reloj, y hace `POST /positions`
@@ -165,17 +174,18 @@ llegadas contadas por personas en los PE; luego 150.
   prioridad alta → WF-1 la llama. Debe verse el punto nuevo aparecer en el mapa.
 - Túnel `cloudflared` para `api/` y `/track` (HTTPS obligatorio para GPS en móvil).
 - Ensayo del guion (`prompts/07-guion-demo.md`) con el mapa: 1) censo gris, 2) Play, 3) llamadas y puntos
-  que se confirman, 4) rutas y aforos, 5) mover el polígono, 6) rellamadas, 7) un rescate físico, 8) llamada
-  web del jurado. Grabar el vídeo con datos sintéticos etiquetados.
+  que se confirman, 4) rutas y aforos, 5) mover el polígono, 6) rellamadas, 7) un rescate físico. **Se
+  ejecuta entero antes de presentar y se graba**; en la presentación se enseñan el vídeo, los Runs de
+  HappyRobot y el mapa. El jurado no participa.
 
 ## 3. Reparto propuesto
 
 | Quién | Qué |
 |---|---|
-| Yo (Mateo + Devin) | F1, F2, F3, `engine/population.py`, integración y ensayo. Borradores de WF-1/2/3 por MCP para que Pablo los revise. |
-| Pablo (workflows) | Revisar y afinar prompts de WF-1/2/3, tools, Extract; deprecar `test`; preguntar en el stand por número/SIP, créditos, Loop y chat API. |
-| Equipo `api/` (Luis/Allan) | `POST /wave/start`, `POST /clock/pause`, `POST /persona/{id}/reply`, `needs_rescue`, `MapboxProvider` si prefieren hacerlo ellos, `WAVE_HR_LIMIT`. |
-| Todos | Elegir el LLM de persona y su clave; decidir cuándo activar `ALLOW_REAL_CALLS` el día de la demo. |
+| Mateo + Devin | HappyRobot: WF-1 (hecho en borrador), WF-2, arreglo del canal, `test_all`. `sim/personas.py` (chat tokens + LLM de persona). F2 (mapa contra `api/`, polígono arrastrable). |
+| Pablo (workflows) | Revisar prompt y Extract de WF-1 frente a `prompts/01` y `05`; deprecar `test`; stand: número/SIP, créditos, chat tokens, sesiones en paralelo. |
+| Equipo `api/` (Luis/Allan) | F1 (escenario Gredos en `data/` y `engine/`), `POST /links/send`, `partial: true` en `/calls/outcome`, `POST /wave/start`, `POST /clock/pause`, `needs_rescue` + `MapboxProvider` (F3), `engine/population.py`. |
+| Todos | LLM de persona y su clave (`PERSONA_LLM_*`); `HR_API_KEY` en `.env`; decidir cuándo activar `ALLOW_REAL_CALLS`. |
 
 ## 4. Orden en el tiempo (36 h, ya consumidas ~20)
 
