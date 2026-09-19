@@ -31,7 +31,7 @@ export function WindOverlay({ mapRef, enabled, directionDeg, windKmh }: {
       return {
         position: [point.lng, point.lat], age: initial ? Math.random() * lifetime : 0, lifetime,
         speed: 0.75 + Math.random() * 0.5, length: 0.65 + Math.random() * 0.6,
-        opacity: 0.55 + Math.random() * 0.35, width: 1.2 + Math.random() * 0.8,
+        opacity: 0.55 + Math.random() * 0.35, width: 1 + Math.random() * 0.6,
       }
     }
     const draw = (time: number, advance = false) => {
