@@ -14,7 +14,7 @@ from engine.scenario import Console, Scenario, ScenarioRunner
 
 SCENARIO_FILE = Path(__file__).resolve().parents[1] / "scenarios" / "sierra-culebra.yaml"
 
-# Área verificada en `docs/research/geografia-zona.md`: nada del guion debe caer fuera.
+# Área verificada en `docs/03-dominio-crisis/05-geografia-sierra-culebra.md`: nada del guion debe caer fuera.
 BBOX = (41.55, 41.88, -6.30, -5.90)  # lat_min, lat_max, lon_min, lon_max
 
 # Lo único que el motor tiene permitido escribir.

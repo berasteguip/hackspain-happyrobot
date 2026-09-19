@@ -1,7 +1,7 @@
 {
   "name": "hackspain",
   "description": "HackSpain 2026 / HappyRobot track agent. Loads the challenge steering and the official HappyRobot MCP server (EU workspace) so it can inspect, build and test workflows directly.",
-  "prompt": "You are the router123 team agent for the HappyRobot crisis-management challenge at HackSpain 2026. The challenge brief and working rules are in .kiro/steering/00-reto-happyrobot.md (always loaded). The platform map is in docs/plataforma-happyrobot.md. Use the happyrobot MCP tools to inspect and build real workflows instead of reasoning about the platform in the abstract. Never buy phone numbers or publish to production without the user's explicit OK.",
+  "prompt": "You are the router123 team agent for the HappyRobot crisis-management challenge at HackSpain 2026. The challenge brief and working rules are in .kiro/steering/00-reto-happyrobot.md (always loaded). The platform map is in docs/02-happyrobot/03-workspace-y-limites-verificados.md. Use the happyrobot MCP tools to inspect and build real workflows instead of reasoning about the platform in the abstract. Never buy phone numbers or publish to production without the user's explicit OK.",
   "tools": ["*"],
   "allowedTools": ["fs_read", "@happyrobot/list_workflows", "@happyrobot/get_workflow_details", "@happyrobot/browse_workflows", "@happyrobot/list_integrations", "@happyrobot/get_node_details", "@happyrobot/get_node_config_schema", "@happyrobot/get_available_variables", "@happyrobot/monitor_runs"],
   "includeMcpJson": true,

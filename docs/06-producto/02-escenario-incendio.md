@@ -1,7 +1,7 @@
 # Idea principal: guiado individual de evacuación en incendios forestales
 
 > Estado: idea principal del equipo router123, alcance cerrado el 19 sep 2026. Escenario: incendio forestal en la España rural. Cliente objetivo: Protección Civil / CECOPI (B2G).
-> Enunciado del reto: `docs/reto-happyrobot.md`. Plataforma: `docs/plataforma-happyrobot.md`.
+> Enunciado del reto: `docs/01-evento/02-reto-happyrobot.md`. Plataforma: `docs/02-happyrobot/03-workspace-y-limites-verificados.md`.
 
 ## 1. Qué queremos hacer (en una frase)
 
@@ -23,7 +23,7 @@ Lo que los demás equipos van a hacer con "incendio forestal" es el enunciado li
 - **Posición.** La llamada da una posición declarada. Acto seguido el agente manda un SMS o WhatsApp con un enlace a una página nuestra que comparte GPS mientras esté abierta. Con eso la posición pasa de ser un punto a ser una trayectoria: sabemos hacia dónde va cada persona. Quien no tiene smartphone (mayores, fijo) se queda con la posición declarada y el agente le vuelve a llamar cada pocos minutos para actualizarla.
 - **Fuego.** Polígono y dirección de avance entran por webhook (motor de escenario en la hackathon; AEMET y perímetro oficial en producción).
 - **Rutas.** Cada persona tiene una ruta a su zona de salida calculada tratando el polígono del fuego y las carreteras cortadas como zonas prohibidas. Cuando el fuego se mueve, se recalculan las rutas afectadas y solo se escribe a quien le cambia la instrucción.
-  > ⚠️ **Corregido tras investigar** (`docs/research/routing-zonas-evitar.md`). Aquí decía "Google Maps", y **Google Maps no puede hacer esto**: el `RouteModifiers` de la Routes API v2 solo admite `avoidTolls`, `avoidHighways`, `avoidFerries`, `avoidIndoor` y `avoidTunnels` — cero soporte de polígonos. Tampoco OSRM (su `exclude` filtra clases del perfil Lua, no geometrías) ni Mapbox (categorías y hasta 50 puntos, no áreas). El proveedor que sí lo hace es **Valhalla** con `exclude_polygons`, que acepta anillos `[lon, lat]` y no está marcado experimental; se autoaloja en Docker y cada recálculo es sin estado, así que mover el fuego no obliga a reconstruir nada. Plan B: grafo propio de OSM (que además hace falta para el simulador de B1). Plan C: Openrouteservice autoalojado con `avoid_polygons`. **Evitar el polígono del fuego es el corazón de la idea, así que el proveedor no era un detalle de implementación.**
+  > ⚠️ **Corregido tras investigar** (`docs/06-producto/05-routing-zonas-evitar.md`). Aquí decía "Google Maps", y **Google Maps no puede hacer esto**: el `RouteModifiers` de la Routes API v2 solo admite `avoidTolls`, `avoidHighways`, `avoidFerries`, `avoidIndoor` y `avoidTunnels` — cero soporte de polígonos. Tampoco OSRM (su `exclude` filtra clases del perfil Lua, no geometrías) ni Mapbox (categorías y hasta 50 puntos, no áreas). El proveedor que sí lo hace es **Valhalla** con `exclude_polygons`, que acepta anillos `[lon, lat]` y no está marcado experimental; se autoaloja en Docker y cada recálculo es sin estado, así que mover el fuego no obliga a reconstruir nada. Plan B: grafo propio de OSM (que además hace falta para el simulador de B1). Plan C: Openrouteservice autoalojado con `avoid_polygons`. **Evitar el polígono del fuego es el corazón de la idea, así que el proveedor no era un detalle de implementación.**
 - **Aviso por geofence.** Si la trayectoria de alguien se mete en el cono de avance del fuego, el agente le llama en el acto con la corrección. La llamada la dispara el sistema, no una persona mirando el mapa.
 - **Orden de la cola.** Cuando hay que decidir a quién se atiende primero, la medida es minutos hasta que el fuego le alcanza (posición, dirección, velocidad, viento), no distancia. Alguien a 3 km a favor del viento está peor que alguien a 800 m en contra.
 
@@ -49,7 +49,7 @@ El director de extinción decide dónde descarga el helicóptero por dónde est�
 | Qué se hace ahora | Cada persona tiene una acción concreta (sal por X, sigue a Y, quédate en Z), cada patrulla una casa, cada medio aéreo un sector. | Agente de voz, Send SMS, Webhook, Slack/Sheets |
 | Cuándo tirar el plan | El fuego se mueve: se recalculan rutas, se reagrupan convoyes, cambia la lista de casas y la prioridad aérea. El dashboard muestra el diff con motivo. | Webhook trigger, `api/`, Twin |
 
-> ⚠️ **Corregido tras investigar** (`docs/research/happyrobot-api.md`). Esta tabla decía "Python Sandbox"
+> ⚠️ **Corregido tras investigar** (`docs/02-happyrobot/04-api-y-sdk.md`). Esta tabla decía "Python Sandbox"
 > en cuatro filas, y el Sandbox de HappyRobot **no tiene red saliente**: su lista blanca de módulos es
 > `math, datetime, pytz, re, dateutil, random, collections, json, _strptime, time, base64`, así que
 > `requests` no existe ahí y **ningún nodo de Python puede llamar a nuestra API**. Todo lo que sale de
@@ -82,7 +82,7 @@ Northstars en los prompts + workflow post-ejecución que lee los Runs: qué guio
 No se llama a Zamora, se llama a la zona de evacuación: 3 a 6 pueblos de 50 a 400 habitantes, cientos de números.
 
 - **Capa 0, ES-Alert al revés.** ES-Alert es cell broadcast: llega a todos los móviles que están físicamente en la zona sin saber quién son. Hoy es unidireccional. Nuestro giro: el ES-Alert lleva un número y el agente atiende inbound; quien llama entra en el mapa. Cubre turistas y gente fuera de todo registro, sin tocar datos personales.
-  > ⚠️ **Corregido tras investigar** (`docs/research/es-alert.md`). Cell broadcast es *unconfirmed push* por diseño: el emisor nunca sabe quién recibió el mensaje, así que no hay canal de vuelta que aprovechar. La idea sigue en pie pero hay que contarla bien: el estándar admite URLs y hasta 1.395 caracteres, así que lo que proponemos es **usar ese margen para meter un teléfono o un enlace que lleve a un canal que sí es bidireccional** (nuestra llamada). No es ES-Alert volviéndose bidireccional, es ES-Alert como puerta de entrada. Y no tenemos acceso al sistema oficial de Protección Civil, así que en la demo el ES-Alert se enseña simulado en una pantalla de móvil, presentado como propuesta de mejora del protocolo; lo que se ejecuta de verdad son las llamadas. El único ES-Alert real verificado (DANA de Valencia, 29 oct 2024, 20:11) fue una frase corta sin enlace ni teléfono: no hay precedente ni prohibición, es terreno no pisado, y así hay que decirlo.
+  > ⚠️ **Corregido tras investigar** (`docs/03-dominio-crisis/03-es-alert.md`). Cell broadcast es *unconfirmed push* por diseño: el emisor nunca sabe quién recibió el mensaje, así que no hay canal de vuelta que aprovechar. La idea sigue en pie pero hay que contarla bien: el estándar admite URLs y hasta 1.395 caracteres, así que lo que proponemos es **usar ese margen para meter un teléfono o un enlace que lleve a un canal que sí es bidireccional** (nuestra llamada). No es ES-Alert volviéndose bidireccional, es ES-Alert como puerta de entrada. Y no tenemos acceso al sistema oficial de Protección Civil, así que en la demo el ES-Alert se enseña simulado en una pantalla de móvil, presentado como propuesta de mejora del protocolo; lo que se ejecuta de verdad son las llamadas. El único ES-Alert real verificado (DANA de Valencia, 29 oct 2024, 20:11) fue una frase corta sin enlace ni teléfono: no hay precedente ni prohibición, es terreno no pisado, y así hay que decirlo.
 - **Capa 1, datos que el ayuntamiento y Protección Civil ya tienen.** Apps de bandos municipales, registro de personas vulnerables, teleasistencia (IMSERSO, Cruz Roja), fijos por dirección.
 - **Capa 2, la red vecinal.** En cada llamada el agente pregunta por los vecinos (quién vive al lado, su teléfono, si están). Con 30 llamadas se sacan 100 números.
 - **Capa 3, convenios de emergencia (B2G a medio plazo).** Contratos de suministro, celdas de las operadoras. La Ley del Sistema Nacional de Protección Civil obliga a colaborar y el RGPD cubre interés vital e interés público. Acuerdos que solo se activan al declararse la emergencia.
@@ -121,19 +121,19 @@ Dato útil para el marco B2G del pitch: HappyRobot cerró una Serie C de 150 M$ 
 
 ## 13. Verificación para el pitch
 
-La investigación de respaldo vive en `docs/research/`. Cada informe acaba con frases usables en el
+La investigación de respaldo vive en `docs/03-dominio-crisis/`. Cada informe acaba con frases usables en el
 pitch y con lo que quedó sin verificar; **nada marcado "NO VERIFICADO" se dice delante del jurado**.
 
 | Tema | Estado | Dónde |
 |---|---|---|
-| Víctimas en incendios españoles al evacuar | ✅ verificado | `research/incendios-espana-datos.md` |
-| ES-Alert: viabilidad de la Capa 0 | ⚠️ corregido, ver §9 | `research/es-alert.md` |
-| Marco legal (RGPD, Protección Civil, AI Act) | ✅ verificado, obliga a §16 | `research/marco-legal.md` |
-| Modelo de avance del fuego | ✅ verificado, simplificación asumida | `research/modelo-fuego.md` |
-| Rutas con zonas a evitar (¿lo hace Google?) | ⚠️ **no, no lo hace** — corregido en §3 | `research/routing-zonas-evitar.md` |
-| API de HappyRobot y preguntas para el stand | ⚠️ dos límites corregidos en §5 y §10 | `research/happyrobot-api.md` |
-| Competencia y estado del arte | en curso | `research/estado-del-arte.md` |
-| Geografía real de la zona | ✅ verificada, ya en el generador | `research/geografia-zona.md` |
+| Víctimas en incendios españoles al evacuar | ✅ verificado | `../03-dominio-crisis/04-incendios-datos-victimas.md` |
+| ES-Alert: viabilidad de la Capa 0 | ⚠️ corregido, ver §9 | `../03-dominio-crisis/03-es-alert.md` |
+| Marco legal (RGPD, Protección Civil, AI Act) | ✅ verificado, obliga a §16 | `../04-regulacion/02-marco-legal-llamadas-geolocalizacion.md` |
+| Modelo de avance del fuego | ✅ verificado, simplificación asumida | `../03-dominio-crisis/06-modelo-fuego.md` |
+| Rutas con zonas a evitar (¿lo hace Google?) | ⚠️ **no, no lo hace** — corregido en §3 | `05-routing-zonas-evitar.md` |
+| API de HappyRobot y preguntas para el stand | ⚠️ dos límites corregidos en §5 y §10 | `../02-happyrobot/04-api-y-sdk.md` |
+| Competencia y estado del arte | en curso | `../03-dominio-crisis/07-estado-del-arte.md` |
+| Geografía real de la zona | ✅ verificada, ya en el generador | `../03-dominio-crisis/05-geografia-sierra-culebra.md` |
 
 **La zona, con nombres y coordenadas reales** (ya cargada en `data/generate.py`): Losacio (90 hab.,
 donde se originó el incendio real de julio de 2022), Ferreruela de Tábara (409) y Sesnández de Tábara
@@ -149,7 +149,7 @@ el apodo "Laponia española" **no** corresponde a esta zona sino a la Serranía 
 Lo que sí se puede decir es que Aliste, con 5,85 hab./km², está más despoblada que esa región de
 referencia (7,98).
 
-**Precisión que hay que tener clara al hablar** (de `research/incendios-espana-datos.md`): "Sierra de
+**Precisión que hay que tener clara al hablar** (de `../03-dominio-crisis/04-incendios-datos-victimas.md`): "Sierra de
 la Culebra 2022" son **dos incendios distintos**, y confundirlos es el error que un jurado de Zamora
 detecta al vuelo. El de junio (Ferreras–Sarracín, 15–24 jun, ~29.670 ha) no tuvo muertos. El que
 importa para nosotros es el de **Losacio** (17 jul – 14 ago, ~35.960 ha, **4 fallecidos**), y de esos
@@ -180,7 +180,7 @@ Dependencias: B2, B3 y B4 necesitan B1. B1 es un fin de semana de JS (grafo OSM 
 ## 15. Qué existe ya, y el hueco que ocupamos
 
 El jurado va a preguntar "¿esto no lo hace ya alguien?". Sí y no, y la respuesta exacta es lo que nos
-diferencia. Investigación con fuentes primarias en `docs/research/estado-del-arte.md`.
+diferencia. Investigación con fuentes primarias en `docs/03-dominio-crisis/07-estado-del-arte.md`.
 
 **El competidor de verdad es Genasys Protect (antes Zonehaven)**, desplegado en decenas de condados de
 California. No es una startup: es producto en producción en emergencias reales. Y opera **por zonas**.
@@ -219,7 +219,7 @@ Los Ángeles.
 Un sistema que llama a vecinos por su nombre, les pide el GPS y le pasa a la Guardia Civil una lista de
 casas va a recibir la pregunta "¿esto es legal?". La respuesta corta es que sí, y que ya hay un
 precedente europeo que va más lejos que nosotros. Investigación completa con citas y fuentes en
-`docs/research/marco-legal.md`. **Nada de lo marcado aquí como no verificado se dice delante del jurado.**
+`docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md`. **Nada de lo marcado aquí como no verificado se dice delante del jurado.**
 
 ### 16.1 La respuesta de 30 segundos
 

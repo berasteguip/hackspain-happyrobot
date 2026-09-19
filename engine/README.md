@@ -60,7 +60,7 @@ en 88 segundos reales, o sea dentro de la ventana de demo. Los hitos, en orden:
 | 66 | `p-007` va hacia el fuego | alguien se desvía: llamada inmediata |
 | 74 | `p-001` se para 10 min | el coche guía de un convoy atascado en la vía cortada |
 
-La geografía es la verificada en `docs/research/geografia-zona.md` (Losacio, Ferreruela y
+La geografía es la verificada en `docs/03-dominio-crisis/05-geografia-sierra-culebra.md` (Losacio, Ferreruela y
 Sesnández de Tábara, zona segura en Tábara, ZA-P-2434). Dos avisos que el YAML también lleva
 escritos en su cabecera:
 
@@ -89,12 +89,12 @@ Perímetro radial: centro fijo y 72 radios en rumbos equiespaciados, cada uno cr
 `spread_rate_mh * factor(θ)`, con θ el ángulo al rumbo de cabeza. Por construcción el polígono es
 estrellado, nunca se autointersecta y crece de forma monótona.
 
-El factor es el del contrato (`docs/contrato-de-datos.md` §4):
+El factor es el del contrato (`docs/06-producto/03-contrato-de-datos.md` §4):
 `0.45 + 0.45·cos θ + 0.10·cos 2θ` → 1.00 en cabeza, 0.35 en flanco, 0.10 en cola. `cosine_decay`
 está escrito en la forma equivalente `0.35 + 0.45c + 0.20c²` (porque `cos 2θ = 2c² − 1`); es la
 **misma curva**, no hubo que alinear nada, y un test lo fija por escrito para que nadie "corrija"
 una de las dos formas creyendo que difieren. La elipse de Huygens/FARSITE que valida
-`docs/research/modelo-fuego.md` está implementada como `spread_law: ellipse`, pero el guion usa
+`docs/03-dominio-crisis/06-modelo-fuego.md` está implementada como `spread_law: ellipse`, pero el guion usa
 `cosine` porque es lo que manda el contrato.
 
 ## Lo que el motor escribe (y lo que no)

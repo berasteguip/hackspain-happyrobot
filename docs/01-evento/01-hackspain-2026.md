@@ -1,6 +1,6 @@
 # HackSpain 2026 y el track de HappyRobot
 
-> **Actualizado:** 2026-09-18 · **Estado:** incompleto — faltan los materiales oficiales del track
+> **Actualizado:** 2026-09-19 · **Estado:** estable. El enunciado oficial del track está íntegro en [`02-reto-happyrobot.md`](02-reto-happyrobot.md)
 > **En una frase:** 36 horas, 250 builders <30 años, cinco tracks liderados por startups,
 > €5.000 al ganador absoluto juzgado por VCs españoles; HappyRobot fue el **primer track
 > sponsor** anunciado.

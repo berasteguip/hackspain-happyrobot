@@ -1,7 +1,7 @@
 # Estado del arte y competencia — guiado individual de evacuación en incendios
 
 > Investigación de mercado para defender (o descartar) la idea del equipo router123 ante el jurado de HackSpain 2026.
-> Idea evaluada: `docs/escenario-incendio.md`. Plataforma: `docs/plataforma-happyrobot.md`.
+> Idea evaluada: `docs/06-producto/02-escenario-incendio.md`. Plataforma: `docs/02-happyrobot/03-workspace-y-limites-verificados.md`.
 > Metodología: 4 líneas de investigación web en paralelo (agentes con WebSearch/WebFetch). Varios
 > intentos se bloquearon por CAPTCHA de motores de búsqueda dentro de esta sesión y hubo que
 > relanzarlos; todos acabaron con al menos una pasada que consiguió fetch en vivo sobre fuentes
@@ -369,7 +369,7 @@ de zona) sí.
   sesión** (motores de búsqueda bloqueados). No usar ningún número en el pitch sin confirmarlo antes
   con fuente primaria — recomendado preguntar en el stand de HappyRobot o buscar en
   contrataciondelestado.es / prensa especializada antes de la demo.
-- **Créditos de voz de HappyRobot**: ~24 créditos/minuto según `docs/plataforma-happyrobot.md` §6 —
+- **Créditos de voz de HappyRobot**: ~24 créditos/minuto según `docs/02-happyrobot/03-workspace-y-limites-verificados.md` §6 —
   cifra interna del propio proyecto, no de mercado, útil para dimensionar el coste de la demo (no del
   pitch de mercado).
 

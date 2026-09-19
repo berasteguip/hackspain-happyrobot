@@ -8,7 +8,7 @@ Uso:
 Determinista: la misma combinación de --scenario/--seed/--houses produce SIEMPRE
 el mismo fichero, byte a byte. Por eso `meta.generated_at` NO es la hora real de
 ejecución (eso rompería la reproducibilidad): es una fecha de referencia fija del
-escenario. Ver docs/contrato-de-datos.md para la forma exacta de cada entidad.
+escenario. Ver docs/06-producto/03-contrato-de-datos.md para la forma exacta de cada entidad.
 
 Todo lo que este generador inventa (edades, nombres, quién contesta al teléfono...)
 vive en el campo `_sim` de House/Person, que la API ignora — nunca en un campo del
@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 # ============================================================================
-# GEOGRAFÍA VERIFICADA — fuente: docs/research/geografia-zona.md
+# GEOGRAFÍA VERIFICADA — fuente: docs/03-dominio-crisis/05-geografia-sierra-culebra.md
 # Comarca de Aliste / Tábara (Zamora). Coordenadas y poblaciones reales; los
 # aforos de las zonas seguras son estimaciones por tipo de instalación, no
 # cifras oficiales. Bloque aislado a propósito: cambiar estos números no debe

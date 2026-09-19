@@ -28,7 +28,7 @@ repetición**. Nada de contexto, nada de empatía, nada de "cuando pueda".
 ## 1.1 Qué sabe y qué no
 
 La lista es literalmente `GET /houses/no-answer` ordenada por `priority_rank`, y ese rango sale de
-`minutes_to_front` **menos** `patrol_eta_min` (`docs/contrato-de-datos.md` §2.2). O sea que la patrulla
+`minutes_to_front` **menos** `patrol_eta_min` (`docs/06-producto/03-contrato-de-datos.md` §2.2). O sea que la patrulla
 recibe dos cosas que no se le pueden ocultar:
 
 - las casas a las que **sí** llega antes que el fuego, en orden;
@@ -124,7 +124,7 @@ Aquí el sistema cambia de papel por completo: **no da órdenes, da una recomend
 una decisión.** Tres motivos, y los tres son defendibles:
 
 1. Es quien tiene autoridad legal para asignar medios. El sistema no.
-2. `docs/research/marco-legal.md` §1.2: priorizar el despacho de servicios de emergencia entra en el
+2. `docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md` §1.2: priorizar el despacho de servicios de emergencia entra en el
    **Anexo III.5.d del AI Act** (alto riesgo), con supervisión humana como obligación central. Aunque las
    obligaciones de alto riesgo no apliquen hasta dic-2027, diseñar hoy contra ellas es gratis y es lo
    correcto. Y delante de un jurado, es la respuesta a "¿y si se equivoca?".

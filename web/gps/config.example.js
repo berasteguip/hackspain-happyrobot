@@ -5,6 +5,6 @@ window.GPS_CONFIG = {
   // En desarrollo local con mock-api.py: http://localhost:8000
   API_BASE_URL: "http://localhost:8000",
 
-  // Header x-api-key exigido por la API (ver docs/contrato-de-datos.md, HR_SHARED_SECRET).
+  // Header x-api-key exigido por la API (ver docs/06-producto/03-contrato-de-datos.md, HR_SHARED_SECRET).
   API_KEY: "cambiame",
 };

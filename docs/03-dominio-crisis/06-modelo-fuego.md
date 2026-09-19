@@ -1,7 +1,7 @@
 # Modelo de propagación del fuego — investigación para el motor de escenario
 
-> Investigación de apoyo a `docs/contrato-de-datos.md` (campos `Fire.spread_rate_mh`, `Fire.head_bearing_deg`,
-> `Fire.cone_half_angle_deg`, `Person.minutes_to_front`) y a `docs/escenario-incendio.md` (sección 3,
+> Investigación de apoyo a `docs/06-producto/03-contrato-de-datos.md` (campos `Fire.spread_rate_mh`, `Fire.head_bearing_deg`,
+> `Fire.cone_half_angle_deg`, `Person.minutes_to_front`) y a `docs/06-producto/02-escenario-incendio.md` (sección 3,
 > "orden de la cola"; backlog B1-B4). No sustituye el contrato: lo explica y le da fuente.
 >
 > Regla seguida en todo el documento: **fórmula con unidades y con fuente, o se dice explícitamente que
@@ -125,7 +125,7 @@ De aquí:
 
 **Hallazgo importante que hay que admitir**: hicimos el cálculo numérico con estas fórmulas para varios
 vientos y **la elipse real de Anderson/Richards no reproduce exactamente el reparto "cabeza 100% /
-flanco 35% / cola 10%"** que ya fijamos en `contrato-de-datos.md`. Con LB=1.7 (viento moderado-fuerte,
+flanco 35% / cola 10%"** que ya fijamos en `../06-producto/03-contrato-de-datos.md`. Con LB=1.7 (viento moderado-fuerte,
 U≈4-5 m/s) sale cola≈10.6% (encaja) pero flanco real (foco)≈19% (no 35%); con LB=3 (viento fuerte) sale
 flanco≈6% y cola≈3% (los dos muy por debajo de 35%/10%). La razón física es que en una elipse real, si
 la cola es baja (10%), el flanco tiende a ser todavía más bajo, no al 35% — los dos porcentajes están
@@ -156,7 +156,7 @@ bloqueados por CAPTCHA/consentimiento). Lo que sí es de dominio público y no c
 de Sierra de la Culebra (Zamora, junio 2022) quemó del orden de 30 000 ha en condiciones de ola de calor
 y viento fuerte, y causó víctimas mortales entre quienes intentaban huir; pero **no puedo citar aquí una
 cifra de km/h de ese incendio concreto sin inventarla**. Recomiendo verificarlo antes del pitch (está
-además ya anotado como pendiente en `docs/escenario-incendio.md` sección 13) contra fuentes como el
+además ya anotado como pendiente en `docs/06-producto/02-escenario-incendio.md` sección 13) contra fuentes como el
 informe técnico de la Junta de Castilla y León o el "Estudio del comportamiento del fuego" del CIFOR-INIA.
 
 **Rango defendible para `spread_rate_mh` en el motor de escenario**, construido a partir de las cifras
@@ -451,7 +451,7 @@ bombero): sustituir el `rate_factor` fijo por uno derivado del viento real usand
 (sección 2), es decir calcular `LB` a partir de `wind.speed_kmh/3.6` (m/s) con la ecuación [13], `HB` con
 la [14], y usar la fórmula focal `a²/b` para el flanco real en vez de 35% fijo. Esto es más realista pero
 cambia los porcentajes actuales del contrato (ver hallazgo de la sección 2.3) — si se hace, hay que
-actualizar `contrato-de-datos.md` en el mismo commit (regla 1 del propio contrato).
+actualizar `../06-producto/03-contrato-de-datos.md` en el mismo commit (regla 1 del propio contrato).
 
 ---
 

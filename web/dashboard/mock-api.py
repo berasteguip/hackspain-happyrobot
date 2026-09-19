@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mock de `api/` para desarrollar y ENSAYAR el dashboard sin backend.
 
-Sirve los endpoints de lectura del contrato (`docs/contrato-de-datos.md` §3) con datos
+Sirve los endpoints de lectura del contrato (`docs/06-producto/03-contrato-de-datos.md` §3) con datos
 sintéticos conformes, y acepta las dos escrituras del dashboard:
 `POST /human/override` y `POST /human/approve`.
 

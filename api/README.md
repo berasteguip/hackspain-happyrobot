@@ -4,7 +4,7 @@ El **cerebro y la única fuente de verdad** del sistema de evacuación guiada. T
 ella: el motor de escenario (`engine/`) le manda lo que pasa, HappyRobot le manda lo que la gente
 dice por teléfono, el dashboard (`web/`) la lee y la corrige, y ella decide **y escribe por qué**.
 
-Contrato vinculante: [`docs/contrato-de-datos.md`](../docs/contrato-de-datos.md). Esta API no inventa
+Contrato vinculante: [`docs/06-producto/03-contrato-de-datos.md`](../docs/06-producto/03-contrato-de-datos.md). Esta API no inventa
 campos ni endpoints que no estén ahí.
 
 ## Lo que hace que no es un CRUD

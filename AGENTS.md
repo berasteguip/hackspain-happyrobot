@@ -12,26 +12,38 @@ este.
 - **Tesis de partida (aún abierta):** llevar los *AI workers* de HappyRobot —hoy desplegados
   en logística, energía, telco, seguros— al **sector público y la gestión de crisis**
   (112, protección civil, post-catástrofe tipo DANA).
-- **Estado actual:** hay un primer frontend del CECOP en `apps/command-center` y una
-  tesis de producto (Vigía) en `docs/06-producto/01-vigia.md`. La base de conocimiento
-  sigue siendo obligatoria.
+- **Estado actual (19 sep, mediodía):** alcance de producto cerrado en
+  `docs/06-producto/02-escenario-incendio.md` (guiado individual de evacuación en incendios
+  forestales; 300 vecinos simulados con personalidad que hablan con HappyRobot por texto,
+  decisión 002). Hay dos frontends (`web/dashboard`, `apps/command-center`) y dos datasets
+  (Zamora, Ávila): unificarlos es la decisión 003, pendiente del equipo. La base de
+  conocimiento sigue siendo obligatoria.
 
 
 ## 2. Cómo está organizado el repo
 
 ```
-apps/command-center  Frontend del CECOP (Vite + React + Mapbox)
-docs/
-  00-meta/           Convenciones de escritura y de la base de conocimiento
-  01-evento/         HackSpain: formato, track, reglas, criterios, timeline
-  02-happyrobot/     La empresa y la plataforma (qué hace, cómo, con quién)
-  03-dominio-crisis/ Gestión de emergencias en España y encaje de HappyRobot
-  04-regulacion/     AI Act, ENS, RGPD, LCSP — lo que condiciona vender a lo público
-  05-investigacion/  Notas de research fechadas, con fuentes
-  06-producto/       Problema, usuario, propuesta de valor, guion de demo
-  07-decisiones/     Decisiones tomadas (formato ADR ligero)
-  _inbox/            Material crudo sin procesar (PDFs, dumps del track, capturas)
+api/                 Estado de crisis (FastAPI): única fuente de verdad, decide prioridad, rutas, refugios
+engine/              Motor de escenario: el incendio avanza y cambia la situación en runtime
+sim/                 Simulador de evacuación: elige el plan que pierde a menos gente
+data/                Dataset sintético (~120 casas / 300 personas, semilla fija) y validador
+web/dashboard        Puesto de mando (MapLibre + OSM)      } dos frontends; ver docs/07-decisiones/003
+apps/command-center  CECOP (Vite + React + Mapbox)         }
+web/gps              Página del enlace que comparte la ubicación del vecino
+prompts/             Guiones del agente de HappyRobot y guion de la demo
+docs/                Base de conocimiento. OCHO carpetas, no crear más:
+  00-meta/           Convenciones de escritura
+  01-evento/         HackSpain y el enunciado oficial del reto (02-reto-happyrobot.md)
+  02-happyrobot/     Empresa, plataforma, qué expone de verdad, API/SDK, preguntas para el stand
+  03-dominio-crisis/ Emergencias en España, ES-Alert, datos de incendios, geografía, modelo de fuego, competencia
+  04-regulacion/     AI Act, ENS, RGPD, LCSP, marco legal de llamar y geolocalizar
+  05-investigacion/  Notas fechadas: barridos, contactos, entrevistas (YYYY-MM-DD-tema.md)
+  06-producto/       Qué construimos: escenario, contrato de datos (vinculante), brief del agente
+  07-decisiones/     Decisiones cerradas y propuestas abiertas (ADR ligero)
+  _inbox/            Material crudo sin procesar (el mirror de docs.happyrobot.ai no se versiona)
 ```
+
+Índice y ruta de lectura: [`docs/README.md`](docs/README.md).
 
 ## 2.bis Documentación oficial de HappyRobot (importante)
 
@@ -77,7 +89,10 @@ Empieza por `llms.txt` (índice completo). Guía de uso y páginas clave en
 
 ## 6. Cosas que aún NO sabemos (huecos a rellenar)
 
-- [ ] Enunciado oficial y criterios de evaluación del track de HappyRobot.
-- [ ] Qué acceso concreto nos dan a la plataforma (API key, entorno, límites, créditos).
-- [ ] Si hay restricción de vertical o es tema libre.
+- [x] Enunciado oficial y criterios de evaluación: `docs/01-evento/02-reto-happyrobot.md`.
+- [x] Restricción de vertical: no hay, la crisis la elegimos nosotros (mismo doc).
+- [ ] Saldo de créditos, paralelismo del Loop, webhook síncrono, tool call en voz:
+      `docs/02-happyrobot/05-preguntas-stand.md`. Preguntar en el stand.
 - [ ] Formato y duración de la demo final, y quién juzga.
+- [ ] Validación con quien ha coordinado emergencias reales:
+      `docs/05-investigacion/2026-09-19-contacto-ines-galindo-csic.md`.

@@ -1,7 +1,7 @@
 # Marco legal — llamadas masivas de evacuación, geolocalización y cesión a Guardia Civil
 
 > Investigación jurídica para el pitch de HackSpain 2026 (equipo router123, escenario de incendio forestal,
-> ver `docs/escenario-incendio.md` y `docs/contrato-de-datos.md`). Objetivo: tener una respuesta defendible
+> ver `docs/06-producto/02-escenario-incendio.md` y `docs/06-producto/03-contrato-de-datos.md`). Objetivo: tener una respuesta defendible
 > cuando el jurado pregunte "¿esto es legal?", sin inventar artículos.
 >
 > **Convención de esta nota:** cada afirmación normativa lleva una etiqueta:
@@ -69,7 +69,7 @@ mental de una persona física [...] que revelen información sobre su estado de 
 https://www.privacy-regulation.eu/es/4.htm)
 
 🟡 **INTERPRETACIÓN — el punto que el usuario pidió mirar con cuidado.** El contrato de datos del proyecto
-(`docs/contrato-de-datos.md`, campo `mobility`) usa valores `car · walking · reduced · immobile`, y `reduced`/`immobile`
+(`docs/06-producto/03-contrato-de-datos.md`, campo `mobility`) usa valores `car · walking · reduced · immobile`, y `reduced`/`immobile`
 llevan notas como "encamada, no sale sin ambulancia o vecino". Un dato que dice "esta persona está encamada" **revela
 información sobre su estado de salud** en el sentido literal del art. 4.15, así que **hay un argumento sólido para tratarlo
 como categoría especial del art. 9**, no como dato ordinario. Esto es importante porque:
@@ -125,7 +125,7 @@ finalidades. (Fuente: https://eur-lex.europa.eu/legal-content/ES/TXT/HTML/?uri=C
 tener obligaciones o habilitaciones especiales de localización en emergencias — pero regula la relación
 Estado-operadora (a través de norma nacional), no directamente la relación entre el vecino y un sistema de Protección
 Civil como el del proyecto. Es relevante para la **Capa 3** del escenario (convenios con operadoras, sección 9 de
-`docs/escenario-incendio.md`), no para la Capa 0-2 que usa llamada + SMS/WhatsApp con consentimiento directo del vecino.
+`docs/06-producto/02-escenario-incendio.md`), no para la Capa 0-2 que usa llamada + SMS/WhatsApp con consentimiento directo del vecino.
 
 ---
 
@@ -216,7 +216,7 @@ regulatorio europeo muy fuerte de que **la localización de quien llama a un ser
 servicio de emergencia llama, por analogía funcional) puede tratarse con una base jurídica distinta del consentimiento
 explícito** — probablemente interés público/interés vital, exactamente las bases del art. 6.1.d/6.1.e RGPD. El caso del
 proyecto es **más protector** que AML en un aspecto relevante para el pitch: el sistema **sí pide permiso explícito**
-("pedir permiso para conocer su ubicación", sección 3 de `docs/escenario-incendio.md`) antes de mandar el enlace de
+("pedir permiso para conocer su ubicación", sección 3 de `docs/06-producto/02-escenario-incendio.md`) antes de mandar el enlace de
 geolocalización, mientras que AML ni siquiera pregunta. Esto es un argumento de comparación útil, no una prueba de que el
 diseño del proyecto sea legal por sí solo — son dos flujos de datos distintos (llamante→112 vs. Protección Civil→vecino) y
 un jurista podría matizar hasta qué punto la analogía es aplicable.
@@ -312,7 +312,7 @@ incluidos los sistemas de triaje de pacientes en emergencia sanitaria.
 
 El sistema del proyecto hace varias de estas cosas exactamente:
 - Prioriza a quién se atiende primero por `minutes_to_front` y factores de vulnerabilidad (`priority_score`,
-  sección 4 de `docs/contrato-de-datos.md`) — esto es "establecer prioridad" de forma bastante literal, aunque el
+  sección 4 de `docs/06-producto/03-contrato-de-datos.md`) — esto es "establecer prioridad" de forma bastante literal, aunque el
   Anexo III habla de priorizar el **despacho de servicios de primera intervención** (policía/bomberos/sanidad), no de
   priorizar a quién se evacúa primero. Hay un matiz real aquí:
   - **Sí encaja con bastante claridad**: la priorización de qué **casas sin contestar** recibe la Guardia Civil primero
@@ -430,7 +430,7 @@ esperamos a que nos lo señalen."*
   ordinarios (interés público/interés vital, art. 6) y la del campo `mobility` si se trata como dato de salud (art. 9).
 - [ ] **Trazabilidad de la cesión a Guardia Civil/Policía Local**: aunque cae fuera de la LO 7/2021 (sección 7), documentar
   qué protocolo o convenio ampara la cesión de la lista de "casas sin contestar", y quién la autoriza (esto conecta con el
-  `DecisionLogEntry` y el `Approval Process` que ya contempla el diseño del sistema en `docs/escenario-incendio.md`
+  `DecisionLogEntry` y el `Approval Process` que ya contempla el diseño del sistema en `docs/06-producto/02-escenario-incendio.md`
   sección 7).
 - [ ] **Revisar si el módulo de priorización de patrullas/medios aéreos** entra en el Anexo III.5.d del AI Act (sección
   6.3) y, si aplica, planificar las obligaciones de alto riesgo antes de cualquier despliegue real (no antes de diciembre

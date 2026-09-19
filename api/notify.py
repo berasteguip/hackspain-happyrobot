@@ -45,7 +45,7 @@ def _webhook_headers() -> dict[str, str]:
     (Bearer) o a un receptor propio de pruebas (x-api-key), mandamos la clave por la vía que
     corresponde a su forma: si empieza por `sk_`, es de HappyRobot y va como Bearer.
     NO VERIFICADO qué espera exactamente un webhook trigger suyo → preguntar en el stand
-    (`docs/preguntas-stand-happyrobot.md`). Mientras no se sepa, mandar las dos no rompe nada:
+    (`docs/02-happyrobot/05-preguntas-stand.md`). Mientras no se sepa, mandar las dos no rompe nada:
     un receptor ignora la cabecera que no entiende.
     """
     key = settings.hr_api_key or settings.hr_shared_secret

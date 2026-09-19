@@ -1,4 +1,4 @@
-"""Modelos Pydantic de las entidades del contrato (`docs/contrato-de-datos.md`).
+"""Modelos Pydantic de las entidades del contrato (`docs/06-producto/03-contrato-de-datos.md`).
 
 Reglas del contrato respetadas aquí:
 - nombres de campo en inglés, comentarios en español;

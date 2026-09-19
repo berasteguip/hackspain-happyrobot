@@ -35,7 +35,7 @@ TAIL_FACTOR = 0.10  # a 180°
 #   factor(θ) = 0.45 + 0.45·cos θ + 0.10·cos 2θ
 # θ=0 → 1.00 · θ=90° → 0.35 · θ=180° → 0.10, y monótona decreciente en [0°, 180°].
 # Simplificación deliberada frente a la elipse de Huygens de FARSITE: ensancha el flanco (35% en vez
-# del 6–19% real), o sea avisa a MÁS gente de la necesaria. Derivación: docs/research/modelo-fuego.md.
+# del 6–19% real), o sea avisa a MÁS gente de la necesaria. Derivación: docs/03-dominio-crisis/06-modelo-fuego.md.
 DECAY_A0, DECAY_A1, DECAY_A2 = 0.45, 0.45, 0.10
 
 # Techo para no devolver infinitos al dashboard (12 h = "no es su problema ahora").

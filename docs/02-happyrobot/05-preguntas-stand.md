@@ -2,8 +2,8 @@
 
 > Lista cerrada de lo que **no hemos podido verificar** leyendo su documentación ni explorando el
 > workspace del equipo. Cada pregunta lleva por qué importa y qué hacemos si la respuesta es "no",
-> para que nadie se quede bloqueado esperando. Investigación previa: `docs/plataforma-happyrobot.md`
-> y `docs/research/happyrobot-api.md`.
+> para que nadie se quede bloqueado esperando. Investigación previa: `docs/02-happyrobot/03-workspace-y-limites-verificados.md`
+> y `docs/02-happyrobot/04-api-y-sdk.md`.
 >
 > Regla: esto no se adivina. Si algo de la plataforma no está claro, la respuesta es preguntar aquí,
 > no suponer. Cuando alguien conteste, **se anota la respuesta en este fichero con quién la dio**.
@@ -30,7 +30,7 @@ nuestro backend. Si la hay, Twin puede ser el espejo de estado que los agentes c
 plataforma y nos ahorra latencia.
 
 **Si la respuesta es "no":** ya está decidido y no se cae nada. El dashboard lee de `api/`, Twin es
-espejo y no fuente (`docs/contrato-de-datos.md` §0). Solo confirma la arquitectura que ya tenemos.
+espejo y no fuente (`docs/06-producto/03-contrato-de-datos.md` §0). Solo confirma la arquitectura que ya tenemos.
 
 ### 3. ¿Nos dais número español para llamadas salientes? ¿Y cuántos créditos tiene la cuenta?
 
@@ -101,5 +101,5 @@ nuestro propio callback y no depende de que ellos tengan uno.
 ## Respuestas recibidas
 
 _(Rellenar en el evento: pregunta, respuesta, quién la dio, hora. Si una respuesta invalida algo de
-`docs/plataforma-happyrobot.md`, se corrige allí en el momento — los documentos que no se corrigen
+`docs/02-happyrobot/03-workspace-y-limites-verificados.md`, se corrige allí en el momento — los documentos que no se corrigen
 cuando se aprende algo dejan de servir.)_

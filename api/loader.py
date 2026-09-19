@@ -210,7 +210,7 @@ def minimal_scenario() -> dict:
             {
                 "id": "x-b",
                 # Instalacion, coordenadas y carretera VERIFICADAS en
-                # docs/research/geografia-zona.md. El "pabellon municipal" y la "ZA-P-1508"
+                # docs/03-dominio-crisis/05-geografia-sierra-culebra.md. El "pabellon municipal" y la "ZA-P-1508"
                 # que habia aqui antes no existen en la investigacion: eran inventados.
                 "name": "Alcañices (CEIP Virgen de la Salud)",
                 "lat": 41.69887,

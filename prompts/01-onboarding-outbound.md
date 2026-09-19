@@ -28,7 +28,7 @@ es un fracaso.
 
 Obligación: **art. 50.1 y 50.5 del Reglamento (UE) 2024/1689 (AI Act)** — la persona tiene que saber que
 habla con un sistema de IA, de forma clara y distinguible, **a más tardar en la primera interacción**. En
-aplicación desde el **2 de agosto de 2026**: hoy ya obliga (`docs/research/marco-legal.md` §6.2).
+aplicación desde el **2 de agosto de 2026**: hoy ya obliga (`docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md` §6.2).
 
 Tensión real: el aviso legal compite con los 3 primeros segundos, que son los que deciden si la persona
 cuelga. Y quien cuelga se queda dentro del incendio. Probé cuatro redacciones:
@@ -267,7 +267,7 @@ mismo.» Eso es verdad: `vulnerable_people[]` sube `priority_score` (peso 0,20 p
 `vulnerable_inside` del sector.
 
 → `mobility: "immobile"` o `"reduced"` según lo que diga; `vulnerable_people[{description, needs}]`.
-⚠️ Este campo es el más sensible del sistema: `docs/research/marco-legal.md` §1.3 sostiene que
+⚠️ Este campo es el más sensible del sistema: `docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md` §1.3 sostiene que
 "persona encamada" puede ser **dato de salud** (art. 9 RGPD). El agente pregunta lo mínimo: si puede salir
 sola o no. **No pregunta el diagnóstico, ni la enfermedad, ni la edad exacta.** Minimización.
 
@@ -327,7 +327,7 @@ transfiere**: si hay una cola de llamadas y un solo humano, transferir por comod
 a quien lo necesita de verdad.
 
 > PENDIENTE DE CONFIRMAR EN EL STAND: `warm_handoff` y la tarjeta de traspaso aparecen en la investigación
-> del SDK (`docs/research/happyrobot-api.md` §7) pero `docs/plataforma-happyrobot.md` solo documenta el nodo
+> del SDK (`docs/02-happyrobot/04-api-y-sdk.md` §7) pero `docs/02-happyrobot/03-workspace-y-limites-verificados.md` solo documenta el nodo
 > **Transfer** genérico. Si la variante cálida no está disponible en el workspace del hackathon, el
 > Transfer se hace en frío y el resumen se manda por Slack al puesto de mando.
 

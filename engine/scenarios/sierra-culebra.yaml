@@ -1,6 +1,6 @@
 # Sierra de la Culebra (Zamora) — guion del escenario de demo
 #
-# Geografía REAL, verificada en `docs/research/geografia-zona.md`:
+# Geografía REAL, verificada en `docs/03-dominio-crisis/05-geografia-sierra-culebra.md`:
 #   Losacio               41.71088, -6.03987  (90 hab.)
 #   Ferreruela de Tábara  41.76583, -6.07194
 #   Sesnández de Tábara   41.80778, -6.07667
@@ -10,7 +10,7 @@
 #
 # ⚠️ Lo que NO es dato histórico (y no se presenta como tal en la demo):
 #   - El giro de viento 225° → 315° es una construcción narrativa razonada
-#     (`docs/research/geografia-zona.md` §7), no una medición del incendio de julio de 2022.
+#     (`docs/03-dominio-crisis/05-geografia-sierra-culebra.md` §7), no una medición del incendio de julio de 2022.
 #   - El punto de ignición y los tiempos son de diseño: están elegidos para que el giro de
 #     viento cambie de verdad a quién amenaza el fuego. Con un foco al SO de Losacio, un
 #     viento del 315° empuja la cabeza al 135° (SE) y se aleja del corredor

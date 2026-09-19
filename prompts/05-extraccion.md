@@ -1,7 +1,7 @@
 # 05 · Esquema de extracción (nodo AI Extract)
 
 > Convierte una conversación en el bloque `extracted` de `POST /calls/outcome`. **Exactamente ese bloque:
-> ni un campo más, ni uno menos.** Fuente: `docs/contrato-de-datos.md` §3 + `api/models.py`
+> ni un campo más, ni uno menos.** Fuente: `docs/06-producto/03-contrato-de-datos.md` §3 + `api/models.py`
 > (`CallExtracted`, `NeighborMention`, `VulnerablePerson`, `Mobility`).
 > Criterio de rúbrica: **Decisión sin datos completos** — este fichero es donde se decide qué es un dato y
 > qué es una suposición, y esa frontera es la que hace que el resto del sistema pueda razonar con huecos.
@@ -61,7 +61,7 @@ Listas por defecto `[]` (no `null`), igual que `Field(default_factory=list)` en 
 `refusal_reason`, `language`, `needs_callback`, `field_report`, `animals`, `scam_suspected`.
 **No se añaden por mi cuenta** (contrato §6.1: "no inventes campos"). Todos viajan dentro de `agent_notes`
 como texto, que es el sitio legítimo para lo que no tiene campo. Si el equipo los quiere estructurados, se
-añaden **primero** a `docs/contrato-de-datos.md` y a `api/models.py`, y luego aquí.
+añaden **primero** a `docs/06-producto/03-contrato-de-datos.md` y a `api/models.py`, y luego aquí.
 
 ---
 
@@ -135,7 +135,7 @@ Cómo puede moverse LA PERSONA CON LA QUE HABLAS. Valores permitidos, exactament
 ```
 
 ⚠️ **Minimización (art. 9 RGPD).** `reduced` e `immobile` pueden ser datos de salud
-(`docs/research/marco-legal.md` §1.3). El agente pregunta **si puede salir sola o no**, y nada más: ni
+(`docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md` §1.3). El agente pregunta **si puede salir sola o no**, y nada más: ni
 diagnóstico, ni enfermedad, ni edad exacta. El extractor **no completa** lo que no se preguntó.
 
 ### 2.6 `has_car` · booleano · anulable

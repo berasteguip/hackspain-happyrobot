@@ -426,7 +426,7 @@ class FireField:
         }
         others = [f for f in self.fronts if f is not p]
         if others and self.include_secondary_perimeters:
-            # OJO: campo no presente en docs/contrato-de-datos.md. Ver engine/README.md
+            # OJO: campo no presente en docs/06-producto/03-contrato-de-datos.md. Ver engine/README.md
             # ("Deudas con el contrato"): un GeoJSON Polygon no puede llevar dos frentes
             # disjuntos, y la unión convexa reclamaría como quemado terreno que no lo está.
             payload["secondary_perimeters"] = [f.perimeter_geojson() for f in others]

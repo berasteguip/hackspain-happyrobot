@@ -16,7 +16,7 @@ de todas las demás:
 ## 1. Por qué `say_this` y no una redacción del modelo
 
 `GET /instructions/{person_id}` devuelve, entre otras cosas, `say_this`: *"la frase literal, ya redactada,
-para que el TTS no improvise en algo que puede matar a alguien"* (`docs/contrato-de-datos.md` §3).
+para que el TTS no improvise en algo que puede matar a alguien"* (`docs/06-producto/03-contrato-de-datos.md` §3).
 
 Esa frase la produce `api/`, que es lo único que conoce el polígono del fuego, el corte de carretera, la
 salida asignada y el convoy. El modelo de voz **no tiene nada de eso**. Si el modelo adorna, pasan estas
@@ -47,7 +47,7 @@ llamada que llega tarde. La solución es una **marca de identidad**, no un aviso
 
 > **«Protección Civil, sistema automático.»**
 
-Defensa legal (`docs/research/marco-legal.md` §6.2): el art. 50.1 exige informar *a más tardar en la
+Defensa legal (`docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md` §6.2): el art. 50.1 exige informar *a más tardar en la
 primera interacción*. La primera interacción con esta persona fue la llamada de onboarding, donde el aviso
 se dio completo ("soy un sistema automático de inteligencia artificial"). Esta es una **interacción
 posterior del mismo sistema con la misma persona**, y "sistema automático" la reidentifica sin ambigüedad.

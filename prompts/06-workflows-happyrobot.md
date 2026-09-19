@@ -1,7 +1,7 @@
 # 06 · Workflows de HappyRobot
 
 > Qué workflows se crean, con qué trigger, y el grafo de nodos de cada uno.
-> **Solo se usan nodos que existen** según `docs/plataforma-happyrobot.md` §3 y §4 (recorrido del workspace
+> **Solo se usan nodos que existen** según `docs/02-happyrobot/03-workspace-y-limites-verificados.md` §3 y §4 (recorrido del workspace
 > el 18 sep 2026). Al final, §8, va la comprobación nodo por nodo.
 > Criterios de rúbrica: **Ejecución fuera del sistema** (todo lo que sale de aquí es una llamada, un SMS o
 > un mensaje real) y **Aprendizaje** (§7, Northstars).
@@ -16,7 +16,7 @@
 | Built-in | **Webhook GET/POST** · **Python Sandbox** · **Loop** · **Paths** · **Sleep** · **Function Call** · **Send SMS** · **Transfer** |
 | Integraciones | **Google Maps** · **Twin** · **Slack** · **Google Sheets** · **Redis** |
 
-Dos límites verificados en `docs/research/happyrobot-api.md` que dan forma a todos los grafos de abajo:
+Dos límites verificados en `docs/02-happyrobot/04-api-y-sdk.md` que dan forma a todos los grafos de abajo:
 
 1. **El Python Sandbox no tiene red saliente.** Módulos permitidos: `math, datetime, pytz, re, dateutil, random, collections, json, _strptime, time, base64`. Así que el Sandbox sirve para **formatear, ordenar y validar**, nunca para hablar con `api/`. Todo HTTP va por nodos **Webhook GET/POST**.
 2. **Una Tool de un Agent no llama a nuestra API por sí misma**: el nodo Tool tiene un **hijo** (normalmente un Webhook GET/POST) que hace la petición con los argumentos que el agente le pasa. Es el patrón de todas las tools de este documento.
@@ -53,8 +53,8 @@ LLM a decidir el orden de llamada sería meter no-determinismo en la única part
 necesita: la prioridad ya está calculada, y con su desglose.
 
 > ⚠️ **Plan B si `Loop` no se comporta como esperamos.** `Loop` aparece en el menú "+" del canvas
-> (`docs/plataforma-happyrobot.md` §4, marcado [OK]), pero en el catálogo de eventos del SDK que recoge
-> `docs/research/happyrobot-api.md` no aparece un evento `loop.*` explícito. **PENDIENTE DE CONFIRMAR EN EL
+> (`docs/02-happyrobot/03-workspace-y-limites-verificados.md` §4, marcado [OK]), pero en el catálogo de eventos del SDK que recoge
+> `docs/02-happyrobot/04-api-y-sdk.md` no aparece un evento `loop.*` explícito. **PENDIENTE DE CONFIRMAR EN EL
 > STAND**: semántica exacta del Loop (paralelismo, límite de iteraciones, qué pasa si una iteración falla).
 > Si da problemas, WF-0 se borra y **el fan-out lo hace `engine/`**: un `POST` al webhook de WF-1 por casa.
 > Cuesta 10 líneas de Python y elimina la dependencia. Esta es la opción segura si vamos con prisa.
@@ -240,8 +240,8 @@ trabajo, pero **depende de tener número**, así que no está en el camino crít
 ## 7. Northstars (el bonus de aprendizaje, sin inventar nada)
 
 Los Northstars son criterios que un auditor automático evalúa **en cada run**
-(`docs/plataforma-happyrobot.md` §8). Con la API de feedback (−2..+2) y el pulgar arriba en una observación
-de auditoría —que añade el caso como ejemplo positivo, según `docs/research/happyrobot-api.md`— se cierra un
+(`docs/02-happyrobot/03-workspace-y-limites-verificados.md` §8). Con la API de feedback (−2..+2) y el pulgar arriba en una observación
+de auditoría —que añade el caso como ejemplo positivo, según `docs/02-happyrobot/04-api-y-sdk.md`— se cierra un
 bucle real: **cada oleada de llamadas deja el guion mejor que la anterior**, y eso se puede enseñar en
 pantalla con dos ejecuciones.
 
@@ -292,7 +292,7 @@ pantalla con dos ejecuciones.
 
 ## 8. Comprobación: todos los nodos usados existen
 
-Cotejo contra `docs/plataforma-happyrobot.md` §3 (triggers) y §4 (nodos).
+Cotejo contra `docs/02-happyrobot/03-workspace-y-limites-verificados.md` §3 (triggers) y §4 (nodos).
 
 | Nodo / trigger usado | Dónde | ¿Consta en el doc? |
 |---|---|---|
@@ -324,7 +324,7 @@ Cotejo contra `docs/plataforma-happyrobot.md` §3 (triggers) y §4 (nodos).
 
 Cosas que **he nombrado y NO son nodos**, para que nadie las busque en el menú "+":
 - **Approval Process** es una **pestaña del workflow**, no un nodo, y la investigación del SDK
-  (`docs/research/happyrobot-api.md`) **no encontró nodo ni API** para él: probablemente es gobernanza de
+  (`docs/02-happyrobot/04-api-y-sdk.md`) **no encontró nodo ni API** para él: probablemente es gobernanza de
   versiones publicadas, no aprobación de decisiones en runtime. **PENDIENTE DE CONFIRMAR EN EL STAND.** La
   aprobación humana de decisiones operativas la implementa **nuestro** dashboard con
   `POST /human/approve`, que es donde tiene que estar.

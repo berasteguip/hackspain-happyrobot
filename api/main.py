@@ -66,7 +66,7 @@ app = FastAPI(
     title="Crisis State API — evacuación guiada en incendio",
     description=(
         "Estado vivo de la crisis, priorización, rutas y decisiones. "
-        "Contrato: `docs/contrato-de-datos.md`."
+        "Contrato: `docs/06-producto/03-contrato-de-datos.md`."
     ),
     version="1.0.0",
     lifespan=lifespan,

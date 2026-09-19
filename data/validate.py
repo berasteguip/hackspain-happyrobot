@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Valida un fichero de escenario contra docs/contrato-de-datos.md.
+"""Valida un fichero de escenario contra docs/06-producto/03-contrato-de-datos.md.
 
 Uso:
     python data/validate.py data/scenarios/sierra-culebra.json

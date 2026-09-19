@@ -18,12 +18,12 @@ con el agente de HappyRobot, más unas pocas llamadas de voz reales.
 
 | Si eres… | Lee |
 | --- | --- |
-| Persona nueva en el equipo | [`docs/README.md`](docs/README.md) (índice) y [`docs/reto-happyrobot.md`](docs/reto-happyrobot.md) (enunciado oficial) |
+| Persona nueva en el equipo | [`docs/README.md`](docs/README.md) (índice) y [`docs/01-evento/02-reto-happyrobot.md`](docs/01-evento/02-reto-happyrobot.md) (enunciado oficial) |
 | Un agente de IA | [`AGENTS.md`](AGENTS.md) (reglas) y [`CLAUDE.md`](CLAUDE.md) (estado del proyecto) |
-| Quien decide el producto | [`docs/escenario-incendio.md`](docs/escenario-incendio.md) y [`docs/06-producto/01-vigia.md`](docs/06-producto/01-vigia.md) |
-| Quien escribe código | [`docs/contrato-de-datos.md`](docs/contrato-de-datos.md) (**vinculante**: entidades, API, prioridad) |
-| Quien construye el agente de HappyRobot | [`docs/brief-equipo-agente.md`](docs/brief-equipo-agente.md) |
-| Quien toca la plataforma | [`docs/plataforma-happyrobot.md`](docs/plataforma-happyrobot.md) (qué expone de verdad, verificado) |
+| Quien decide el producto | [`docs/06-producto/02-escenario-incendio.md`](docs/06-producto/02-escenario-incendio.md) y [`docs/06-producto/01-vigia.md`](docs/06-producto/01-vigia.md) |
+| Quien escribe código | [`docs/06-producto/03-contrato-de-datos.md`](docs/06-producto/03-contrato-de-datos.md) (**vinculante**: entidades, API, prioridad) |
+| Quien construye el agente de HappyRobot | [`docs/06-producto/04-brief-equipo-agente.md`](docs/06-producto/04-brief-equipo-agente.md) |
+| Quien toca la plataforma | [`docs/02-happyrobot/03-workspace-y-limites-verificados.md`](docs/02-happyrobot/03-workspace-y-limites-verificados.md) (qué expone de verdad, verificado) |
 
 ## Componentes
 
@@ -39,6 +39,7 @@ api/     estado de crisis: única fuente de verdad. Decide prioridad, rutas, con
   ├──────► sim/                 simula la evacuación completa y elige el plan que pierde a menos gente
   └──◄──── HappyRobot           conversaciones con los 300 vecinos, llamadas, SMS, Slack
 data/    dataset sintético de ~120 casas / 300 personas, reproducible por semilla
+prompts/ guiones del agente de HappyRobot (onboarding, rerruta, patrulla, extracción) y guion de la demo
 docs/    base de conocimiento (ver docs/README.md); docs/_inbox/ es material crudo
 ```
 

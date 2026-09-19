@@ -1,9 +1,9 @@
 # 07 · Guion de demo (3 minutos)
 
-> Sigue los 5 pasos de `docs/escenario-incendio.md` §11. La demo pesa tanto como el sistema.
+> Sigue los 5 pasos de `docs/06-producto/02-escenario-incendio.md` §11. La demo pesa tanto como el sistema.
 > Reparto: **Luis** narra y lleva el relato · **Pablo** conduce el portátil (dashboard + motor de escenario)
 > · **un miembro del jurado** hace de vecino por `Web call`.
-> Regla de `docs/escenario-incendio.md` §13 que manda sobre todo este fichero: **nada marcado NO VERIFICADO
+> Regla de `docs/06-producto/02-escenario-incendio.md` §13 que manda sobre todo este fichero: **nada marcado NO VERIFICADO
 > se dice delante del jurado.**
 
 ---

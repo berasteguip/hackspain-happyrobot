@@ -1,7 +1,7 @@
 # Brief para el equipo del agente (la parte de "la gente")
 
 > Versión corta para pegar al equipo que monta los workflows de HappyRobot. El detalle de campos está
-> en `contrato-de-datos.md`; si falta algo, se añade ahí antes de inventarlo en el workflow.
+> en `03-contrato-de-datos.md`; si falta algo, se añade ahí antes de inventarlo en el workflow.
 
 ## Reparto
 

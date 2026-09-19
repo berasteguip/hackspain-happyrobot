@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mock de api/ para desarrollar web/gps/ sin la API real.
 Implementa POST /positions y GET /instructions/{person_id} del contrato
-(docs/contrato-de-datos.md). Uso: python3 mock-api.py [puerto]
+(docs/06-producto/03-contrato-de-datos.md). Uso: python3 mock-api.py [puerto]
 """
 import json
 import os

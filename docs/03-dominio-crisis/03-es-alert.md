@@ -238,7 +238,7 @@ Razones:
    viable es: **usar el CONTENIDO del mensaje ES-Alert (un texto con margen de sobra de caracteres, que el
    estándar permite llenar con una URL o un teléfono) como gancho para que la persona abra OTRO canal**
    (llamada saliente/entrante, enlace web) que sí es bidireccional. Eso es exactamente lo que propone el
-   escenario de incendio (`docs/escenario-incendio.md`).
+   escenario de incendio (`docs/06-producto/02-escenario-incendio.md`).
 2. **El estándar técnico lo permite (URLs, hasta 1.395 caracteres); la práctica española verificada no lo ha
    hecho nunca.** El único mensaje real que auditamos (DANA de Valencia) fue una frase corta sin enlace ni
    teléfono. No hay ningún precedente positivo ni ninguna prohibición explícita encontrada — es terreno no
@@ -254,7 +254,7 @@ lugar:
   presentándolo explícitamente como "lo que Protección Civil podría/debería enviar" — una propuesta de mejora
   de protocolo, no una integración real.
 - **Ejecutar de verdad**, vía HappyRobot, la parte que sí controlamos: las llamadas salientes reales a la
-  población (el "onboarding" de voz descrito en `docs/escenario-incendio.md`), que es el mecanismo real y
+  población (el "onboarding" de voz descrito en `docs/06-producto/02-escenario-incendio.md`), que es el mecanismo real y
   demostrable de "convertir el aviso en conversación", sin necesidad de tocar el sistema oficial de cell
   broadcast.
 - Dejar explícito en el guion de la demo que "activar el ES-Alert real con nuestro número dentro" es la

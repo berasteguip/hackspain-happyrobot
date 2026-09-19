@@ -5,8 +5,8 @@ API de estado, el mapa, el simulador) existe para que estas conversaciones pueda
 se dice en ellas sea verdad.
 
 Dos documentos mandan sobre todo lo que hay aquí y no se contradicen desde este directorio:
-- `docs/contrato-de-datos.md` — los campos, los endpoints y las reglas de seguridad. **Vinculante.**
-- `docs/plataforma-happyrobot.md` — qué nodos existen de verdad. **Nada que no esté ahí se usa sin marcarlo.**
+- `docs/06-producto/03-contrato-de-datos.md` — los campos, los endpoints y las reglas de seguridad. **Vinculante.**
+- `docs/02-happyrobot/03-workspace-y-limites-verificados.md` — qué nodos existen de verdad. **Nada que no esté ahí se usa sin marcarlo.**
 
 ---
 
@@ -61,8 +61,8 @@ Dos documentos mandan sobre todo lo que hay aquí y no se contradicen desde este
 
 | Verificación | Resultado |
 |---|---|
-| `05-extraccion.md` vs el bloque `extracted` de `POST /calls/outcome` | **12 campos = 12 campos, coincidencia exacta.** Cotejo campo por campo en `05` §1, contra `docs/contrato-de-datos.md` §3 **y** contra `api/models.py` (`CallExtracted`), que hoy coinciden entre sí. Ningún campo extra, ninguno que falte. Los 6 campos que me habrían gustado (`refusal_reason`, `language`, `needs_callback`, `field_report`, `animals`, `scam_suspected`) **no se han añadido**: viajan en `agent_notes`. |
-| Nodos de `06` vs `docs/plataforma-happyrobot.md` | **Ningún nodo inventado** (tabla completa en `06` §8). Una advertencia: `Loop` consta en el catálogo del workspace pero sin evento `loop.*` en el SDK → plan B escrito (fan-out desde `engine/`). Y `Approval Process` **no es un nodo**: es una pestaña, y la investigación no encontró API para él. |
+| `05-extraccion.md` vs el bloque `extracted` de `POST /calls/outcome` | **12 campos = 12 campos, coincidencia exacta.** Cotejo campo por campo en `05` §1, contra `docs/06-producto/03-contrato-de-datos.md` §3 **y** contra `api/models.py` (`CallExtracted`), que hoy coinciden entre sí. Ningún campo extra, ninguno que falte. Los 6 campos que me habrían gustado (`refusal_reason`, `language`, `needs_callback`, `field_report`, `animals`, `scam_suspected`) **no se han añadido**: viajan en `agent_notes`. |
+| Nodos de `06` vs `docs/02-happyrobot/03-workspace-y-limites-verificados.md` | **Ningún nodo inventado** (tabla completa en `06` §8). Una advertencia: `Loop` consta en el catálogo del workspace pero sin evento `loop.*` en el SDK → plan B escrito (fan-out desde `engine/`). Y `Approval Process` **no es un nodo**: es una pestaña, y la investigación no encontró API para él. |
 | Tiempos leídos en voz alta | Onboarding: apertura 9 s, presupuesto de 90 s con el agente hablando 45–50 s → **cabe**, con orden de sacrificio escrito para cuando no cabe. Reruta: 2 + 3 + 10 + 5 = **20 s** exactos (22 s la variante de guía de convoy, por la frase del intermitente). Patrulla: **38 s** de dictado. Briefing de mando: **41 s**. Demo: **2:55**. |
 | Todos los guiones abren identificándose como IA | **Sí.** `01` frase literal en el mensaje inicial · `02` marca «Protección Civil, sistema automático» + apertura larga si no hubo llamada previa · `03` aviso completo de IA y de grabación en la primera frase · `04` «sistema automático» en la primera frase con patrulla y con mando. |
 | Ninguna promesa imposible | Revisado guion a guion. Dos frases se quedaron al borde y están acotadas: «vamos a por usted» en un `say_this` de peatón **solo** si hay patrulla o convoy asignado (`02` §4.3), y «le vuelvo a llamar para contarle» en la rama del familiar (`03` §5.2) **solo** si se implementa la llamada de vuelta; si no, se quita la frase. |
@@ -73,10 +73,10 @@ Dos documentos mandan sobre todo lo que hay aquí y no se contradicen desde este
 
 Las tres que se señalaron aquí (carretera `ZA-P-1508` inventada, `"Polideportivo de Tábara"` en vez del
 colegio rural agrupado **"León Felipe"**, y el ejemplo de `last_instruction` en tuteo) **están arregladas**
-en `docs/contrato-de-datos.md`, `api/loader.py`, `api/planner.py` y los mocks de `web/`. Lo que quedó
+en `docs/06-producto/03-contrato-de-datos.md`, `api/loader.py`, `api/planner.py` y los mocks de `web/`. Lo que quedó
 grabado como regla, porque es la razón de fondo:
 
-- **Toda carretera, pueblo e instalación sale de `docs/research/geografia-zona.md`**, nunca de la
+- **Toda carretera, pueblo e instalación sale de `docs/03-dominio-crisis/05-geografia-sierra-culebra.md`**, nunca de la
   imaginación. Verificadas: N-631, ZA-P-2434, ZA-902, N-122, ZA-P-2438; Tábara = CRA "León Felipe"
   (41.82611, −5.95889); Alcañices = CEIP Virgen de la Salud (41.69887, −6.34793), acceso por N-122.
   Un destino con nombre falso es peor que uno genérico: la gente pregunta por él al llegar.

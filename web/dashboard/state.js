@@ -5,7 +5,7 @@
    - Si la API se cae: banner + la pantalla sigue mostrando lo último bueno.
    - Store mínimo con suscripciones (nada de reinventar Redux).
 
-   Contrato: docs/contrato-de-datos.md. Este fichero NO inventa campos obligatorios;
+   Contrato: docs/06-producto/03-contrato-de-datos.md. Este fichero NO inventa campos obligatorios;
    los campos opcionales que aprovecha si existen están anotados con OPCIONAL.
    ============================================================ */
 

@@ -24,7 +24,7 @@ SCENARIO_FILE = Path(__file__).resolve().parents[1] / "scenarios" / "sierra-cule
 
 
 def contract_decay(theta_deg: float) -> float:
-    """La fórmula literal del contrato (`docs/contrato-de-datos.md` §4)."""
+    """La fórmula literal del contrato (`docs/06-producto/03-contrato-de-datos.md` §4)."""
     t = math.radians(theta_deg)
     return 0.45 + 0.45 * math.cos(t) + 0.10 * math.cos(2 * t)
 

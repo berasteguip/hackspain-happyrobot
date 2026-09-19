@@ -1,5 +1,5 @@
 # HackSpain 2026 · Track HappyRobot · Equipo router123
-# Arranque de cada componente. Contrato entre ellos: docs/contrato-de-datos.md
+# Arranque de cada componente. Contrato entre ellos: docs/06-producto/03-contrato-de-datos.md
 #
 # Requisito: Python 3.12+ (el python3 del sistema es 3.9 y no sirve) y uv.
 #   brew install uv && uv python install 3.12

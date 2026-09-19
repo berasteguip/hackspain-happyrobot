@@ -18,7 +18,7 @@ simulador (sim/)              ◄──GET  /state, POST /sim/run───┘
 Una sola fuente de verdad en runtime: el proceso de `api/`. Twin de HappyRobot se usa como espejo para
 que los agentes de voz consulten sin salir de la plataforma, pero **el cálculo vive en `api/`**.
 
-> ⚠️ **Dos límites de plataforma verificados** (`docs/research/happyrobot-api.md`) que condicionan este
+> ⚠️ **Dos límites de plataforma verificados** (`docs/02-happyrobot/04-api-y-sdk.md`) que condicionan este
 > diagrama, y conviene tenerlos claros antes de escribir código contra ellos:
 > 1. **El Python Sandbox no tiene red saliente** (lista blanca de módulos confirmada: `math, datetime,
 >    pytz, re, dateutil, random, collections, json, _strptime, time, base64`). O sea que `requests` no
@@ -100,7 +100,7 @@ dashboard lo dibuja con borde discontinuo. El jurado va a preguntar por esto.
 RGPD, y por tanto categoría especial del art. 9, no dato ordinario. Consecuencia para quien implemente:
 ese campo no se pinta en el mapa junto al nombre sin más, no sale en logs de depuración, y si algún día
 esto fuese producto necesitaría acceso restringido y base jurídica propia documentada. Detalle en
-`docs/escenario-incendio.md` §16.2.
+`docs/06-producto/02-escenario-incendio.md` §16.2.
 
 ⚠️ **`last_instruction.text` se redacta SIEMPRE en usted**, y en imperativo ("Salga", "No coja"), nunca
 en tuteo. No es cortesía: el agente de voz lee este texto **literalmente** (`say_this` de los guiones de
@@ -187,7 +187,7 @@ ese cono, se le llama. Ese es el geofence de la sección 3 del escenario.
 }
 ```
 
-Coordenadas y carreteras son las reales de la zona (`docs/research/geografia-zona.md`), no inventadas:
+Coordenadas y carreteras son las reales de la zona (`docs/03-dominio-crisis/05-geografia-sierra-culebra.md`), no inventadas:
 la **ZA-P-2434** es el único acceso provincial a Tábara desde los pueblos del escenario, y por eso
 cerrarla los aísla aunque estén a menos de 15 km. La otra salida es Alcañices por la N-122.
 
@@ -359,7 +359,7 @@ largo/ancho depende del viento: `LB = 0.936·e^(0.2566U) + 0.461·e^(-0.1548U) -
 Con esa elipse, si la cola va al 10% el flanco real sale entre el 6% y el 19%, no el 35% que usamos
 nosotros: nuestra curva ensancha el fuego de flanco a propósito, lo que hace el sistema más
 conservador (avisa a más gente de la que hace falta). Errar hacia avisar de más es el lado correcto
-del error en una evacuación. Derivación y fórmulas verificadas en `docs/research/modelo-fuego.md`.
+del error en una evacuación. Derivación y fórmulas verificadas en `docs/03-dominio-crisis/06-modelo-fuego.md`.
 
 `priority_score` combina, normalizado a [0,1]:
 
@@ -410,7 +410,7 @@ Dos cosas verificadas que se cuelan aquí y no son cosmética:
 - `ROUTING_PROVIDER` por defecto es **valhalla**, no osrm ni google, porque es el único de los tres que
   sabe esquivar el polígono del fuego (`exclude_polygons`). Google Routes API v2 no puede, y esa era la
   suposición equivocada del diseño original. `GOOGLE_MAPS_API_KEY` ya no hace falta y se ha quitado.
-  Razonamiento completo en `docs/escenario-incendio.md` §3.
+  Razonamiento completo en `docs/06-producto/02-escenario-incendio.md` §3.
 
 ## 6. Reglas para quien implemente
 
@@ -427,4 +427,4 @@ Dos cosas verificadas que se cuelan aquí y no son cosmética:
 6. **El agente de voz se identifica como IA al empezar.** No es cortesía: el art. 50 del AI Act
    (Reglamento UE 2024/1689) está en aplicación desde el 2 de agosto de 2026, o sea ya. Todo guion
    abre identificándose, y el `say_this` de `/instructions` nunca contradice eso. Detalle y fuentes
-   en `docs/research/marco-legal.md`.
+   en `docs/04-regulacion/02-marco-legal-llamadas-geolocalizacion.md`.

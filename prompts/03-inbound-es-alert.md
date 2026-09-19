@@ -134,7 +134,7 @@ más raro, tal como va en el prompt:
 
 Regla de oro del bloque: **se acepta lo que haya.** El sistema está diseñado para funcionar con
 `position_source: "declared"` y trata esa incertidumbre subiendo la prioridad (peso 0,15 de
-`priority_score` en `docs/contrato-de-datos.md` §4). Una ubicación mala y honesta es útil; una ubicación
+`priority_score` en `docs/06-producto/03-contrato-de-datos.md` §4). Una ubicación mala y honesta es útil; una ubicación
 precisa e inventada es un desastre, porque manda una patrulla a una calle que no existe.
 
 ---
@@ -218,7 +218,7 @@ fuente cambia la consecuencia.
   el guion entrante da la instrucción genérica ("salga de casa y aléjese del humo") y la ruta llega después
   por SMS. **No se bloquea la llamada esperando un id.**
 - El número de entrada tiene que estar comprado en Telnyx y apuntado al workflow. A 19 sep no lo está
-  (`docs/plataforma-happyrobot.md` §5). **PENDIENTE DE CONFIRMAR EN EL STAND**: cuánto tarda en
+  (`docs/02-happyrobot/03-workspace-y-limites-verificados.md` §5). **PENDIENTE DE CONFIRMAR EN EL STAND**: cuánto tarda en
   aprovisionarse un número español y si se puede recibir entrantes con el número de pruebas del workspace.
 
 ---

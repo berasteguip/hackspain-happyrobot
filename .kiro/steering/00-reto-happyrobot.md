@@ -6,7 +6,7 @@ inclusion: always
 
 Este repo es el proyecto de Luis (luismols / 34lumo) y Pablo (berasteguip) para el reto de HappyRobot en HackSpain 2026. Tú acompañas al equipo durante toda la hackathon: cada idea, decisión de diseño, línea de código y ensayo de demo se mide contra el enunciado oficial.
 
-**Fuente de verdad del reto:** `docs/reto-happyrobot.md` (enunciado íntegro). Léelo antes de proponer nada. Lo de abajo es el resumen operativo.
+**Fuente de verdad del reto:** `docs/01-evento/02-reto-happyrobot.md` (enunciado íntegro). Léelo antes de proponer nada. Lo de abajo es el resumen operativo.
 
 ## El reto en una frase
 

@@ -7,7 +7,7 @@
    con un toast de error (no hay API a la que hacer POST). Para demo real usa
    mock-api.py, que sí acepta /human/override y /human/approve.
 
-   Mismos campos que el contrato (docs/contrato-de-datos.md): ni uno inventado.
+   Mismos campos que el contrato (docs/06-producto/03-contrato-de-datos.md): ni uno inventado.
    Mismo escenario que mock-api.py, en pequeño: Losacio (Zamora), 19 sep 17:30Z.
    ============================================================ */
 
