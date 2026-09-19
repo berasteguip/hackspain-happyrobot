@@ -16,11 +16,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 import planner
 from loader import load_scenario
 from routers import calls, events, human, read
-from settings import settings
+from settings import REPO_ROOT, settings
 from state import state
 
 # ------------------------------------------------------------------------------------------
@@ -36,7 +37,13 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("crisis.api")
 
 # Rutas que NO piden `x-api-key`: el latido, la documentación y los preflight del navegador.
-PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/favicon.svg"}
+
+# Rutas que un ciudadano abre desde el enlace del SMS. No pueden exigir `x-api-key`: la página
+# corre en su móvil y cualquier secreto que le pasáramos sería legible en el código fuente. Se
+# asume: quien tenga un enlace puede escribir una posición. El arreglo real es un token por
+# persona en la URL, no un secreto compartido en el cliente.
+PUBLIC_PREFIXES = ("/static", "/gps", "/dashboard", "/assets", "/positions", "/instructions/")
 
 
 @asynccontextmanager
@@ -95,7 +102,7 @@ async def api_key_guard(request: Request, call_next):
         settings.hr_shared_secret
         and request.method != "OPTIONS"
         and ruta not in PUBLIC_PATHS
-        and not ruta.startswith("/static")
+        and not ruta.startswith(PUBLIC_PREFIXES)
     ):
         if request.headers.get("x-api-key") != settings.hr_shared_secret:
             log.warning("401 %s %s (x-api-key inválida o ausente)", request.method, ruta)
@@ -110,6 +117,25 @@ app.include_router(read.router)
 app.include_router(events.router)
 app.include_router(calls.router)
 app.include_router(human.router)
+
+
+# Un solo proceso sirve la API y las dos páginas: mismo origen, así que la página llama a
+# `/positions` sin saber en qué dominio vive y no hace falta CORS ni config.js con URL absoluta.
+for _ruta, _dir in (("/gps", "gps"), ("/dashboard", "dashboard")):
+    _destino = REPO_ROOT / "web" / _dir
+    if _destino.is_dir():
+        app.mount(_ruta, StaticFiles(directory=_destino, html=True), name=_dir)
+    else:
+        log.warning("No encuentro %s; %s no se sirve.", _destino, _ruta)
+
+# Vigía en la raíz: es la cara del puesto de mando. Va el último a propósito — Starlette casa
+# las rutas en orden de registro, así que /state, /positions y compañía siguen ganando y solo
+# lo que no es de la API cae en el SPA.
+_VIGIA = REPO_ROOT / "apps" / "command-center" / "dist"
+if _VIGIA.is_dir():
+    app.mount("/", StaticFiles(directory=_VIGIA, html=True), name="vigia")
+else:
+    log.warning("No encuentro %s; la raíz no sirve Vigía (¿falta `npm run build`?).", _VIGIA)
 
 
 @app.post("/sim/run", status_code=501, tags=["simulador"])
