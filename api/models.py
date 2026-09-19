@@ -146,6 +146,22 @@ class DecisionType(str, Enum):
     plan_discarded = "plan_discarded"
 
 
+class LogTopic(str, Enum):
+    """De qué habla una entrada del log de llamadas.
+
+    Cerrado a propósito: es lo que hace la consulta indexable. Buscar «¿está cortada la
+    ZA-P-2551?» por texto libre no funciona porque nadie repite la misma frase dos veces;
+    buscar `topic='road_status' and road='ZA-P-2551'` es igualdad contra índice.
+    """
+
+    road_status = "road_status"  # ¿está cortada la carretera X?
+    evacuation_order = "evacuation_order"  # ¿han mandado evacuar el pueblo Y?
+    shelter_capacity = "shelter_capacity"  # ¿cabe alguien en el refugio Z?
+    fire_observed = "fire_observed"  # humo, llamas, lo que alguien ve
+    person_situation = "person_situation"  # lo que un vecino cuenta de sí mismo
+    other = "other"
+
+
 class Urgency(str, Enum):
     """Etiqueta que consume el agente de voz (`/instructions`). El contrato pide el campo
     `urgency` sin fijar valores."""
@@ -368,6 +384,85 @@ class DecisionLogEntry(Base):
 # --------------------------------------------------------------------------------------
 # Cuerpos de petición (escritura) — contrato §3
 # --------------------------------------------------------------------------------------
+
+
+class CallLogEntry(Base):
+    """Una afirmación: qué se sabe sobre un tema, quién lo dice y hasta cuándo es fiable.
+
+    NO es un log de intervenciones ni el `decision_log` (contrato §2.6). El `decision_log`
+    registra decisiones del sistema; esto registra **conocimiento dicho por personas**, y es lo
+    que una llamada aprende y las otras 299 pueden consultar sin volver a preguntar.
+
+    Espejo de la tabla `call_log` de Twin: el agente lee y escribe allí (nativo, sin salir de la
+    plataforma) y la misma fila llega aquí por webhook para que el puesto de mando la vea llegar
+    en vivo. Twin es la fuente para el agente; esto es la copia para la pantalla.
+    """
+
+    id: str
+    created_at: str = Field(default_factory=utcnow_iso)
+
+    # De qué habla. `locality_id` cuando el sitio existe en el padrón, `place_text` cuando es un
+    # paraje sin entidad («la pista de La Cernada»), `road` aparte porque una carretera no
+    # pertenece a un núcleo: la ZA-P-2434 es la salida de Sesnández Y la de Ferreruela.
+    topic: LogTopic = LogTopic.other
+    locality_id: str | None = None
+    road: str | None = None
+    place_text: str | None = None
+
+    # Quién habla. `person_id` puede ser nulo: quien llama puede no estar en el padrón, y eso
+    # mismo es la señal de que hay un vecino nuevo que registrar.
+    person_id: str | None = None
+    phone: str | None = None
+    source_id: str = "desconocido"
+    source_detail: str | None = None  # la unidad concreta: «bomberos de Zamora»
+
+    # Qué se dijo. `answer` nulo = pendiente; no hace falta un tipo «pendiente» aparte.
+    question: str
+    answer: str | None = None
+    answered_at: str | None = None
+    valid_until: str | None = None  # None = no caduca
+
+    # Bucle abierto: «a las tres me dicen algo».
+    callback_to: str | None = None
+    callback_at: str | None = None
+
+    run_id: str | None = None
+    answer_run_id: str | None = None
+    # Si la contraparte era una centralita simulada. Se declara, no se esconde: el puesto de
+    # mando lo pinta distinto, igual que una posición `declared` no se pinta como una `gps`.
+    simulated: bool = True
+
+    @property
+    def resolved(self) -> bool:
+        return self.answer is not None
+
+
+class CallLogWrite(Base):
+    """Lo que manda el workflow al anotar algo.
+
+    `id` es opcional y conviene mandarlo: es el uuid que generó Twin al insertar la fila allí.
+    Compartir el id hace que las dos copias —la de Twin, que es la fuente, y esta, que es para la
+    pantalla— sean la misma anotación y no dos. Si no viene, la API se inventa uno.
+    """
+
+    id: str | None = None
+    topic: LogTopic = LogTopic.other
+    locality_id: str | None = None
+    road: str | None = None
+    place_text: str | None = None
+    person_id: str | None = None
+    phone: str | None = None
+    source_id: str = "desconocido"
+    source_detail: str | None = None
+    question: str
+    answer: str | None = None
+    valid_until: str | None = None
+    validity_min: int | None = None  # alternativa a `valid_until`: la API calcula la fecha
+    callback_to: str | None = None
+    callback_at: str | None = None
+    run_id: str | None = None
+    answer_run_id: str | None = None
+    simulated: bool = True
 
 
 class FireEvent(Base):

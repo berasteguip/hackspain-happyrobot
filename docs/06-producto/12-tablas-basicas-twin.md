@@ -124,26 +124,55 @@ from v_person_location where phone = '+34600994010';
 Con eso, la consulta al log deja de ser `like '%Sesnández%'` y pasa a ser
 `where locality_id = 'n-sesnandez-de-tabara'`.
 
-## 6. Cómo engancha `call_log`
+## 6. `call_log`: el diseño, y por qué se ve en la pantalla
 
-`call_log` **no se crea aquí**: es del plan 3 ([`11-plan-log-compartido.md`](11-plan-log-compartido.md)),
-y sigue siendo suyo. Lo único que cambia es que tres columnas dejan de ser texto suelto:
+DDL completo en [`../../data/twin/call_log.sql`](../../data/twin/call_log.sql). La idea que ordena
+todo lo demás: **una fila no es «esto pasó en la llamada X», es una afirmación** — qué se sabe de un
+tema, quién lo dice y hasta cuándo es fiable. Por eso la respuesta vive en la misma fila que la
+pregunta: «¿alguien preguntó esto?» y «¿hay respuesta?» tienen que ser una sola lectura.
 
-```sql
-persona   text  ->  person_id    text references person(id)
-telefono  text  ->  phone        text                          -- se queda: resuelve a person por el índice único
-zona      text  ->  locality_id  text references locality(id)   -- cuando el sitio tiene entidad
-                +   place_text   text                           -- cuando no la tiene: «la pista de La Cernada»
+Cambios respecto al diseño del doc 07, y el porqué:
+
+| Antes | Ahora | Por qué |
+| --- | --- | --- |
+| `tipo` (vecino/testimonio/autoridad/pendiente) | `topic` + `source_id` | Mezclaba dos ejes. `vecino` y `autoridad` son **quién**; `testimonio` es **qué clase de dato**. Separados, `testimonio` cae dentro de `topic` y `pendiente` desaparece: pendiente es `answer is null`. |
+| `asunto` en texto para buscar | `topic` cerrado + `road` / `locality_id` | Buscar «¿está cortada la ZA-P-2551?» por texto no funciona: nadie repite la frase. `question` se queda, pero para que lo lea un humano. |
+| `zona` texto | `locality_id` FK + `place_text` + `road` | Llave cuando el sitio existe, texto cuando no, y **`road` aparte**: una carretera no pertenece a un núcleo. La ZA-P-2434 es la salida de Sesnández *y* de Ferreruela; archivarla bajo una sola pierde el dato para la otra. |
+| `fuente` texto | `source_id` FK + `source_detail` | `source.label` es lo que el agente **pronuncia** al citar, y `source.rank` resuelve contradicciones con un `order by` en vez de un `CASE` repetido. |
+| `vigencia_min` | `valid_until` | Una fecha se indexa; minutos obligan a calcular en cada lectura. |
+
+### La tabla de resumen por zona: de momento, no
+
+El plan 3 pedía una segunda tabla precocinada porque el `Extract` no cabe dentro de una llamada.
+Ese argumento se ha debilitado: el nodo `Llamada a tercero` del canvas está configurado con
+`timeout: 240`, o sea que **un nodo puede esperar cuatro minutos**. Una lectura indexada de
+`call_log` no llega al segundo. Una pieza menos que construir y mantener; se añade el día que se
+mida que la lectura va lenta, no antes.
+
+### Verlo apilarse en vivo
+
+El dashboard no puede leer de Twin (contrato §0: Twin no tiene API REST pública fuera de un
+workflow, y el navegador nunca la toca). Así que la anotación va **a los dos sitios**:
+
+```
+agente ──► Write to Twin        (la fuente: es lo que leen las otras 299 instancias)
+       └─► POST /calls/log      (la copia: es lo que ve el puesto de mando)
 ```
 
-La pareja `locality_id` / `place_text` es el punto: **una llave cuando el sitio existe en el padrón,
-texto libre cuando no**, y nunca las dos cosas mezcladas en una sola columna ambigua. Un paraje sin
-entidad administrativa es un caso real y frecuente en esta comarca; lo que no vale es no saber cuál
-de los dos tienes.
+`POST /calls/log` sube `state_version`, así que la fila sale por el long-poll de `/state/diff` que
+`web/dashboard/state.js` ya hace desde hace tiempo — sin inventar ningún canal nuevo. Si el webhook
+falla, el log sigue funcionando y solo se retrasa la pantalla: ese es el lado correcto del fallo.
 
-> Los identificadores de `call_log` están hoy en castellano y los de estas tablas en inglés.
-> AGENTS.md §4 pide inglés, y la tabla no existe todavía en Twin, así que el cambio es gratis. Queda
-> señalado para que lo decida quien ejecute el plan 3, no cambiado por la espalda.
+Dos asimetrías deliberadas entre las dos copias:
+
+- **Twin es estricto** (`source_id` con clave foránea), **la copia es permisiva**. Si el agente
+  escribe una fuente que no está en el vocabulario, la fila de Twin falla en voz alta pero la
+  pantalla la enseña igual: el conocimiento no se pierde de la demo y la deriva se ve.
+- **`id` lo genera Twin** (`gen_random_uuid()`) y el workflow lo pasa a `POST /calls/log`. Si se
+  comparte el id, las dos copias son la misma anotación y no dos.
+
+`GET /calls/log` filtra por `topic`, `road`, `locality_id`, `person_id`, `only_open` (la cola de lo
+que hay que volver a preguntar) y `vigentes`.
 
 ## 7. Lo que esto destapó del dataset
 
