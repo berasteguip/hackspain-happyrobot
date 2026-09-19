@@ -96,3 +96,18 @@ Empieza por `llms.txt` (índice completo). Guía de uso y páginas clave en
 - [ ] Formato y duración de la demo final, y quién juzga.
 - [ ] Validación con quien ha coordinado emergencias reales:
       `docs/05-investigacion/2026-09-19-contacto-ines-galindo-csic.md`.
+
+## 7. Viento visual del mapa — 2026-09-19
+
+Preferencia de Mateo: partículas lentas con estelas degradadas, no flechas. El componente
+`apps/command-center/src/WindOverlay.tsx` usa coordenadas geográficas reproyectadas con la
+cámara y helpers en `src/wind.ts`; velocidad, longitud y densidad varían con el zoom. Mantener
+el límite de partículas, movimiento reducido, pausa al ocultar la página y canvas sin capturar
+clics. Es viento de demo, no meteorología real. Este cambio conserva la API FastAPI y el
+circuito de llamadas de main; no incorpora la centralita Node de otros worktrees.
+
+Verificación: `npm test && npm run lint && npm run build` en `apps/command-center` (31 tests,
+0 errores de lint; aviso de bundle grande por Mapbox). Prueba de navegador con servicios
+externos controlados: animación, movimiento reducido, giro/zoom/inclinación, resize móvil y
+encendido/apagado correctos; sin llamadas. Fuente: petición de Mateo y pruebas locales del
+2026-09-19, sobre main `2c7788a`.

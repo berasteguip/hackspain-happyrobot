@@ -15,6 +15,38 @@ const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
 const forecast = buildFireForecast(footprint, settings)
 const at = (x, y) => [forecast.origin[0] + (x + 0.5) * forecast.cellSizeM / forecast.lngScale, forecast.origin[1] + (y + 0.5) * forecast.cellSizeM / 111320]
 
+test('el viento visual escala suavemente con el zoom y limita velocidad, longitud y densidad', async () => {
+  const { windVisualStyle } = await server.ssrLoadModule('/src/wind.ts')
+  const far = windVisualStyle(8, 20, 1440, 1000)
+  const near = windVisualStyle(15, 20, 1440, 1000)
+  assert.ok(near.speedPx > far.speedPx)
+  assert.ok(near.trailPx > far.trailPx)
+  assert.ok(near.count < far.count)
+  assert.ok(windVisualStyle(24, 150, 6000, 4000).speedPx <= 28)
+  assert.ok(windVisualStyle(24, 150, 6000, 4000).trailPx <= 38)
+  assert.ok(windVisualStyle(4, 20, 6000, 4000).count <= 650)
+  assert.equal(windVisualStyle(12, 0, 1440, 1000).count, 0)
+  assert.equal(windVisualStyle(12, 20, 0, 0).count, 0)
+  const nextZoom = windVisualStyle(12.01, 20, 1440, 1000)
+  assert.ok(Math.abs(nextZoom.speedPx - windVisualStyle(12, 20, 1440, 1000).speedPx) < 0.1)
+})
+
+test('las partículas avanzan por tiempo y coordenadas, no por frames', async () => {
+  const { advanceWindPosition, windParticleOpacity } = await server.ssrLoadModule('/src/wind.ts')
+  const origin = [-5.14, 40.22]
+  const step = hz => {
+    let point = origin
+    for (let i = 0; i < hz * 2; i++) point = advanceWindPosition(point, 225, 15, 1 / hz)
+    return point
+  }
+  assert.ok(haversineMeters(...step(30), ...step(60)) < 0.05)
+  assert.ok(Math.abs(haversineMeters(...origin, ...step(60)) - 30) < 0.1)
+  assert.deepEqual(advanceWindPosition(origin, 225, 15, 0), origin)
+  assert.equal(windParticleOpacity(0, 10), 0)
+  assert.equal(windParticleOpacity(10, 10), 0)
+  assert.ok(windParticleOpacity(5, 10) > windParticleOpacity(0.2, 10))
+})
+
 test('el fuego inicial permanece y el crecimiento aumenta con el horizonte', () => {
   assert.equal(exposureAt(forecast, ...at(0, 0), 0, 0).level, 'danger')
   assert.equal(forecastGeo(forecast, 0).features.length, 0)
