@@ -1,5 +1,5 @@
 import { haversineMeters } from './geo'
-import { exposureAt, initialFireClearance, MAX_FORECAST_MIN, routeApproachesFire, routeBlocked } from './fire-model'
+import { exposureAt, MAX_FORECAST_MIN, routeBlocked } from './fire-model'
 import type { FireForecast } from './fire-model'
 import type { Citizen, SafeZone } from './types'
 
@@ -147,6 +147,7 @@ export type RefugeRoute = {
   durationSec: number
   distanceM: number
   accessM: number
+  segmentSeconds?: number[]
 }
 
 export async function fetchRefugeRoutes(
@@ -156,16 +157,16 @@ export async function fetchRefugeRoutes(
   profile: 'walking' | 'driving',
   signal?: AbortSignal,
   request: typeof fetch = fetch,
-): Promise<{ routes: RefugeRoute[]; failed: number; unsuitable: number }> {
+): Promise<{ routes: RefugeRoute[]; failed: number; unsuitable: number; errors: string[] }> {
   const results = await Promise.all(zones.map(async zone => {
     try {
       const url = new URL(`https://api.mapbox.com/directions/v5/mapbox/${profile}/${origin.join(',')};${zone.lng},${zone.lat}`)
-      url.search = new URLSearchParams({ access_token: token, geometries: 'geojson', overview: 'full', alternatives: 'true' }).toString()
+      url.search = new URLSearchParams({ access_token: token, geometries: 'geojson', overview: 'full', alternatives: 'true', annotations: 'duration' }).toString()
       const timeout = AbortSignal.timeout(12000)
       const response = await request(url.toString(), { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
-      if (!response.ok) return { routes: [], failed: 1, unsuitable: 0 }
+      if (!response.ok) return { routes: [], failed: 1, unsuitable: 0, errors: [`Mapbox Directions: HTTP ${response.status || 'desconocido'}`] }
       const payload = await response.json()
-      if (!Array.isArray(payload.routes)) return { routes: [], failed: 1, unsuitable: 0 }
+      if (!Array.isArray(payload.routes)) return { routes: [], failed: 1, unsuitable: 0, errors: ['Respuesta de Directions sin geometrías de ruta válidas'] }
       const routes: RefugeRoute[] = []
       let unsuitable = 0
       for (const [i, route] of payload.routes.entries()) {
@@ -184,27 +185,69 @@ export async function fetchRefugeRoutes(
           continue
         }
         const accessM = startM + endM
-        routes.push({ id: `${zone.id}-${i}`, zoneId: zone.id, coordinates: [origin, ...coordinates, [zone.lng, zone.lat]], durationSec: route.duration + accessM / (4000 / 3600), distanceM: route.distance + accessM, accessM })
+        const lengths = coordinates.slice(1).map((point, index) => haversineMeters(...coordinates[index], ...point))
+        const annotations: number[] = Array.isArray(route.legs) ? route.legs.flatMap((leg: { annotations?: { duration?: number[] } }) => leg.annotations?.duration ?? []) : []
+        const weights = annotations.length === lengths.length && annotations.every(value => Number.isFinite(value) && value >= 0) && annotations.some(value => value > 0) ? annotations : lengths
+        const total = weights.reduce((sum, value) => sum + value, 0)
+        const segmentSeconds = [startM / (4000 / 3600), ...weights.map(value => total ? route.duration * value / total : 0), endM / (4000 / 3600)]
+        routes.push({ id: `${zone.id}-${i}`, zoneId: zone.id, coordinates: [origin, ...coordinates, [zone.lng, zone.lat]], durationSec: route.duration + accessM / (4000 / 3600), distanceM: route.distance + accessM, accessM, segmentSeconds })
       }
-      return { routes, failed: 0, unsuitable }
+      return { routes, failed: 0, unsuitable, errors: [] }
     } catch (error) {
       if (signal?.aborted) throw error
-      return { routes: [], failed: 1, unsuitable: 0 }
+      return { routes: [], failed: 1, unsuitable: 0, errors: [error instanceof DOMException && error.name === 'TimeoutError' ? 'Directions no respondió en 12 segundos' : 'No se pudo conectar con Mapbox Directions'] }
     }
   }))
-  return { routes: results.flatMap(result => result.routes), failed: results.reduce((sum, result) => sum + result.failed, 0), unsuitable: results.reduce((sum, result) => sum + result.unsuitable, 0) }
+  return { routes: results.flatMap(result => result.routes), failed: results.reduce((sum, result) => sum + result.failed, 0), unsuitable: results.reduce((sum, result) => sum + result.unsuitable, 0), errors: [...new Set(results.flatMap(result => result.errors))] }
+}
+
+function blockedDuringTravel(route: RefugeRoute, forecast: FireForecast, marginM: number) {
+  if (route.coordinates.length < 2 || !Number.isFinite(route.durationSec) || route.durationSec < 0 || !route.coordinates.every(point => point.every(Number.isFinite))) return true
+  const lengths = route.coordinates.slice(1).map((point, index) => haversineMeters(...route.coordinates[index], ...point))
+  const total = lengths.reduce((sum, value) => sum + value, 0)
+  const times = route.segmentSeconds?.length === lengths.length && route.segmentSeconds.every(value => Number.isFinite(value) && value >= 0) ? route.segmentSeconds : lengths.map(length => total ? route.durationSec * length / total : 0)
+  let elapsedMin = 0
+  for (let i = 0; i < lengths.length; i += 1) {
+    const start = route.coordinates[i]
+    const end = route.coordinates[i + 1]
+    const steps = Math.max(1, Math.ceil(lengths[i] / 50))
+    let previous = start
+    for (let step = 1; step <= steps; step += 1) {
+      const next: [number, number] = [start[0] + (end[0] - start[0]) * step / steps, start[1] + (end[1] - start[1]) * step / steps]
+      elapsedMin += times[i] / steps / 60
+      if (elapsedMin + 2 > MAX_FORECAST_MIN || routeBlocked(forecast, [previous, next], elapsedMin + 2, marginM)) return true
+      previous = next
+    }
+  }
+  return false
 }
 
 export function rankRefugeRoutes(routes: RefugeRoute[], zones: SafeZone[], forecast: FireForecast, horizon: number, marginM: number) {
   const admitted = routes.filter(route => {
     const zone = zones.find(item => item.id === route.zoneId)
-    const throughMinute = Math.max(60, horizon, Math.ceil(route.durationSec / 60))
+    const throughMinute = Math.max(60, horizon, Math.ceil(route.durationSec / 60) + 2)
     return zone && throughMinute <= MAX_FORECAST_MIN
       && exposureAt(forecast, zone.lng, zone.lat, throughMinute, marginM + zone.radiusM).level === 'clear'
-      && !routeBlocked(forecast, route.coordinates, throughMinute, marginM)
-      && !routeApproachesFire(forecast, route.coordinates)
+      && !blockedDuringTravel(route, forecast, marginM)
   }).sort((a, b) => a.durationSec - b.durationSec)
   return { routes: admitted, rejected: routes.length - admitted.length }
+}
+
+export async function planCitizenRoute(
+  token: string, citizen: Citizen, zones: SafeZone[], forecast: FireForecast, marginM: number,
+  signal?: AbortSignal, request: typeof fetch = fetch,
+): Promise<{ citizen: Citizen; route?: Route }> {
+  if (citizen.live || citizen.call?.consent !== 'granted') return { citizen }
+  const eligible = zones.filter(zone => exposureAt(forecast, zone.lng, zone.lat, 60, marginM + zone.radiusM).level === 'clear')
+  const hold = (reason: string): { citizen: Citizen } => ({ citizen: { ...citizen, status: 'assistance', safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: reason } })
+  if (!eligible.length) return hold('No hay refugios fuera de la zona expuesta en la próxima hora. Requiere revisión del mando.')
+  const origin: [number, number] = [citizen.lng, citizen.lat]
+  const result = await fetchRefugeRoutes(token, origin, eligible, 'driving', signal, request)
+  const selected = rankRefugeRoutes(result.routes, eligible, forecast, 60, marginM).routes.sort((a, b) => a.distanceM - b.distanceM)[0]
+  if (!selected) return hold(result.errors.length ? result.errors.join(' · ') : result.unsuitable ? 'Directions devuelve accesos de más de 100 m o geometrías no válidas. Requiere revisión.' : result.routes.length ? 'Los recorridos desde esta persona intersectan la zona expuesta. Requiere otra salida.' : 'Directions no ha devuelto una carretera hacia los refugios disponibles.')
+  const zone = eligible.find(item => item.id === selected.zoneId)!
+  const route = buildRoute({ id: `individual-${citizen.id}-${zone.id}`, group: citizen.locality ?? '', zoneId: zone.id, from: origin, to: [zone.lng, zone.lat] }, selected.coordinates, selected.durationSec)
+  return { route, citizen: { ...citizen, status: 'tracking', safeZoneId: zone.id, routeId: route.id, routeProgressM: route.cumulative[1], routePhase: 'access', routeHoldReason: undefined } }
 }
 
 export function assignEvacuationRoutes(citizens: Citizen[], routes: RouteIndex, zones: SafeZone[], forecast: FireForecast, marginM: number): Citizen[] {
@@ -219,20 +262,17 @@ export function assignEvacuationRoutes(citizens: Citizen[], routes: RouteIndex, 
   }
   return citizens.map(citizen => {
     if (citizen.live || citizen.status === 'safe') return citizen
-    let best: { route: Route; alongM: number; durationSec: number } | undefined
+    let best: { route: Route; alongM: number; distanceM: number } | undefined
     const origin: [number, number] = [citizen.lng, citizen.lat]
-    const clearance = initialFireClearance(forecast, ...origin)
     for (const route of byGroup.get(citizen.locality ?? '') ?? []) {
-      const zone = zones.find(item => item.id === route.zoneId)!
-      if (initialFireClearance(forecast, zone.lng, zone.lat) + 1 < clearance) continue
       const { alongM, gapM } = nearestOnRoute(route, ...origin)
       if (gapM > 100) continue
       const access: [number, number][] = [origin, positionAt(route, alongM)]
-      if (routeBlocked(forecast, access, Math.max(60, Math.ceil(route.durationSec / 60)), marginM) || routeApproachesFire(forecast, access)) continue
-      const durationSec = route.durationSec * (1 - alongM / Math.max(1, route.lengthM)) + gapM / (4000 / 3600)
-      if (!best || durationSec < best.durationSec) best = { route, alongM, durationSec }
+      if (routeBlocked(forecast, access, Math.max(60, Math.ceil(route.durationSec / 60)), marginM)) continue
+      const distanceM = route.lengthM - alongM + gapM
+      if (!best || distanceM < best.distanceM) best = { route, alongM, distanceM }
     }
-    if (!best) return { ...citizen, safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: 'Sin recorrido que evite acercarse al fuego en la próxima hora. Pendiente de revisión del mando.', status: ['tracking', 'evacuating', 'assistance'].includes(citizen.status) ? 'assistance' : citizen.status }
+    if (!best) return { ...citizen, safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: 'Sin recorrido disponible fuera de la zona expuesta en la próxima hora. Pendiente de revisión del mando.', status: ['tracking', 'evacuating', 'assistance'].includes(citizen.status) ? 'assistance' : citizen.status }
     return { ...citizen, safeZoneId: best.route.zoneId, routeId: best.route.id, routeProgressM: best.alongM, routePhase: 'access', routeHoldReason: undefined, status: citizen.status === 'assistance' ? 'tracking' : citizen.status }
   })
 }

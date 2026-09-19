@@ -27,7 +27,7 @@ export function FireControls({ settings, horizon, onSimulate, onReset, showWind,
       return <button type="button" key={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
     })}</div>
     <p className="detail-warning">Simulación ilustrativa, no pronóstico. Viento prefijado, no meteorología en vivo; no modela terreno, combustible ni humedad. Azul no significa seguridad confirmada.</p>
-    <p className="fine">La selección de rutas evalúa siempre la próxima hora, aunque se muestre el incendio inicial. Si no hay una salida que evite acercarse al fuego, no se inicia un desplazamiento ficticio.</p>
+    <p className="fine">La selección de rutas evalúa siempre la próxima hora, aunque se muestre el incendio inicial. Las personas solo salen tras responder y consentir, hacia el refugio más cercano por recorrido admisible. Si la carretera o el destino están expuestos, quedan pendientes de revisión.</p>
   </div>
 }
 
@@ -62,11 +62,12 @@ export function RefugeRoutesPanel({ citizen, token, forecast, horizon, marginM, 
     <p className="fine">Consulta externa que consume cuota. Duración del proveedor + accesos aproximados a pie (máximo 100 m por extremo). No usa tráfico en vivo.</p>
     <p role="status" className="fine">{stale ? 'La posición o el modo ha cambiado. Vuelve a calcular.' : state}</p>
     {!stale && result && <>
-      <p className="fine">{ranked.rejected} alternativas descartadas por exposición, acercamiento al fuego o por superar 120 min. {result.failed > 0 && `${result.failed} destinos no pudieron consultarse; comparación parcial.`} {result.unsuitable > 0 && `${result.unsuitable} respuestas sin geometría o acceso admisible.`}</p>
+      <p className="fine">{ranked.rejected} alternativas descartadas por exposición o por superar 120 min. {result.failed > 0 && `${result.failed} destinos no pudieron consultarse; comparación parcial.`} {result.unsuitable > 0 && `${result.unsuitable} respuestas sin geometría o acceso admisible.`}</p>
+      {result.errors.length > 0 && <p className="need-note">{result.errors.join(' · ')}</p>}
       {!ranked.routes.length && <p className="need-note">Sin ruta admisible entre las alternativas obtenidas. Requiere revisión humana; no se inventa un recorrido.</p>}
       <div className="cop-list">{ranked.routes.map((route, i) => <button type="button" key={route.id} aria-pressed={active?.id === route.id} onClick={() => setChosen(route.id)}><span className="route-number">{i + 1}</span><span><strong>{SAFE_ZONES.find(zone => zone.id === route.zoneId)?.name}</strong><small>{Math.ceil(route.durationSec / 60)} min estimados · {(route.distanceM / 1000).toFixed(1)} km</small><small>{i === 0 ? 'Menor tiempo entre las consultadas' : 'Alternativa'} · acceso aprox. {Math.round(route.accessM)} m</small></span></button>)}</div>
     </>}
-    <p className="detail-warning">Filtro conservador de al menos una hora, ampliado si el trayecto dura más. Se excluyen destinos más cercanos al fuego y recorridos que se aproximen a su huella. No garantiza una evacuación segura ni confirma carreteras abiertas.</p>
+    <p className="detail-warning">Refugios evaluados al menos a una hora. Cada tramo se compara con la llegada simulada del fuego según su tiempo de paso y un margen de demo de 2 min. Se permite salir de la proyección futura antes de que llegue el fuego. No garantiza una evacuación segura ni confirma carreteras abiertas.</p>
   </section>
 }
 
@@ -83,13 +84,14 @@ export function ResponsePanel({ selectedId, onSelect, scenario, notices, onNotic
     ? `EJERCICIO VIGÍA. Solicitud de valoración de apoyo en el sector ${sector}. Confirmar disponibilidad y acceso con el mando. No es una orden de despliegue.`
     : 'EJERCICIO VIGÍA. Preaviso de posible llegada de personas afectadas por el escenario de incendio. Número, gravedad y ETA pendientes de confirmación humana. Solicitar valoración de disponibilidad.')
   return <div className="cop-content">
-    <p className="eyebrow">CENTROS REALES · COMUNICACIONES SIMULADAS</p>
-    <p className="fine">Ubicaciones aproximadas de OpenStreetMap, contrastadas con directorios cuando están disponibles. No es un inventario exhaustivo ni un estado de recursos en tiempo real.</p>
+    <p className="eyebrow">CENTROS DEL ESCENARIO · COMUNICACIONES SIMULADAS</p>
+    <p className="fine">Hospital y bomberos se han acercado al incendio con posiciones ficticias para la demo. El centro de salud conserva su referencia cartográfica. No es un inventario operativo.</p>
     <label className="control-label">Tipo de centro<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Todos</option>{Object.entries(CENTER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    <div className="cop-list">{RESPONSE_CENTERS.filter(item => filter === 'all' || item.kind === filter).map(item => <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}><span className={`center-symbol ${item.kind}`}>{CENTER_SYMBOL[item.kind]}</span><span><strong>{item.name}</strong><small>{CENTER_LABEL[item.kind]} · disponibilidad sin verificar</small></span></button>)}</div>
+    <div className="cop-list">{RESPONSE_CENTERS.filter(item => filter === 'all' || item.kind === filter).map(item => <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}><span className={`center-symbol ${item.kind}`}>{CENTER_SYMBOL[item.kind]}</span><span><strong>{item.name}</strong><small>{CENTER_LABEL[item.kind]} · {item.locationSource === 'demo' ? 'POSICIÓN DEMO' : 'referencia OSM'}</small></span></button>)}</div>
     {center && <section className="center-detail">
-      <h3>{center.name}</h3><p className="fine">{center.address}</p><p className="detail-warning">{center.note}</p>
-      <p className="fine">Fuentes consultadas: {center.verifiedAt}. Coordenadas del recinto, no del acceso de emergencias.</p>
+      <h3>{center.name}</h3><p className="fine">Dirección del centro real: {center.address}</p><p className="detail-warning">{center.note}</p>
+      {center.realLocation && <p className="fine">Referencia real conservada: {center.realLocation.lat.toFixed(5)}, {center.realLocation.lng.toFixed(5)}. El marcador del mapa no representa esa ubicación.</p>}
+      <p className="fine">Fuentes del centro real consultadas: {center.verifiedAt}. {center.locationSource === 'demo' ? 'La posición mostrada es exclusivamente de demostración.' : 'Coordenadas aproximadas del recinto, no del acceso de emergencias.'}</p>
       <div className="source-links">{center.sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.label}</a>)}</div>
       <h3>{center.kind === 'fire' ? 'Preparar solicitud de apoyo' : 'Preparar preaviso sanitario'}</h3>
       {center.kind === 'fire' && <label className="control-label">Sector a valorar<select value={sector} onChange={e => setSector(e.target.value)}>{SETTLEMENTS.map(place => <option key={place.name}>{place.name}</option>)}</select></label>}

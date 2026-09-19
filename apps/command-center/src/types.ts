@@ -8,6 +8,7 @@ export type CitizenStatus =
   | 'safe'
   | 'refused'
   | 'assistance'
+  | 'routing'
 
 export type Citizen = {
   id: string
@@ -22,7 +23,7 @@ export type Citizen = {
   safeZoneId: string
   speedKmh: number
   callDelaySec: number
-  outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating' | 'assistance'>
+  outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating' | 'assistance' | 'routing'>
   live?: boolean
   routeId?: string
   routeProgressM?: number
@@ -42,6 +43,8 @@ export type Citizen = {
     needs: string[]
   }
 }
+
+export type CallArea = { lng: number; lat: number; radiusM: number }
 
 export type MapLayers = {
   perimeter: boolean

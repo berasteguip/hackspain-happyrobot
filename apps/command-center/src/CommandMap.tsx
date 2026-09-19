@@ -4,8 +4,8 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import type { GeoJSONSource } from 'mapbox-gl'
 import type { FeatureCollection, Polygon, Point, LineString } from 'geojson'
 import { FIRE_CELL_SIZE_M, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
-import { destination } from './geo'
-import type { Citizen, FireSpot, MapLayers, SafeZone } from './types'
+import { destination, haversineMeters } from './geo'
+import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL } from './fire-model'
 import type { Exposure } from './fire-model'
 import { CENTER_SYMBOL, RESPONSE_CENTERS } from './response'
@@ -28,7 +28,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   perimeter: ['fire-cells-fill'],
   spread: ['spread-fill', 'spread-hatch', 'spread-edge'],
   thermal: ['thermal-core', 'thermal-satellite'],
-  citizens: ['people-glow', 'people-dot', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
+  citizens: ['people-glow', 'people-dot', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
   zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
   hospitals: ['center-hospital', 'center-hospital-label'],
@@ -55,6 +55,11 @@ type Props = {
   showWind: boolean
   windDirection: number
   windKmh: number
+  callArea: CallArea | null
+  areaIds: string[]
+  drawingArea: boolean
+  onAreaChange: (area: CallArea | null) => void
+  onAreaComplete: (area: CallArea) => void
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
@@ -73,7 +78,7 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
     features: citizens.map((citizen) => ({
       type: 'Feature',
       properties: {
-        id: citizen.id, name: citizen.name, status: citizen.status,
+        id: citizen.id, name: citizen.name, status: citizen.status, answered: Boolean(citizen.call),
         reference: !citizen.locationSource || citizen.locationSource === 'reference' || citizen.locationSource === 'unknown',
       },
       geometry: { type: 'Point', coordinates: [citizen.lng, citizen.lat] },
@@ -99,6 +104,10 @@ function routeGeo(route: RefugeRoute | null): FeatureCollection<LineString> {
   return { type: 'FeatureCollection', features: route ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route.coordinates } }] : [] }
 }
 
+function callAreaGeo(area: CallArea | null): FeatureCollection<Polygon> {
+  return { type: 'FeatureCollection', features: area && area.radiusM > 0 ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circle(area.lng, area.lat, area.radiusM)] } }] : [] }
+}
+
 function circle(lng: number, lat: number, radius: number) {
   return Array.from({ length: 65 }, (_, i) => destination(lng, lat, (i % 64) * 360 / 64, radius))
 }
@@ -116,7 +125,7 @@ function source(map: mapboxgl.Map, id: string) {
   return map.getSource(id) as GeoJSONSource | undefined
 }
 
-function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | null) {
+function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | null, areaIds: string[]) {
   for (const [key, ids] of Object.entries(LAYER_IDS)) {
     for (const id of ids) {
       if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', layers[key as keyof MapLayers] ? 'visible' : 'none')
@@ -125,24 +134,28 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   const visible: mapboxgl.FilterSpecification = layers.references ? ['has', 'id'] : ['==', ['get', 'reference'], false]
   map.setFilter('people-glow', visible)
   map.setFilter('people-dot', visible)
+  map.setFilter('people-area-highlight', ['all', visible, ['in', ['get', 'id'], ['literal', areaIds]]])
   for (const id of ['people-selection', 'people-label']) {
     map.setFilter(id, ['all', visible, ['==', ['get', 'id'], selectedId ?? '']])
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
   const onSelectRef = useRef(onSelect)
   const onCenterSelectRef = useRef(onCenterSelect)
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route })
+  const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
+  const suppressClickRef = useRef(false)
+  useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
   onCenterSelectRef.current = onCenterSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route }
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -186,6 +199,9 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         paint: { 'fill-color': '#ff0000', 'fill-opacity': 1, 'fill-antialias': false },
       }, firstLabel)
 
+      map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea) })
+      map.addLayer({ id: 'call-area-fill', type: 'fill', source: 'call-area', paint: { 'fill-color': '#77c8f4', 'fill-opacity': 0.09 } })
+      map.addLayer({ id: 'call-area-edge', type: 'line', source: 'call-area', paint: { 'line-color': '#a7e1ff', 'line-width': 2, 'line-dasharray': [3, 2] } })
       map.addSource('zones-area', { type: 'geojson', data: zoneAreas(current.zones, current.zoneExposure) })
       map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.2 } })
       map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.8 } })
@@ -230,7 +246,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'refuge-route-line', type: 'line', source: 'refuge-route', paint: { 'line-color': '#8bddff', 'line-width': 3, 'line-dasharray': [3, 1] } }, 'zone-point')
       map.addSource('response-centers', {
         type: 'geojson', attribution: 'Centros: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
-        data: { type: 'FeatureCollection', features: RESPONSE_CENTERS.map(center => ({ type: 'Feature', properties: { id: center.id, kind: center.kind, name: center.name, symbol: CENTER_SYMBOL[center.kind] }, geometry: { type: 'Point', coordinates: [center.lng, center.lat] } })) },
+        data: { type: 'FeatureCollection', features: RESPONSE_CENTERS.map(center => ({ type: 'Feature', properties: { id: center.id, kind: center.kind, name: center.locationSource === 'demo' ? `${center.kind === 'hospital' ? 'Hospital' : 'Bomberos'} · DEMO` : center.name, symbol: CENTER_SYMBOL[center.kind], locationSource: center.locationSource }, geometry: { type: 'Point', coordinates: [center.lng, center.lat] } })) },
       })
       for (const [kind, color] of [['hospital', '#bda7ed'], ['health', '#a6d1e9'], ['fire', '#eea26a']]) {
         map.addLayer({ id: `center-${kind}`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'symbol'], 'text-size': 23, 'text-allow-overlap': true }, paint: { 'text-color': color, 'text-halo-color': '#14232d', 'text-halo-width': 3 } })
@@ -252,23 +268,25 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('people', { type: 'geojson', data: citizensGeo(current.citizens) })
       map.addLayer({ id: 'people-glow', type: 'circle', source: 'people', paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.6, 11, 3.6, 14, 6, 17, 8.5],
-        'circle-color': PERSON_COLOR,
+        'circle-color': ['case', ['get', 'answered'], '#4de3a6', ['==', ['get', 'status'], 'ringing'], '#f3bd61', PERSON_COLOR],
         'circle-opacity': 0.22,
         'circle-blur': 0.9,
       } })
-      map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', paint: {
+      map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', layout: { 'circle-sort-key': ['case', ['get', 'answered'], 2, ['==', ['get', 'status'], 'ringing'], 1, 0] }, paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 1.3, 11, 2, 14, 3.4, 17, 4.6],
-        'circle-color': PERSON_COLOR,
+        'circle-color': ['case', ['get', 'answered'], '#4de3a6', ['==', ['get', 'status'], 'ringing'], '#f3bd61', PERSON_COLOR],
         'circle-opacity': 1,
         'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 1, 17, 1.3],
         'circle-stroke-color': '#0a1117',
         'circle-stroke-opacity': 0.85,
       } })
+      map.addLayer({ id: 'people-area-highlight', type: 'circle', source: 'people', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.3, 11, 3, 14, 4.4, 17, 5.6], 'circle-opacity': 0, 'circle-stroke-color': '#d3f0ff', 'circle-stroke-width': 1, 'circle-stroke-opacity': 0.5 } }, 'people-dot')
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
-      patchLayers(map, current.layers, current.selectedId)
+      patchLayers(map, current.layers, current.selectedId, current.areaIds)
 
       map.on('click', (event) => {
+        if (interactionRef.current.drawingArea || suppressClickRef.current) { suppressClickRef.current = false; return }
         const { x, y } = event.point
         const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
         const center = map.queryRenderedFeatures(box, { layers: ['center-hospital', 'center-hospital-label', 'center-health', 'center-health-label', 'center-fire', 'center-fire-label'] })[0]
@@ -346,7 +364,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.on('mousemove', (event) => {
         const { x, y } = event.point
         const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
-        map.getCanvas().style.cursor = features.length ? 'pointer' : ''
+        map.getCanvas().style.cursor = interactionRef.current.drawingArea ? 'crosshair' : features.length ? 'pointer' : ''
       })
       setLoaded(true)
     }
@@ -369,8 +387,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     source(map, 'thermal')?.setData(firesGeo(fires))
     source(map, 'people')?.setData(citizensGeo(citizens))
     source(map, 'accuracy')?.setData(accuracyGeo(citizens.find((citizen) => citizen.id === selectedId)))
-    patchLayers(map, layers, selectedId)
-  }, [citizens, fires, selectedId, layers, loaded])
+    patchLayers(map, layers, selectedId, areaIds)
+  }, [citizens, fires, selectedId, layers, loaded, areaIds])
 
   useEffect(() => {
     const map = mapRef.current
@@ -383,6 +401,74 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'refuge-route')?.setData(routeGeo(route))
   }, [loaded, route])
+
+  useEffect(() => {
+    if (loaded && mapRef.current) source(mapRef.current, 'call-area')?.setData(callAreaGeo(callArea))
+  }, [loaded, callArea])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!loaded || !map || !drawingArea) return
+    popupRef.current?.remove()
+    const canvas = map.getCanvas()
+    const handlers = [map.dragPan, map.dragRotate, map.boxZoom, map.doubleClickZoom, map.scrollZoom, map.touchZoomRotate]
+    const enabled = handlers.map(handler => handler.isEnabled())
+    handlers.forEach(handler => handler.disable())
+    const previousTouchAction = canvas.style.touchAction
+    canvas.style.touchAction = 'none'
+    canvas.style.cursor = 'crosshair'
+    let start: { lng: number; lat: number } | null = null
+    let pointerId: number | null = null
+    const position = (event: PointerEvent) => {
+      const bounds = canvas.getBoundingClientRect()
+      return map.unproject([event.clientX - bounds.left, event.clientY - bounds.top])
+    }
+    const areaAt = (event: PointerEvent): CallArea | null => {
+      if (!start) return null
+      const point = position(event)
+      return { ...start, radiusM: Math.min(20000, haversineMeters(start.lng, start.lat, point.lng, point.lat)) }
+    }
+    const down = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return
+      event.preventDefault()
+      const point = position(event)
+      start = { lng: point.lng, lat: point.lat }
+      pointerId = event.pointerId
+      suppressClickRef.current = true
+      canvas.setPointerCapture(event.pointerId)
+      interactionRef.current.onAreaChange({ ...start, radiusM: 0 })
+    }
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return
+      event.preventDefault()
+      interactionRef.current.onAreaChange(areaAt(event))
+    }
+    const up = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return
+      event.preventDefault()
+      const area = areaAt(event)
+      start = null
+      pointerId = null
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+      if (area && area.radiusM >= 50) interactionRef.current.onAreaComplete(area)
+      else interactionRef.current.onAreaChange(null)
+    }
+    const cancel = () => { start = null; pointerId = null; interactionRef.current.onAreaChange(null) }
+    canvas.addEventListener('pointerdown', down, true)
+    canvas.addEventListener('pointermove', move, true)
+    canvas.addEventListener('pointerup', up, true)
+    canvas.addEventListener('pointercancel', cancel, true)
+    return () => {
+      canvas.removeEventListener('pointerdown', down, true)
+      canvas.removeEventListener('pointermove', move, true)
+      canvas.removeEventListener('pointerup', up, true)
+      canvas.removeEventListener('pointercancel', cancel, true)
+      if (pointerId !== null && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId)
+      handlers.forEach((handler, i) => { if (enabled[i]) handler.enable() })
+      canvas.style.touchAction = previousTouchAction
+      canvas.style.cursor = ''
+    }
+  }, [loaded, drawingArea])
 
   useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
 

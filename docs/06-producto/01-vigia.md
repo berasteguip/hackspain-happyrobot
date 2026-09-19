@@ -247,6 +247,10 @@ del proveedor. No se realizaron comunicaciones a centros.
 
 ## Viento visible y evacuación coherente — revisión 2026-09-19
 
+**Parcialmente sustituido el 2026-09-19:** la revisión «Campañas por círculo» de
+abajo cambia la selección de destinatarios, los colores de respuesta, el filtro de
+alejamiento y las posiciones mostradas de hospital/bomberos. Se conserva el historial.
+
 Petición del equipo del 2026-09-19: sustituir los controles manuales por una capa
 visual de viento on/off y un botón «Simular incendio dentro de 1 hora», mostrar los
 centros desde el arranque, usar azul para todas las personas y evitar trayectos
@@ -304,6 +308,123 @@ uniforme, animación on/off, reduced motion, proyección a +1 h/reset y ausencia
 sliders. Tras avanzar 75 segundos de llamadas en el navegador, los contactos de
 El Arenal sin ruta admisible permanecen en su posición, sin desplazarse hacia el
 fuego. No se han validado aquí carreteras ni meteorología reales.
+
+## Campañas por círculo y centros reubicados — revisión 2026-09-19
+
+**Actualización posterior del 2026-09-19:** la precarga de corredores y la exclusión
+estática de toda la proyección futura se sustituyen por «Rutas individuales y tiempo
+de paso», descrito abajo. El resto del flujo de campaña se conserva.
+
+El equipo confirma **demo completa en interfaz** y **solo carreteras reales** el
+2026-09-19. Esta revisión afecta al CECOP de Gredos; no conecta sus contactos con
+HappyRobot ni unifica sus IDs con el backend de Zamora. `api/notify.py` y sus controles
+de llamadas reales no se modifican.
+
+- **Selección:** «Zona» permite dibujar un círculo arrastrando desde su centro con
+  ratón o pantalla táctil. Se muestran el radio y las personas seleccionadas antes
+  de lanzar ninguna llamada. Escape o «Borrar selección» cancela la selección;
+  también existe una selección por botón del entorno del incendio (3 km).
+  El gesto admite radios de 50 m a 20 km y usa distancia geodésica para incluir puntos.
+- **Campaña:** solo se encolan contactos ficticios pendientes de la selección.
+  La lista de IDs se conserva aunque los puntos se muevan o se borre el círculo.
+  Nuevas selecciones pueden añadir contactos sin duplicar los ya encolados. Los
+  pings de sesiones GPS no reciben llamadas ni desplazamientos simulados.
+- Los 300 contactos parten sin llamar; se eliminan las 12 respuestas precargadas de
+  la primera demo. Las llamadas avanzan en oleadas de cuatro, con pausa/reanudación
+  y contadores de respuestas, movimiento, ausencia de respuesta y falta de ruta.
+- **Respuesta y movimiento:** azul antes de responder, amarillo en llamada y verde
+  al contestar; el verde confirma respuesta de demo, no llegada a salvo. El contorno
+  de selección queda bajo el punto para no ocultar su estado. La ausencia de respuesta
+  no produce movimiento. Respuesta con consentimiento y ruta disponible permite
+  simular la salida; rechazo o falta de ruta quedan explicados en la ficha.
+- **Refugios:** se precargan corredores de Mapbox, pero la asignación individual se
+  hace tras responder y consentir. Entre alternativas admisibles de la localidad se
+  escoge la menor distancia restante por carretera, incluyendo el acceso aproximado.
+  La comparación manual sigue ofreciendo tiempos del proveedor.
+- **Corrección del bloqueo excesivo:** se retira la exigencia de que todo el trayecto
+  aumente su distancia al fuego. Un refugio puede estar geométricamente más cerca
+  del fuego que el origen y seguir fuera de la zona expuesta. Se mantiene la exclusión
+  de destinos, carreteras y accesos que intersecten la huella/proyección y su margen,
+  evaluando al menos la próxima hora. No se inventan rutas si Mapbox falla. Por tanto,
+  contestar no garantiza que toda persona tenga un recorrido admisible en esta demo.
+- **Centros próximos:** hospital y bomberos se muestran en posiciones ficticias de
+  Gredos, rotuladas **DEMO**, por petición explícita del equipo. Hospital:
+  40.215, -5.075; bomberos: 40.208, -5.148. Se conservan sus coordenadas originales
+  de Talavera en `realLocation` y las fuentes originales, diferenciadas de la posición
+  mostrada. El centro de salud de Arenas no se desplaza.
+
+Datos de interfaz locales (no se incorporan al contrato HTTP de `api/`): `CallArea`
+contiene `lng`, `lat`, `radiusM`; la campaña conserva IDs de contactos y tiempos de
+llamada del simulador existente. `ResponseCenter.locationSource` distingue `osm`
+de `demo`, y `realLocation` conserva la referencia real de los centros reubicados.
+
+Fuentes: petición y respuestas del equipo del 2026-09-19; código local en
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx),
+[simulation.ts](../../apps/command-center/src/simulation.ts),
+[routing.ts](../../apps/command-center/src/routing.ts),
+[scenario.ts](../../apps/command-center/src/scenario.ts),
+[response.ts](../../apps/command-center/src/response.ts) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs).
+
+Verificación del 2026-09-19: **24 tests pasan**, build correcto y lint sin avisos.
+Pruebas en Chrome headless con Mapbox/Directions mockeados: círculo por arrastre,
+selección táctil en móvil, cancelación con Escape, destinatarios congelados,
+pausa/reanudación, colores y referencias de los centros reubicados. En una selección
+de 156 contactos de Arenas, tras 35 s simulados hubo 40 respuestas y 15 personas
+que habían cambiado de posición; los no contactados y todos los ajenos a la selección
+permanecieron inmóviles. Son resultados de un test con geometrías de proveedor
+mockeadas, no una validación de itinerarios reales. No se enviaron llamadas externas.
+
+## Rutas individuales y tiempo de paso — corrección 2026-09-19
+
+Tras el aviso del equipo de que los contactos respondían pero no se movían, se
+reprodujeron dos bloqueos en código:
+
+1. Un corredor compartido podía rechazarse por un tramo anterior a la posición de
+   la persona, aunque desde esa persona hasta el refugio quedara una ruta admisible.
+   Además, quedar a más de 100 m de los corredores precargados impedía buscar una
+   carretera propia.
+2. Se trataba la extensión de fuego a +60 min como si ya estuviera ardiendo. Eso
+   impedía salir de una zona futura amenazada aunque el trayecto pudiera terminar
+   antes de que llegara el fuego.
+
+Correcciones implementadas en el CECOP:
+
+- No se cargan 72 corredores al abrir. Tras respuesta y consentimiento se consulta
+  Directions **desde la posición de esa persona**, con dos planificaciones en paralelo.
+  Se mantiene la selección del refugio más cercano entre las alternativas admisibles.
+- Cada tramo se contrasta con el tiempo estimado de paso: se usan anotaciones de
+  duración del proveedor y, cuando faltan, un reparto proporcional a la longitud.
+  Los accesos aproximados se temporizan a 4 km/h. La comprobación divide los tramos
+  en partes de hasta 50 m e incluye un margen temporal **de demo** de 2 min.
+- Un refugio sigue evaluándose al menos a +60 min. El trayecto puede salir de la
+  proyección futura si pasa antes de la llegada simulada del fuego; nunca se admite
+  atravesar la huella actual con su margen. Durante la animación se comprueba el
+  fuego actual, no se convierte la proyección de una hora en fuego presente.
+- Se muestra «Calculando ruta individual» mientras llega la respuesta. HTTP de
+  Directions, timeout, fallo de conexión, accesos excesivos y falta de alternativas
+  tienen mensajes distintos, sin mostrar el token. «Reintentar rutas pendientes»
+  repite la planificación, no las llamadas. Pausar aborta peticiones pendientes;
+  reanudar permite volver a consultarlas sin duplicar desplazamientos.
+
+Estos cambios corrigen bloqueos reproducibles del planificador. No demuestran que
+el token o las peticiones del navegador del equipo funcionen; esa comprobación
+requiere observar el resultado real de Directions. La proyección y su margen
+siguen siendo ilustrativos, no un cálculo de seguridad operativa.
+
+Fuentes: reproducción local del 2026-09-19 y código de
+[routing.ts](../../apps/command-center/src/routing.ts),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs). Las regresiones incluyen la
+salida a tiempo de una proyección futura, una salida demasiado lenta, planificación
+desde la persona, HTTP 403 sin exponer credenciales y exclusión de sesiones reales.
+
+Verificación del 2026-09-19: **29 tests pasan**, build correcto y lint sin avisos.
+En navegador, con respuestas de Directions controladas, se verificó ausencia de
+precarga, consulta después de responder, diagnóstico HTTP 403, recuperación mediante
+reintento, movimiento de 24 personas, pausa/reanudación y ausencia de cambios fuera
+de la selección. Esta prueba no valida credenciales ni disponibilidad real de Mapbox.
 
 ## Fuentes
 

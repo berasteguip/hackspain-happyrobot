@@ -233,19 +233,13 @@ function person(index: number, lng: number, lat: number, locality: string, resid
     name: `${NAMES[index % NAMES.length]} ${SURNAMES[Math.floor(index / NAMES.length) % SURNAMES.length]}`,
     phone: `demo-${String(index + 1).padStart(3, '0')}`,
     lng, lat, locality, resident,
-    status: resident ? 'pending' : 'tracking',
+    status: 'pending',
     vulnerable: index % 17 === 0,
     safeZoneId: '',
     speedKmh: 26 + (index % 7) * 4,
     callDelaySec: 1 + (index % 48) * 1.4,
     outcome: index % 11 === 7 ? 'no_answer' : index % 13 === 9 ? 'refused' : index % 7 === 4 ? 'informed' : 'tracking',
-    locationSource: resident ? 'reference' : 'simulation',
-    locationUpdatedAt: resident ? undefined : Date.now(),
-    call: resident ? undefined : {
-      answeredAt: Date.now(), agent: 'HappyRobot · demo',
-      summary: 'Guion ficticio: la persona atiende la llamada desde fuera del núcleo urbano y comparte dónde se encuentra. No se le ha asignado una ruta ni un destino de evacuación.',
-      consent: 'granted', needs: [],
-    },
+    locationSource: 'reference',
   }
 }
 

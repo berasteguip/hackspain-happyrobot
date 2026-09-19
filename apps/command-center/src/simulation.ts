@@ -2,7 +2,7 @@ import { destination, haversineMeters, bearingDeg } from './geo'
 import { nearestOnRoute, positionAt } from './routing'
 import type { Route, RouteIndex } from './routing'
 import { AGENTS } from './scenario'
-import type { CallEvent, Citizen, SafeZone } from './types'
+import type { CallArea, CallEvent, Citizen, SafeZone } from './types'
 
 const RING_SEC = 2.4
 /** Tiempo entre el fin de la llamada y la salida de casa. */
@@ -12,14 +12,32 @@ const TIME_SCALE = 12
 /** Trayecto a pie desde el punto de partida hasta la carretera más cercana. */
 const ACCESS_SPEED_KMH = 5
 
+export function selectAreaIds(citizens: Citizen[], area: CallArea | null): string[] {
+  if (!area || ![area.lng, area.lat, area.radiusM].every(Number.isFinite) || Math.abs(area.lng) > 180 || Math.abs(area.lat) > 90 || area.radiusM <= 0 || area.radiusM > 20000) return []
+  return citizens.filter(citizen => haversineMeters(area.lng, area.lat, citizen.lng, citizen.lat) <= area.radiusM + 1e-6).map(citizen => citizen.id)
+}
+
+export function prepareAreaCampaign(citizens: Citizen[], selectedIds: string[], elapsedSec: number, enrolled: ReadonlySet<string>) {
+  const selected = new Set(selectedIds)
+  const addedIds = citizens.filter(citizen => selected.has(citizen.id) && !enrolled.has(citizen.id) && !citizen.live && citizen.status === 'pending').map(citizen => citizen.id)
+  const offset = citizens.reduce((latest, citizen) => enrolled.has(citizen.id) && ['pending', 'ringing'].includes(citizen.status) ? Math.max(latest, citizen.callDelaySec + RING_SEC) : latest, elapsedSec)
+  const schedule = new Map(addedIds.map((id, index) => [id, offset + 1 + Math.floor(index / AGENTS.length) * (RING_SEC + 0.6)]))
+  return {
+    citizens: citizens.map(citizen => schedule.has(citizen.id) ? { ...citizen, callDelaySec: schedule.get(citizen.id)! } : citizen),
+    ids: [...new Set([...enrolled, ...addedIds])],
+    addedIds,
+  }
+}
+
 export function advanceProtocol(
   citizens: Citizen[],
   elapsedSec: number,
   prevEvents: CallEvent[],
+  campaignIds?: ReadonlySet<string>,
 ): { citizens: Citizen[]; events: CallEvent[] } {
   const events = [...prevEvents]
   const next = citizens.map((citizen, index): Citizen => {
-    if (citizen.live) return citizen
+    if (citizen.live || campaignIds && !campaignIds.has(citizen.id)) return citizen
     if (citizen.status === 'safe' || citizen.status === 'refused') return citizen
     if (citizen.status === 'no_answer') return citizen
     if (citizen.status === 'informed') return citizen
@@ -69,7 +87,7 @@ export function advanceProtocol(
           answeredAt: Date.now(),
           agent: AGENTS[index % AGENTS.length],
           summary: citizen.outcome === 'tracking'
-            ? 'En el guion de demostración, la persona recibe el aviso y comparte su ubicación. Solo se simula la salida si hay un recorrido validado que no la acerque al fuego. No es un desplazamiento real.'
+            ? 'En el guion de demostración, la persona recibe el aviso y comparte su ubicación. Solo se simula la salida con consentimiento y un recorrido a un refugio fuera de la zona expuesta. No es un desplazamiento real.'
             : citizen.outcome === 'informed'
               ? 'En el guion de demostración, la persona recibe el aviso. No se obtiene una nueva ubicación.'
               : 'En el guion de demostración, la persona rechaza compartir su ubicación. Se conserva únicamente la referencia inicial.',
@@ -87,7 +105,7 @@ export function advanceProtocol(
       citizen.status === 'tracking' &&
       elapsedSec >= citizen.callDelaySec + RING_SEC + DEPARTURE_SEC
     ) {
-      if (!citizen.routeId || !citizen.safeZoneId) return { ...citizen, status: 'assistance', routeHoldReason: citizen.routeHoldReason ?? 'Esperando un recorrido validado. No se inicia el desplazamiento.' }
+      if (!citizen.call || citizen.call.consent !== 'granted' || !citizen.routeId || !citizen.safeZoneId) return { ...citizen, status: 'assistance', routeHoldReason: citizen.routeHoldReason ?? 'Esperando un recorrido validado. No se inicia el desplazamiento.' }
       events.push({
         id: `${citizen.id}-move`,
         ts: Date.now(),
@@ -122,7 +140,7 @@ function parkingSpot(zone: SafeZone, id: string): [number, number] {
 function pickRoute(citizen: Citizen, routes: RouteIndex) {
   let best: { route: Route; alongM: number; gapM: number } | null = null
   for (const route of routes.values()) {
-    if (route.id !== citizen.routeId || route.zoneId !== citizen.safeZoneId || route.group !== citizen.locality) continue
+    if (route.id !== citizen.routeId || route.zoneId !== citizen.safeZoneId || route.group !== (citizen.locality ?? '')) continue
     const { alongM, gapM } = nearestOnRoute(route, citizen.lng, citizen.lat)
     if (!best || gapM < best.gapM) best = { route, alongM, gapM }
   }
@@ -138,6 +156,7 @@ export function moveEvacuees(
   if (dtSec <= 0) return citizens
   return citizens.map((citizen): Citizen => {
     if (citizen.live || citizen.status !== 'evacuating') return citizen
+    if (!citizen.call || citizen.call.consent !== 'granted') return { ...citizen, status: 'assistance', routeHoldReason: 'Sin llamada respondida y consentimiento. No se inicia el movimiento.' }
     const zone = zones.find((item) => item.id === citizen.safeZoneId)
     if (!zone) return { ...citizen, status: 'assistance', routeHoldReason: 'Sin destino validado. Pendiente de revisión del mando.' }
 
@@ -154,7 +173,7 @@ export function moveEvacuees(
     }
 
     // Sin cartografía de rutas (API caída u offline) se mantiene la posición.
-    if (!route || route.zoneId !== citizen.safeZoneId || route.group !== citizen.locality) {
+    if (!route || route.zoneId !== citizen.safeZoneId || route.group !== (citizen.locality ?? '')) {
       return { ...citizen, status: 'assistance', routeHoldReason: 'Sin recorrido validado para esta persona. Pendiente de revisión del mando.' }
     }
 
