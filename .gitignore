@@ -1,2 +1,27 @@
-# Playwright CLI output (may contain credentials)
+# Playwright output (may contain credentials)
 .playwright-cli/
+.playwright/
+.playwright-mcp/
+
+# Secretos
+.env
+**/config.js
+!**/config.example.js
+
+# Python
+.venv/
+**/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Artefactos de ejecucion
+api/state.jsonl
+**/build.log
+sim/out/
+sim/cache/
+engine/logs/
+
+# macOS
+.DS_Store
