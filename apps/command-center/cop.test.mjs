@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
 after(() => server.close())
-const { buildFireForecast, forecastGeo, exposureAt, routeBlocked } = await server.ssrLoadModule('/src/fire-model.ts')
+const { buildFireForecast, forecastGeo, forecastHeatPoints, cellVisualHeat, exposureAt, routeBlocked } = await server.ssrLoadModule('/src/fire-model.ts')
 const { fetchRefugeRoutes, rankRefugeRoutes, planCitizenRoute, fetchDrivingRoute } = await server.ssrLoadModule('/src/routing.ts')
 const { detectAlerts, initialWatch, mergeAlerts, ALERT_ACTION_LABEL } = await server.ssrLoadModule('/src/alerts.ts')
 const { createDispatch, moveUnits, planUnitRoute, unitOrigin, originsFrom } = await server.ssrLoadModule('/src/units.ts')
@@ -83,6 +83,21 @@ test('viento hacia el este favorece el este; sin viento la expansión es simétr
   assert.ok(exposureAt(forecast, ...at(3, 0), 120, 0).minute < exposureAt(forecast, ...at(-3, 0), 120, 0).minute)
   const calm = buildFireForecast(footprint, { ...settings, windKmh: 0 })
   assert.equal(exposureAt(calm, ...at(3, 0), 120, 0).minute, exposureAt(calm, ...at(-3, 0), 120, 0).minute)
+})
+
+test('el frente visual florece antes de la celda y no salta a calor pleno', () => {
+  const later = [...forecast.cells.values()].find(cell => cell.minute > 8 && cell.minute < 40)
+  assert.ok(later)
+  assert.equal(cellVisualHeat(0, 0), 1)
+  assert.ok(cellVisualHeat(later.minute, later.minute - 8) < cellVisualHeat(later.minute, later.minute))
+  assert.ok(cellVisualHeat(later.minute, later.minute) < cellVisualHeat(later.minute, later.minute + 20))
+  const start = forecastHeatPoints(forecast, 0).features.length
+  const mid = forecastHeatPoints(forecast, later.minute).features.length
+  const late = forecastHeatPoints(forecast, 80).features.length
+  assert.equal(start, 0)
+  assert.ok(mid > 0)
+  assert.ok(late > mid)
+  assert.ok(forecastHeatPoints(forecast, later.minute).features.every(point => point.properties.heat > 0 && point.properties.heat <= 1))
 })
 
 test('avance cero, huella vacía y parámetros inválidos', () => {

@@ -72,13 +72,10 @@ ensayo: ## Arranca la API con el banco de pruebas de la Complutense (telefonos R
 	@echo ""
 	cd api && SCENARIO=ucm-madrid .venv/bin/python -m uvicorn main:app --reload --port $(API_PORT)
 
-reset: ## Vacia el tablero de llamadas para poder volver a llamar a los mismos moviles
-	@cd api && .venv/bin/python -c "\
-import httpx, sys; sys.path.insert(0, '.'); \
-from settings import settings; \
-r = httpx.post('http://localhost:$(API_PORT)/reset', json={'scenario': settings.scenario}, \
-              headers={'x-api-key': settings.hr_shared_secret.encode('latin-1', 'replace')}, timeout=20); \
-print('reset ok' if r.status_code < 400 else f'FALLO {r.status_code}: {r.text[:120]}')"
+reset: ## Vacia el tablero de llamadas. URL=... KEY=... al desplegado; TODO=1 recarga el escenario
+	@python3 scripts/reset.py \
+	  --url "$(or $(URL),http://localhost:$(API_PORT))" \
+	  $(if $(KEY),--key "$(KEY)",) $(if $(TODO),--todo,)
 
 sim: ## Corre el simulador de evacuacion y compara planes
 	cd sim && .venv/bin/python -m sim.cli --scenario ../data/scenarios/$(SCENARIO).json --variants 200 --out out/

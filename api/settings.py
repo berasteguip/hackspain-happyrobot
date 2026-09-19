@@ -71,6 +71,19 @@ def _phone_set(name: str) -> set[str]:
     return {t for t in limpio if t}
 
 
+# Secretos que están escritos en un fichero versionado de un repo PÚBLICO. Quien lea el repo
+# los tiene. Si alguno de estos es la clave de un despliegue, ese despliegue está abierto.
+SECRETOS_PUBLICOS = frozenset(
+    {
+        "cambiame-por-algo-largo",
+        "clave-de-ensayo",
+        "changeme",
+        "secret",
+        "test",
+    }
+)
+
+
 @dataclass
 class Settings:
     # --- HappyRobot / auth -------------------------------------------------
@@ -107,6 +120,10 @@ class Settings:
     call_max_radius_m: float = field(default_factory=lambda: _float("CALL_MAX_RADIUS_M", 20000.0))
     # Tope de llamadas por ráfaga. Rodear el mapa entero no debe lanzar 120 runs.
     call_max_batch: int = field(default_factory=lambda: _int("CALL_MAX_BATCH", 25))
+    # Minutos tras los cuales un intento sin desenlace deja de bloquear otro. Existe porque el
+    # resultado llega por un callback que puede no llegar nunca (API en localhost, túnel caído),
+    # y sin esto una llamada de dos minutos bloquea a esa persona el resto de la crisis.
+    call_stale_minutes: float = field(default_factory=lambda: _float("CALL_STALE_MINUTES", 5.0))
 
     # --- Contexto que el agente de voz lee al descolgar ----------------------------------
     # El prompt del workflow los interpola literalmente ("le llama el asistente automático de
@@ -119,6 +136,10 @@ class Settings:
     # "ninguna" o la orden en vigor. Si NO es "ninguna", el agente la transmite sin ofrecer
     # alternativas: no es un texto decorativo.
     authority_order: str = field(default_factory=lambda: os.getenv("ORDEN_AUTORIDAD", "ninguna"))
+    # El workflow tiene su PROPIO cerrojo (un nodo Python que valida el destino antes de
+    # marcar) y exige que la petición se declare como simulacro. Ponerlo a false hace que el
+    # workflow rechace todas las llamadas: es el freno de mano del lado de HappyRobot.
+    demo_mode: bool = field(default_factory=lambda: _bool("DEMO_MODE", True))
 
     # --- Escenario y persistencia -----------------------------------------
     scenario: str = field(default_factory=lambda: os.getenv("SCENARIO", "sierra-culebra"))
@@ -164,6 +185,11 @@ class Settings:
     max_houses_per_patrol: int = 3
     escalate_after_attempts: int = 2
 
+    @property
+    def secret_is_public(self) -> bool:
+        """¿La clave de nuestra API es una que está escrita en el repo?"""
+        return self.hr_shared_secret.strip().lower() in SECRETOS_PUBLICOS
+
     def summary(self) -> dict:
         """Lo que se imprime al arrancar (sin secretos)."""
         return {
@@ -180,7 +206,13 @@ class Settings:
                 if self.call_allowlist
                 else "VACÍA (se marca lo que diga el escenario)"
             ),
-            "auth": "on" if self.hr_shared_secret else "OFF (HR_SHARED_SECRET vacío)",
+            "auth": (
+                "⚠️  CLAVE PÚBLICA (está en el repo: cámbiala)"
+                if self.secret_is_public
+                else "on"
+                if self.hr_shared_secret
+                else "OFF (HR_SHARED_SECRET vacío)"
+            ),
             "webhook_happyrobot": "configurado" if self.hr_workflow_webhook else "sin configurar",
             "state_jsonl": str(self.state_jsonl),
         }

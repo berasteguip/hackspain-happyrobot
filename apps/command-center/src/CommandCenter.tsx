@@ -111,6 +111,7 @@ export function CommandCenter({ token }: { token: string }) {
   const [liveCalls, setLiveCalls] = useState<CallRun[]>([])
   const [dispatchError, setDispatchError] = useState('')
   const [dispatching, setDispatching] = useState(false)
+  const [forceRecall, setForceRecall] = useState(false)
   const [apiRoster, setApiRoster] = useState(false)
   const campaignRef = useRef<ReadonlySet<string>>(new Set())
   const campaignSet = useMemo(() => new Set(campaignIds), [campaignIds])
@@ -426,7 +427,7 @@ export function CommandCenter({ token }: { token: string }) {
     setSelectedId(null)
     setPanel('campaign')
     try {
-      const resultado = await dispatchCircle(operatorKey, callArea, { operator: 'puesto de mando' })
+      const resultado = await dispatchCircle(operatorKey, callArea, { operator: 'puesto de mando', force: forceRecall })
       setLiveBatch({ id: resultado.batch_id, skipped: resultado.skipped_detail })
       setLiveCalls(resultado.calls)
       setCampaignIds(resultado.calls.map((call) => call.person_id))
@@ -603,7 +604,7 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className="map-app">
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
+        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
       <header className="floating-brand">
         <div className="brand-row"><span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong></div>
@@ -654,6 +655,7 @@ export function CommandCenter({ token }: { token: string }) {
         <div className="campaign-heading"><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas seleccionadas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><small>{liveMode ? `HappyRobot · llamadas reales${apiRoster ? '' : ' · SIN censo de la API'}` : 'HappyRobot · simulación local'}</small></div>
         <label className="row live-toggle"><input type="checkbox" checked={liveMode} onChange={(event) => { setLiveMode(event.target.checked); setDispatchError('') }} />Llamar de verdad por HappyRobot</label>
         {liveMode && <label className="search-label"><span className="sr-only">Clave de operador</span><input className="search" type="password" autoComplete="off" placeholder="Clave de operador (HR_SHARED_SECRET)" value={operatorKey} onChange={(event) => { setOperatorKey(event.target.value); saveOperatorKey(event.target.value) }} /></label>}
+        {liveMode && <label className="row live-toggle"><input type="checkbox" checked={forceRecall} onChange={(event) => setForceRecall(event.target.checked)} />Volver a llamar aunque ya tengan un intento</label>}
         {liveMode && <p className="fine">Se manda el círculo a la API de crisis y es ella quien dispara HappyRobot. Los cerrojos <code>ALLOW_REAL_CALLS</code> y <code>CALL_ALLOWLIST</code> siguen mandando: un punto que no esté en la lista aparecerá como bloqueado.</p>}
         {drawingArea && <p className="fine">Pulsa en el centro y arrastra hasta el borde. Mínimo 50 m. Escape cancela.</p>}
         <div className="campaign-actions">

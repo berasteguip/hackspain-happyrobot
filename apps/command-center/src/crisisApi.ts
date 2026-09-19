@@ -70,6 +70,7 @@ export const CALL_STATE_LABEL: Record<CallStateName, string> = {
   failed: 'No se pudo marcar',
   blocked: 'Bloqueada por el cerrojo',
   simulated: 'Simulada · nadie ha sonado',
+  stale: 'Sin desenlace · no llegó el resultado',
 }
 
 export const CALL_STATE_OPEN: CallStateName[] = ['queued', 'dialing', 'ringing']
