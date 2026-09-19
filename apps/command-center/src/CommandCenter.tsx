@@ -22,7 +22,7 @@ const LAYER_OPTIONS: { key: keyof MapLayers; name: string; detail: string; symbo
   { key: 'thermal', name: 'Detecciones térmicas', detail: 'Focos puntuales, no perímetros', symbol: 'thermal' },
   { key: 'citizens', name: 'Personas', detail: 'Ubicación y estado de contacto', symbol: 'person' },
   { key: 'references', name: 'Referencias residenciales', detail: 'No confirman presencia', symbol: 'reference' },
-  { key: 'zones', name: 'Puntos de encuentro', detail: 'Ubicaciones de demostración', symbol: 'zone' },
+  { key: 'zones', name: 'Puntos de encuentro', detail: 'Lugares reales · uso como refugio simulado', symbol: 'zone' },
 ]
 function formatClock(date: Date) {
   return date.toLocaleTimeString('es-ES', { hour12: false })

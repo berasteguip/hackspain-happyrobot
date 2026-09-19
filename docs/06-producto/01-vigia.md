@@ -48,9 +48,10 @@ fuentes geográficas indicadas abajo; la distribución alrededor de ellos es sin
 no un censo ni una geocodificación de viviendas. Las cantidades no representan
 población real ni ocupación.
 
-**Actualización respecto al frontend inicial descrito arriba:** la campaña ya no
-mueve automáticamente a las personas en línea recta ni les asigna un destino.
-Responder una llamada modifica el estado de contacto, no demuestra una evacuación.
+**Obsoleto según revisión del código del 2026-09-19:** ~~la campaña ya no
+mueve automáticamente a las personas en línea recta ni les asigna un destino.~~
+El código actual vuelve a simular desplazamientos y asignar puntos de encuentro;
+ver la revisión técnica abajo. Responder una llamada no demuestra una evacuación real.
 
 La superficie, el frente y la propagación son geometrías ilustrativas del escenario.
 NASA FIRMS es una fuente opcional de detecciones térmicas, no un perímetro actual ni
@@ -75,7 +76,77 @@ basado en terreno, meteorología ni detecciones reales.
 
 Verificación local desde `apps/command-center`: `npm run build`, `npm run lint`.
 
+## Revisión técnica del frontend — 2026-09-19
+
+- Stack: React 19, TypeScript 6, Vite 8 y Mapbox GL JS 3; estilos CSS propios.
+  `App.tsx` selecciona el CECOP o `/track` mediante `window.location.pathname`,
+  sin router externo. El token público de Mapbox procede de `VITE_MAPBOX_TOKEN`
+  o de `localStorage`; `/track` no necesita ese token.
+- `CommandCenter.tsx` mantiene el estado en hooks de React y conecta mapa,
+  paneles de personas/capas, simulación y polling de `/api/locations` cada 1,5 s.
+  No hay integración de llamadas reales con HappyRobot en esta app.
+- `routing.ts` obtiene corredores de Mapbox Directions con cuatro peticiones
+  concurrentes y elige el punto de encuentro por la menor longitud de corredor
+  disponible para cada grupo. No verifica la seguridad de la ruta ante el fuego.
+  `simulation.ts` pasa de `tracking` a `evacuating`, simula acceso a pie y avance
+  por carretera con reloj acelerado ×12; sin corredor utiliza un rumbo directo.
+  Las personas con sesión `live` quedan excluidas de esa simulación.
+- `/track` ofrece GPS del navegador o movimiento ficticio, ambos tras consentimiento.
+  Detener el envío conserva la última posición en el visor. La API de Vite guarda
+  únicamente el último ping por ID en memoria, sin persistencia ni autenticación.
+  Tanto esa API como el proxy de FIRMS están configurados para desarrollo, no
+  incluidos como backend en el build estático.
+- `firms.ts` lee un CSV de Europa de las últimas 24 h, filtra por un rectángulo
+  geográfico y limita la capa a 250 detecciones; ese filtro no equivale a una
+  frontera administrativa de España.
+- Verificación local del 2026-09-19: `npm run build` y `npm run lint` pasan.
+  Vite avisa de un chunk JavaScript de unos 2,11 MB minificado (595 kB gzip).
+  `package.json` no define un script de tests. Esta revisión no valida visualmente
+  el mapa en navegador ni la disponibilidad de los servicios externos.
+
+Fuentes de esta revisión: código local enlazado a continuación y ejecución de los
+scripts declarados en `package.json` el 2026-09-19.
+
+## Puntos de encuentro reales — integración selectiva 2026-09-19
+
+Se incorporan de `origin/devin/vigia-grupos-puntos-encuentro` (commit `a584037`)
+las tres ubicaciones y sus metadatos, conservando la simulación y la geometría del
+fuego de `main`. Los antiguos puntos de El Arenal y La Parra quedan sustituidos;
+el de Arenas pasa a las coordenadas del polideportivo Jesús Navarro.
+
+| Punto candidato | Latitud, longitud importadas | Aforo ficticio de demo |
+| --- | --- | --- |
+| PE-01 La Dehesa · Guisando | 40.220682, -5.140945 | 100 |
+| PE-02 El Risquillo · Guisando | 40.221327, -5.144282 | 90 |
+| PE-03 Jesús Navarro · Arenas | 40.2126907, -5.0930363 | 650 |
+
+Las páginas municipales consultadas el 2026-09-19 confirman los aparcamientos de
+La Dehesa y El Risquillo y el polideportivo de C/ Obispo, 1. Las coordenadas se
+conservan de la branch de origen, que documenta su extracción de mapas municipales.
+**Son lugares reales, no refugios oficiales validados.** Servicios, aforos y radios
+son parámetros de demo; no se confirma disponibilidad, accesibilidad ni seguridad.
+
+El mapa incorpora el icono de cobijo de esa branch, códigos PE-01–03 y nombres de
+recinto. Al pulsarlos se abre un popup con descripción, aforo ficticio, servicios
+de demo y fuente municipal. `/track` y el panel de capas distinguen ubicación real
+de uso simulado. Los destinos iniciales y corredores existentes se recalculan desde
+`SAFE_ZONES`, sin mantener referencias a los puntos retirados.
+
+No se incorpora el motor de grupos, las reservas de plazas, los nuevos estados ni
+los cambios de rutas/fuego de la otra branch. La simulación actual **no aplica los
+aforos como límites de asignación** y sigue sin verificar la seguridad de las rutas.
+
+Verificación del 2026-09-19: build y lint correctos; comprobación local con el module
+runner de Vite de coordenadas/metadatos, 300 personas, 48 corredores dirigidos a los
+nuevos puntos, llegadas dentro del radio de demo y exclusión de sesiones GPS del
+movimiento simulado. No se ha validado visualmente el mapa en navegador.
+
 ## Fuentes
+
+- Branch de origen: `origin/devin/vigia-grupos-puntos-encuentro`, commit `a584037`, `src/scenario.ts`, `src/types.ts` y `src/CommandMap.tsx` (revisados 2026-09-19).
+- Ayuntamiento de Guisando, aparcamientos de La Dehesa y El Risquillo — https://guisando.net/servicios-publicos/aparcamientos (consultado 2026-09-19).
+- Ayuntamiento de Arenas de San Pedro, polideportivo Jesús Navarro — https://arenasdesanpedro.es/concejalias/deportes/polideportivo-jesus-navarro/ (consultado 2026-09-19).
+- Revisión técnica local: [App.tsx](../../apps/command-center/src/App.tsx), [CitizenTrack.tsx](../../apps/command-center/src/CitizenTrack.tsx), [routing.ts](../../apps/command-center/src/routing.ts), [firms.ts](../../apps/command-center/src/firms.ts), [token.ts](../../apps/command-center/src/token.ts) y [package.json](../../apps/command-center/package.json) (revisados 2026-09-19).
 
 - Implementación local: [scenario.ts](../../apps/command-center/src/scenario.ts), [CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx), [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx), [simulation.ts](../../apps/command-center/src/simulation.ts) y [vite.config.ts](../../apps/command-center/vite.config.ts) (revisada 2026-09-19).
 - Arenas de San Pedro, coordenadas del núcleo — https://es.wikipedia.org/wiki/Arenas_de_San_Pedro (consultado 2026-09-19).

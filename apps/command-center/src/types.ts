@@ -67,6 +67,10 @@ export type SafeZone = {
   lat: number
   radiusM: number
   capacity: number
+  code: string
+  services: string[]
+  description: string
+  sourceUrl: string
 }
 
 export type FireSpot = {

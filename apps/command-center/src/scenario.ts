@@ -31,28 +31,25 @@ function compact(lng: number, lat: number): [number, number] {
 
 export const SAFE_ZONES: SafeZone[] = [
   {
-    id: 'z-arenas',
-    name: 'Pabellón municipal · Arenas de San Pedro',
-    lng: -5.0874,
-    lat: 40.2042,
-    radiusM: 150,
-    capacity: 420,
+    id: 'z-dehesa', code: 'PE-01', name: 'La Dehesa · Guisando',
+    lng: -5.140945, lat: 40.220682, radiusM: 24, capacity: 100,
+    services: ['Recepción', 'Ayuda básica', 'Transporte'],
+    description: 'Aparcamiento publicado por el Ayuntamiento, al sur del núcleo. Punto de recepción y transporte propuesto solo para la demo; aforo y servicios ficticios.',
+    sourceUrl: 'https://guisando.net/servicios-publicos/aparcamientos',
   },
   {
-    id: 'z-arenal',
-    name: 'Polideportivo · El Arenal',
-    lng: -5.0858,
-    lat: 40.2657,
-    radiusM: 130,
-    capacity: 220,
+    id: 'z-risquillo', code: 'PE-02', name: 'El Risquillo · Guisando',
+    lng: -5.144282, lat: 40.221327, radiusM: 20, capacity: 90,
+    services: ['Recepción', 'Ayuda básica'],
+    description: 'Aparcamiento junto a la Casa del Parque, publicado por el Ayuntamiento. Punto secundario de la demo, no un refugio oficial ni una garantía de seguridad.',
+    sourceUrl: 'https://guisando.net/servicios-publicos/aparcamientos',
   },
   {
-    id: 'z-parra',
-    name: 'Área recreativa · La Parra',
-    lng: -5.0745,
-    lat: 40.2281,
-    radiusM: 130,
-    capacity: 260,
+    id: 'z-arenas', code: 'PE-03', name: 'Jesús Navarro · Arenas',
+    lng: -5.0930363, lat: 40.2126907, radiusM: 35, capacity: 650,
+    services: ['Cobijo', 'Ayuda básica', 'Transporte'],
+    description: 'Polideportivo municipal de C/ Obispo, 1. Se propone como centro de acogida de la demo. Disponibilidad, accesibilidad operativa y aforo requieren validación real.',
+    sourceUrl: 'https://arenasdesanpedro.es/concejalias/deportes/polideportivo-jesus-navarro/',
   },
 ]
 

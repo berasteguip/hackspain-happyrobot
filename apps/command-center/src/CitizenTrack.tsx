@@ -127,7 +127,7 @@ export function CitizenTrack({ presetId }: Props) {
               </div>
             )}
             <button type="button" onClick={() => { setConsented(false); setStatus('Envío detenido') }}>Dejar de compartir</button>
-            <p className="fine">Los puntos de encuentro son ficticios. Al detener el envío, la última posición permanece en el visor con su hora de actualización; no se enviarán posiciones nuevas.</p>
+            <p className="fine">Los lugares existen, pero su uso como refugios no está validado. Al detener el envío, la última posición permanece en el visor con su hora de actualización; no se enviarán posiciones nuevas.</p>
           </>
         )}
       </div>

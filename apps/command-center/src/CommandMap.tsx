@@ -159,13 +159,44 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('zones', {
         type: 'geojson', data: {
           type: 'FeatureCollection', features: current.zones.map((zone) => ({
-            type: 'Feature', properties: { name: zone.name.split(' · ')[1] ?? zone.name },
+            type: 'Feature', properties: { id: zone.id, code: zone.code, name: zone.name.split(' · ')[0] },
             geometry: { type: 'Point', coordinates: [zone.lng, zone.lat] },
           })),
         },
       })
-      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'text-field': '+', 'text-size': 19, 'text-allow-overlap': true }, paint: { 'text-color': '#7ef0c0', 'text-halo-color': '#0d1a15', 'text-halo-width': 2 } })
-      map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.6] }, paint: { 'text-color': '#add1be', 'text-halo-color': '#121b18', 'text-halo-width': 1.5 } })
+      const canvas = document.createElement('canvas')
+      canvas.width = 64
+      canvas.height = 64
+      const context = canvas.getContext('2d')!
+      context.fillStyle = '#172d29'
+      context.strokeStyle = '#aad5ba'
+      context.lineWidth = 2.5
+      context.beginPath()
+      context.roundRect(5, 5, 54, 54, 12)
+      context.fill()
+      context.stroke()
+      context.strokeStyle = '#e5f3e9'
+      context.lineWidth = 3
+      context.lineJoin = 'round'
+      context.beginPath()
+      context.moveTo(17, 30)
+      context.lineTo(32, 18)
+      context.lineTo(47, 30)
+      context.moveTo(21, 29)
+      context.lineTo(21, 45)
+      context.lineTo(43, 45)
+      context.lineTo(43, 29)
+      context.moveTo(29, 45)
+      context.lineTo(29, 35)
+      context.lineTo(35, 35)
+      context.lineTo(35, 45)
+      context.stroke()
+      map.addImage('meeting-point', context.getImageData(0, 0, 64, 64), { pixelRatio: 2 })
+      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'icon-image': 'meeting-point', 'icon-size': 0.9, 'icon-allow-overlap': true } })
+      map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: {
+        'text-field': ['concat', ['get', 'code'], ' · ', ['get', 'name']],
+        'text-size': 10, 'text-offset': [0, 2.1], 'text-anchor': 'top',
+      }, paint: { 'text-color': '#d3eadb', 'text-halo-color': '#121b18', 'text-halo-width': 2 } })
 
       map.addSource('thermal', { type: 'geojson', data: firesGeo(current.fires) })
       map.addLayer({ id: 'thermal-core', type: 'circle', source: 'thermal', filter: ['==', ['get', 'source'], 'scenario'], paint: {
@@ -202,6 +233,28 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.on('click', (event) => {
         const { x, y } = event.point
         const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
+        const meeting = map.queryRenderedFeatures(event.point, { layers: ['zone-point', 'zone-label'] })[0]
+        const zone = dataRef.current.zones.find((item) => item.id === meeting?.properties?.id)
+        if (zone) {
+          onSelectRef.current(null)
+          const content = document.createElement('div')
+          const title = document.createElement('strong')
+          title.textContent = `${zone.code} · ${zone.name}`
+          const description = document.createElement('p')
+          description.textContent = zone.description
+          const services = document.createElement('p')
+          services.textContent = `Servicios de demo: ${zone.services.join(' · ')}. Aforo ficticio: ${zone.capacity} personas.`
+          const note = document.createElement('small')
+          note.textContent = 'No es un refugio oficial. Seguridad, disponibilidad y accesibilidad no verificadas.'
+          const link = document.createElement('a')
+          link.href = zone.sourceUrl
+          link.target = '_blank'
+          link.rel = 'noreferrer'
+          link.textContent = 'Fuente municipal'
+          content.append(title, description, services, note, document.createElement('br'), link)
+          popup.setLngLat([zone.lng, zone.lat]).setDOMContent(content).addTo(map)
+          return
+        }
         const people = map.queryRenderedFeatures(box, { layers: ['people-dot'] })
         if (people.length) {
           const nearest = people.reduce((best, feature) => {
@@ -244,7 +297,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'zone-point', 'zone-label'] })
         map.getCanvas().style.cursor = features.length ? 'pointer' : ''
       })
       setLoaded(true)
