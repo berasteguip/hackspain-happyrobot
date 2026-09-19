@@ -5,10 +5,14 @@ import { createServer } from 'vite'
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
 after(() => server.close())
 const { buildFireForecast, forecastGeo, exposureAt, routeBlocked } = await server.ssrLoadModule('/src/fire-model.ts')
-const { fetchRefugeRoutes, rankRefugeRoutes, assignEvacuationRoutes, planCitizenRoute } = await server.ssrLoadModule('/src/routing.ts')
+const { fetchRefugeRoutes, rankRefugeRoutes, planCitizenRoute, fetchDrivingRoute } = await server.ssrLoadModule('/src/routing.ts')
+const { detectAlerts, initialWatch, mergeAlerts, ALERT_ACTION_LABEL } = await server.ssrLoadModule('/src/alerts.ts')
+const { createDispatch, moveUnits, planUnitRoute, unitOrigin, originsFrom } = await server.ssrLoadModule('/src/units.ts')
 const { moveEvacuees, advanceProtocol, prepareAreaCampaign, selectAreaIds } = await server.ssrLoadModule('/src/simulation.ts')
 const { RESPONSE_CENTERS, createNotice, transitionNotice } = await server.ssrLoadModule('/src/response.ts')
-const { SAFE_ZONES, INITIAL_CITIZENS, EVACUATION_CORRIDORS, SCENARIO_FIRE_CELLS } = await server.ssrLoadModule('/src/scenario.ts')
+const { SAFE_ZONES, INITIAL_CITIZENS, SCENARIO_FIRE_CELLS, INCIDENT, GREDOS_SCENARIO } = await server.ssrLoadModule('/src/scenario.ts')
+const { MADRID_SCENARIO, ETSIT } = await server.ssrLoadModule('/src/scenario-madrid.ts')
+const { SCENARIOS, DEFAULT_SCENARIO_ID, scenarioById } = await server.ssrLoadModule('/src/scenarios.ts')
 const { haversineMeters } = await server.ssrLoadModule('/src/geo.ts')
 const footprint = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-5, 40], [-4.9999, 40], [-4.9999, 40.0001], [-5, 40.0001], [-5, 40]]] } }] }
 const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
@@ -173,28 +177,14 @@ function road(id, zone, coordinates, durationSec, group = 'El Arenal') {
   return { id, zoneId: zone.id, group, coords: coordinates, durationSec, cumulative, lengthM: cumulative.at(-1) }
 }
 
-test('la simulación descarta refugios expuestos y corredores de otro grupo', () => {
-  const origin = at(15, 15)
-  const far = { ...zones[0], id: 'far', lng: at(20, 20)[0], lat: at(20, 20)[1] }
-  const routes = new Map([
-    ['toward', road('toward', zones[0], [origin, at(0, 0), at(8, 8)], 30)],
-    ['away', road('away', far, [origin, at(20, 20)], 120)],
-    ['foreign', road('foreign', far, [origin, at(20, 20)], 10, 'Otro núcleo')],
-  ])
-  const person = { ...INITIAL_CITIZENS[0], lng: origin[0], lat: origin[1], locality: 'El Arenal', status: 'tracking', call: { answeredAt: Date.now(), agent: 'demo', summary: 'demo', consent: 'granted', needs: [] } }
-  const [planned] = assignEvacuationRoutes([person], routes, [...zones, far], forecast, 0)
-  assert.equal(planned.routeId, 'away')
-  assert.equal(planned.safeZoneId, 'far')
-  const [departed] = advanceProtocol([planned], 1000, []).citizens
-  const [accessed] = moveEvacuees([departed], routes, [...zones, far], 1)
-  const [moved] = moveEvacuees([accessed], routes, [...zones, far], 1)
-  assert.ok(moved.lng > person.lng && moved.lat > person.lat)
-  const [held] = assignEvacuationRoutes([person], new Map([['toward', routes.get('toward')]]), zones, forecast, 0)
+test('no se camina por el recorrido de otro núcleo aunque lleve al mismo refugio', () => {
+  const origin = at(7, 8)
+  const foreign = road('foreign', zones[0], [origin, at(8, 8)], 60, 'Otro núcleo')
+  const citizen = { ...INITIAL_CITIZENS[0], status: 'evacuating', lng: origin[0], lat: origin[1], locality: 'El Arenal', safeZoneId: zones[0].id, routeId: foreign.id, routeProgressM: 0, routePhase: 'access', call: { answeredAt: Date.now(), agent: 'demo', summary: 'demo', consent: 'granted', needs: [] } }
+  const [held] = moveEvacuees([citizen], new Map([[foreign.id, foreign]]), zones, 5)
   assert.equal(held.status, 'assistance')
-  assert.equal(held.safeZoneId, '')
-  assert.equal(held.routeId, undefined)
-  const live = { ...person, live: true, locationSource: 'gps' }
-  assert.strictEqual(assignEvacuationRoutes([live], routes, [...zones, far], forecast, 0)[0], live)
+  assert.equal(held.lng, citizen.lng)
+  assert.equal(held.lat, citizen.lat)
 })
 
 test('se rechaza un recorrido que cruza el fuego aunque el destino quede fuera', () => {
@@ -203,17 +193,20 @@ test('se rechaza un recorrido que cruza el fuego aunque el destino quede fuera',
   assert.equal(rankRefugeRoutes([detour], [far], forecast, 0, 0).routes.length, 0)
 })
 
-test('El Arenal no recibe automáticamente un destino junto al fuego', () => {
+test('El Arenal no recibe automáticamente un destino junto al fuego', async () => {
   const realForecast = buildFireForecast(SCENARIO_FIRE_CELLS, { windTowardDeg: 225, windKmh: 20, spreadMPerMin: 5 })
-  const person = { ...INITIAL_CITIZENS.find(c => c.locality === 'El Arenal'), status: 'tracking' }
+  const person = { ...INITIAL_CITIZENS.find(c => c.locality === 'El Arenal'), status: 'tracking', call: { answeredAt: Date.now(), agent: 'demo', summary: 'demo', consent: 'granted', needs: [] } }
   const nearby = SAFE_ZONES.find(z => z.id === 'z-dehesa')
-  const route = road('toward-guisando', nearby, [[person.lng, person.lat], [nearby.lng, nearby.lat]], 300)
-  const [planned] = assignEvacuationRoutes([person], new Map([[route.id, route]]), SAFE_ZONES, realForecast, 150)
-  assert.equal(planned.status, 'assistance')
-  assert.equal(planned.lng, person.lng)
-  assert.equal(planned.lat, person.lat)
+  const plan = await planCitizenRoute('test', person, [nearby], realForecast, 150, undefined, async () => ({
+    ok: true,
+    json: async () => ({ routes: [{ geometry: { coordinates: [[person.lng, person.lat], [nearby.lng, nearby.lat]] }, duration: 300, distance: 1700 }] }),
+  }))
+  assert.equal(plan.citizen.status, 'assistance')
+  assert.equal(plan.citizen.safeZoneId, '')
+  assert.equal(plan.route, undefined)
+  assert.equal(plan.citizen.lng, person.lng)
+  assert.equal(plan.citizen.lat, person.lat)
   assert.equal(INITIAL_CITIZENS.every(c => c.safeZoneId === ''), true)
-  assert.equal(EVACUATION_CORRIDORS.length, 72)
 })
 
 test('el círculo incluye su borde y excluye posiciones externas o radios inválidos', () => {
@@ -267,18 +260,19 @@ test('no se mueve un estado evacuating sin llamada respondida', () => {
   assert.equal(after.lat, citizen.lat)
 })
 
-test('la asignación automática escoge el refugio más cercano por recorrido admisible', () => {
+test('entre recorridos admisibles se escoge el refugio más cercano, no el más rápido', async () => {
   const origin = at(15, 15)
   const near = { ...zones[0], id: 'near', lng: at(16, 15)[0], lat: at(16, 15)[1] }
   const far = { ...zones[0], id: 'far', lng: at(20, 20)[0], lat: at(20, 20)[1] }
-  const routes = new Map([
-    ['near-road', road('near-road', near, [origin, at(16, 15)], 300)],
-    ['fast-road', road('fast-road', far, [origin, at(20, 20)], 60)],
-  ])
-  const citizen = { ...INITIAL_CITIZENS[0], lng: origin[0], lat: origin[1], locality: 'El Arenal' }
-  const [planned] = assignEvacuationRoutes([citizen], routes, [near, far], forecast, 0)
-  assert.equal(planned.safeZoneId, 'near')
-  assert.equal(planned.status, 'pending')
+  const citizen = { ...INITIAL_CITIZENS[0], lng: origin[0], lat: origin[1], locality: 'El Arenal', status: 'tracking', call: { answeredAt: Date.now(), agent: 'demo', summary: 'demo', consent: 'granted', needs: [] } }
+  const plan = await planCitizenRoute('test', citizen, [near, far], forecast, 0, undefined, async url => {
+    const zone = url.includes(`${far.lng},${far.lat}`) ? far : near
+    const quicker = zone.id === 'far'
+    return { ok: true, json: async () => ({ routes: [{ geometry: { coordinates: [origin, [zone.lng, zone.lat]] }, duration: quicker ? 120 : 600, distance: quicker ? 4000 : 900 }] }) }
+  })
+  assert.equal(plan.citizen.safeZoneId, 'near')
+  assert.equal(plan.route.zoneId, 'near')
+  assert.equal(plan.citizen.status, 'tracking')
 })
 
 test('hospital y bomberos se acercan como demo sin perder las coordenadas reales', () => {
@@ -286,7 +280,6 @@ test('hospital y bomberos se acercan como demo sin perder las coordenadas reales
     assert.equal(center.locationSource, 'demo')
     assert.ok(haversineMeters(-5.112, 40.232, center.lng, center.lat) < 5000)
     assert.ok(haversineMeters(center.lng, center.lat, center.realLocation.lng, center.realLocation.lat) > 20000)
-    assert.ok(center.name.includes('demo'))
   }
   assert.equal(RESPONSE_CENTERS.find(c => c.kind === 'health').locationSource, 'osm')
 })
@@ -353,4 +346,161 @@ test('los avisos exigen revisión y solo avanzan por estados de demo', () => {
   assert.equal(transitionNotice(sent, 'acknowledged').status, 'acknowledged')
   assert.equal(transitionNotice(sent, 'draft').status, 'simulated')
   assert.throws(() => createNotice(RESPONSE_CENTERS[0], '   ', 'Escenario'))
+})
+
+function alertInput(overrides = {}) {
+  return {
+    citizens: INITIAL_CITIZENS,
+    forecast,
+    marginM: 0,
+    horizon: 0,
+    windTowardDeg: 225,
+    campaignIds: new Set(),
+    now: 1,
+    ...overrides,
+  }
+}
+
+test('la proyección a +1 h avisa núcleos nuevos; el estado inicial no se anuncia', () => {
+  const realForecast = buildFireForecast(SCENARIO_FIRE_CELLS, { windTowardDeg: 225, windKmh: 20, spreadMPerMin: 5 })
+  const start = alertInput({ forecast: realForecast, horizon: 0 })
+  const watch = initialWatch(start)
+  assert.equal(detectAlerts(start, watch).alerts.length, 0)
+  const later = detectAlerts({ ...start, horizon: 60, now: 2 }, watch)
+  assert.ok(later.alerts.some(alert => alert.kind === 'fire-spread'))
+  assert.equal(detectAlerts({ ...start, horizon: 60, now: 3 }, later.watch).alerts.filter(alert => alert.kind === 'fire-spread').length, 0)
+})
+
+test('un giro de viento avisa y no relanza el mismo aviso', () => {
+  const start = alertInput({ forecast, horizon: 60, windTowardDeg: 225 })
+  const watch = initialWatch(start)
+  const shifted = detectAlerts({ ...start, windTowardDeg: 45, now: 2 }, watch)
+  assert.ok(shifted.alerts.some(alert => alert.kind === 'wind-shift'))
+  assert.equal(detectAlerts({ ...start, windTowardDeg: 45, now: 3 }, shifted.watch).alerts.filter(alert => alert.kind === 'wind-shift').length, 0)
+})
+
+test('sin respuesta y personas detenidas se avisan una sola vez, y no fuera de campaña', () => {
+  const origin = at(7, 8)
+  const silent = { ...INITIAL_CITIZENS[0], id: 'c-silent', status: 'no_answer', lng: origin[0], lat: origin[1], locality: 'Guisando' }
+  const stalled = { ...INITIAL_CITIZENS[1], id: 'c-stalled', status: 'assistance', routePhase: 'road', lng: origin[0], lat: origin[1], locality: 'Guisando' }
+  const cut = { ...INITIAL_CITIZENS[2], id: 'c-cut', status: 'assistance', lng: origin[0], lat: origin[1], locality: 'Guisando' }
+  const outsider = { ...silent, id: 'c-out' }
+  const start = alertInput({ citizens: [silent, stalled, cut, outsider], campaignIds: new Set(['c-silent', 'c-stalled', 'c-cut']) })
+  const first = detectAlerts(start, initialWatch(start))
+  assert.equal(first.alerts.filter(alert => alert.kind === 'no-answer').length, 1)
+  assert.equal(first.alerts.filter(alert => alert.kind === 'stalled').length, 1)
+  assert.equal(first.alerts.filter(alert => alert.kind === 'route-cut').length, 1)
+  assert.ok(!first.alerts.some(alert => alert.citizenIds.includes('c-out')))
+  assert.equal(detectAlerts(start, first.watch).alerts.length, 0)
+  assert.deepEqual(['dispatch-ambulance', 'dispatch-police', 'dispatch-fire'].every(action => ALERT_ACTION_LABEL[action]), true)
+})
+
+test('ambulancia y bomberos salen del marcador de demo; la patrulla del sur de Arenas', () => {
+  const hospital = RESPONSE_CENTERS.find(center => center.kind === 'hospital')
+  const park = RESPONSE_CENTERS.find(center => center.kind === 'fire')
+  const ambulance = createDispatch('ambulance', { lng: -5.09, lat: 40.22, label: 'Carmen' }, 1, 0)
+  const police = createDispatch('police', { lng: -5.09, lat: 40.22, label: 'Carmen' }, 1, 1)
+  const engine = unitOrigin('fire')
+  const policeRange = haversineMeters(INCIDENT.center[0], INCIDENT.center[1], police.origin.lng, police.origin.lat)
+  assert.equal(ambulance.origin.lng, hospital.lng)
+  assert.equal(ambulance.origin.lat, hospital.lat)
+  assert.equal(engine.lng, park.lng)
+  assert.equal(engine.lat, park.lat)
+  assert.ok(haversineMeters(INCIDENT.center[0], INCIDENT.center[1], ambulance.origin.lng, ambulance.origin.lat) < 8000)
+  assert.ok(policeRange > 2500 && policeRange < 6000)
+  assert.ok(haversineMeters(hospital.lng, hospital.lat, park.lng, park.lat) < 800)
+  assert.ok(haversineMeters(INCIDENT.center[0], INCIDENT.center[1], engine.lng, engine.lat) < 8000)
+  assert.notEqual(ambulance.origin.lng, hospital.realLocation.lng)
+  assert.equal(ambulance.status, 'requested')
+  assert.match(ambulance.summary, /pide/)
+  assert.throws(() => createDispatch('ambulance', { lng: 200, lat: 40, label: 'x' }, 1, 2))
+})
+
+test('el medio avanza por carretera y llega al destino', () => {
+  const origin = at(7, 8)
+  const dest = at(8, 8)
+  const route = road('unit-road', { id: 'dest' }, [origin, dest], 60, 'dispatch')
+  const unit = { ...createDispatch('ambulance', { lng: dest[0], lat: dest[1], label: 'zona' }, 1, 0), status: 'en_route', route, lng: origin[0], lat: origin[1], etaSec: route.durationSec }
+  const [moved] = moveUnits([unit], 1)
+  assert.notEqual(moved.lng, unit.lng)
+  assert.equal(moved.status, 'en_route')
+  const [arrived] = moveUnits([unit], 10_000)
+  assert.equal(arrived.status, 'on_scene')
+  assert.equal(arrived.lng, dest[0])
+  assert.equal(arrived.lat, dest[1])
+  assert.strictEqual(moveUnits([unit], 0)[0], unit)
+})
+
+test('Directions hacia un medio informa el HTTP sin exponer el token', async () => {
+  const unit = createDispatch('police', { lng: at(8, 8)[0], lat: at(8, 8)[1], label: 'zona' }, 1, 0)
+  const planned = await planUnitRoute('secret-unit-token', unit, undefined, async () => ({ ok: false, status: 401 }))
+  assert.equal(planned.status, 'en_route')
+  assert.equal(planned.route.coords.length, 2)
+  assert.ok(!JSON.stringify(planned).includes('secret-unit-token'))
+  const [moved] = moveUnits([planned], 1)
+  assert.notEqual(moved.lng, planned.lng)
+  const failed = await fetchDrivingRoute('secret-unit-token', at(8, 8), at(20, 20), 'u-1', undefined, async () => ({ ok: false, status: 403 }))
+  assert.equal(failed.route, undefined)
+  assert.match(failed.error, /403/)
+  assert.ok(!failed.error.includes('secret-unit-token'))
+})
+
+test('el envío usa el destino pedido, no un refugio', async () => {
+  const dest = at(20, 20)
+  const unit = createDispatch('ambulance', { lng: dest[0], lat: dest[1], label: 'persona' }, 1, 0)
+  const origin = [unit.origin.lng, unit.origin.lat]
+  let url = ''
+  const planned = await planUnitRoute('test', unit, undefined, async requested => {
+    url = requested
+    return { ok: true, json: async () => ({ routes: [{ geometry: { coordinates: [origin, dest] }, duration: 180, distance: 900 }] }) }
+  })
+  assert.ok(url.includes(`${unit.origin.lng},${unit.origin.lat};${dest[0]},${dest[1]}`))
+  assert.equal(planned.status, 'en_route')
+  assert.equal(planned.route.coords.at(-1)[0], dest[0])
+})
+
+test('mergeAlerts antepone lo nuevo y recorta el historial', () => {
+  const older = Array.from({ length: 60 }, (_, i) => ({ id: `old-${i}`, kind: 'no-answer', severity: 'warning', title: 'x', detail: 'x', ts: i, citizenIds: [] }))
+  const merged = mergeAlerts(older, [{ id: 'new', kind: 'wind-shift', severity: 'critical', title: 'giro', detail: 'x', ts: 99, citizenIds: [] }])
+  assert.equal(merged[0].id, 'new')
+  assert.equal(merged.length, 60)
+})
+
+test('el catálogo abre en Madrid junto a ETSIT y conserva Gredos', () => {
+  assert.equal(DEFAULT_SCENARIO_ID, 'madrid-etsit')
+  assert.equal(scenarioById('madrid-etsit').id, MADRID_SCENARIO.id)
+  assert.equal(SCENARIOS.map(item => item.id).join(','), 'madrid-etsit,gredos')
+  assert.equal(GREDOS_SCENARIO.citizens.length, INITIAL_CITIZENS.length)
+  assert.equal(MADRID_SCENARIO.citizens.length, 110)
+  assert.ok(MADRID_SCENARIO.citizens.every(citizen => haversineMeters(ETSIT.lng, ETSIT.lat, citizen.lng, citizen.lat) < 120))
+  assert.equal(MADRID_SCENARIO.safeZones.length, 3)
+  assert.deepEqual(new Set(MADRID_SCENARIO.centers.map(center => center.kind)), new Set(['hospital', 'health', 'fire']))
+  const heats = new Set(MADRID_SCENARIO.fireCells.features.map(feature => feature.properties.heat))
+  assert.ok(MADRID_SCENARIO.fireCells.features.length > 0)
+  assert.ok(heats.size > 1)
+  assert.ok([...heats].every(heat => heat > 0 && heat <= 1))
+  const fireRange = haversineMeters(ETSIT.lng, ETSIT.lat, MADRID_SCENARIO.incident.center[0], MADRID_SCENARIO.incident.center[1])
+  assert.ok(fireRange > 700 && fireRange < 1200)
+  const span = MADRID_SCENARIO.fireCells.features.flatMap(feature => feature.geometry.coordinates[0])
+  const midLat = span[0][1]
+  const widthM = haversineMeters(Math.min(...span.map(point => point[0])), midLat, Math.max(...span.map(point => point[0])), midLat)
+  assert.ok(widthM < 450)
+  const madridForecast = buildFireForecast(MADRID_SCENARIO.fireCells, { windTowardDeg: 225, windKmh: 20, spreadMPerMin: 8 })
+  assert.equal(exposureAt(madridForecast, ETSIT.lng, ETSIT.lat, 0, 150).level, 'clear')
+  assert.notEqual(exposureAt(madridForecast, ETSIT.lng, ETSIT.lat, 120, 150).level, 'clear')
+  const hospital = MADRID_SCENARIO.centers.find(center => center.kind === 'hospital')
+  const fire = MADRID_SCENARIO.centers.find(center => center.kind === 'fire')
+  const health = MADRID_SCENARIO.centers.find(center => center.kind === 'health')
+  assert.equal(hospital.locationSource, 'osm')
+  assert.equal(fire.locationSource, 'osm')
+  assert.equal(health.locationSource, 'osm')
+  assert.equal(hospital.id, 'hospital-clinico')
+  assert.equal(fire.id, 'fire-chamberi')
+  assert.ok(haversineMeters(hospital.lng, hospital.lat, -3.7199109, 40.4406324) < 30)
+  assert.ok(haversineMeters(fire.lng, fire.lat, -3.70081884, 40.44022118) < 30)
+  assert.ok(haversineMeters(health.lng, health.lat, -3.7172212, 40.427828) < 30)
+  assert.ok(haversineMeters(MADRID_SCENARIO.police.lng, MADRID_SCENARIO.police.lat, -3.7164075, 40.4269639) < 30)
+  const ambulance = createDispatch('ambulance', { lng: ETSIT.lng, lat: ETSIT.lat, label: 'ETSIT' }, 1, 0, originsFrom(MADRID_SCENARIO.centers, MADRID_SCENARIO.police))
+  assert.equal(ambulance.origin.id, hospital.id)
+  assert.ok(haversineMeters(ETSIT.lng, ETSIT.lat, ambulance.origin.lng, ambulance.origin.lat) < 2000)
 })

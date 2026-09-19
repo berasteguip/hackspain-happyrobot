@@ -27,8 +27,6 @@ export type Citizen = {
   phone: string
   lng: number
   lat: number
-  originLng?: number
-  originLat?: number
   status: CitizenStatus
   vulnerable: boolean
   safeZoneId: string
@@ -72,6 +70,8 @@ export type MapLayers = {
   healthCenters: boolean
   fireStations: boolean
   routes: boolean
+  callArea: boolean
+  units: boolean
 }
 
 export type LocationPing = {
@@ -114,10 +114,4 @@ export type CallEvent = {
   citizenId: string
   name: string
   detail: string
-}
-
-export type RiskArea = {
-  id: string
-  name: string
-  coordinates: [number, number][]
 }

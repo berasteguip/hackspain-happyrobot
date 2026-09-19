@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { SAFE_ZONES } from './scenario'
+import { MADRID_SCENARIO } from './scenario-madrid'
 import { haversineMeters, nearestZone } from './geo'
 
 type Props = {
@@ -16,7 +16,7 @@ export function CitizenTrack({ presetId }: Props) {
 
   const nearest = useMemo(() => {
     if (!pos) return null
-    return nearestZone(pos.lng, pos.lat, SAFE_ZONES)
+    return nearestZone(pos.lng, pos.lat, MADRID_SCENARIO.safeZones)
   }, [pos])
 
   useEffect(() => {
@@ -35,14 +35,14 @@ export function CitizenTrack({ presetId }: Props) {
           body: JSON.stringify({ id, name, lng, lat, source: mode === 'gps' ? 'gps' : 'simulation', accuracyM }),
         })
         if (!response.ok) throw new Error('No se ha recibido la ubicación')
-        if (!cancelled) setStatus(mode === 'gps' ? 'Ubicación del dispositivo compartida' : 'Compartiendo ubicación de demostración')
+        if (!cancelled) setStatus(mode === 'gps' ? 'Ubicación del dispositivo compartida' : 'Ubicación compartida')
       } catch {
         if (!cancelled) setStatus('No se pudo enviar la ubicación. Comprueba la conexión.')
       }
     }
 
     if (mode === 'demo') {
-      const zone = SAFE_ZONES[0]
+      const zone = MADRID_SCENARIO.safeZones[0]
       let lng = zone.lng - 0.028
       let lat = zone.lat + 0.018
       const tick = () => {
@@ -76,12 +76,10 @@ export function CitizenTrack({ presetId }: Props) {
   return (
     <div className="citizen">
       <div className="citizen-card">
-        <p className="kicker">Vigía · entorno de demostración</p>
+        <p className="kicker">Vigía</p>
         <h1>Compartir mi ubicación</h1>
         <p className="lede">
-          Esta es una prueba, no un aviso oficial de emergencia. Si aceptas, el visor
-          local recibirá tu ubicación mientras esta página siga compartiéndola.
-          Puedes simular una posición sin utilizar tu GPS.
+          Si aceptas, el visor recibirá tu ubicación mientras esta página siga abierta.
         </p>
 
         {!consented ? (
@@ -98,7 +96,7 @@ export function CitizenTrack({ presetId }: Props) {
                   checked={mode === 'demo'}
                   onChange={() => setMode('demo')}
                 />
-                Simular que estoy en la zona (demo)
+                Usar una posición de la zona
               </label>
               <label className="row">
                 <input
@@ -109,7 +107,7 @@ export function CitizenTrack({ presetId }: Props) {
                 Usar mi GPS real
               </label>
             </fieldset>
-            <button type="button" onClick={() => { setStatus(mode === 'gps' ? 'Solicitando permiso de ubicación…' : 'Iniciando simulación…'); setConsented(true) }}>
+            <button type="button" onClick={() => { setStatus(mode === 'gps' ? 'Solicitando permiso de ubicación…' : 'Compartiendo ubicación…'); setConsented(true) }}>
               Consiento el seguimiento
             </button>
             <p className="fine">
