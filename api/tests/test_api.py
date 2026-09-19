@@ -343,3 +343,92 @@ def test_sin_secreto_configurado_la_clave_no_valida_nada(monkeypatch):
 
     monkeypatch.setattr(settings, "hr_shared_secret", "")
     assert _api_key_ok("lo-que-sea") is False
+
+
+# ======================================================================================
+# El camino de vuelta: lo que el agente concluyó al colgar entra en el mapa
+# ======================================================================================
+
+
+def test_la_observacion_del_agente_pinta_a_la_persona_y_cierra_la_llamada(client):
+    """`POST /calls/observation` es el nodo `Observación` del workflow posteando al colgar."""
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-002",
+            "run_id": "run-obs-1",
+            "run_url": "https://platform.eu.happyrobot.ai/runs/run-obs-1",
+            "duration_s": "96",
+            "nivel": "rojo",
+            "PRIOR_NIVEL": "amarillo",
+            "zona_declarada": "El Pinar",
+            "tipo_lugar": "exterior",
+            "llamas": "true",
+            "discrepancia": "prior_bajo_obs_alta",
+            "confianza": "alta",
+            "resultado": "completada",
+            "nota_libre": "Sale andando con su madre por el camino del horno.",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+    persona = client.get("/people/p-002").json()
+    triaje = persona["triage"]
+    assert triaje["level"] == "red", "rojo del agente → red en el contrato"
+    assert triaje["prior_level"] == "yellow"
+    assert triaje["run_url"].endswith("run-obs-1")
+    assert "PEOR de lo que decía el mapa" in triaje["reason"]
+    assert "VE LLAMAS" in triaje["reason"]
+    # Y la llamada se aplicó por el camino de siempre: contestó y cuenta como intento.
+    assert persona["call_attempts"] >= 1
+    assert persona["status"] != "no_answer"
+
+    # El mapa lo lee del roster, no del estado completo.
+    fila = next(f for f in client.get("/api/roster").json() if f["id"] == "p-002")
+    assert fila["triage_level"] == "red"
+    assert fila["triage_confidence"] == "alta"
+    assert fila["triage_reason"]
+
+
+def test_una_observacion_de_llamada_no_contestada_no_inventa_conversacion(client):
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={"PERSONA_ID": "p-003", "resultado": "no_contactado", "nivel": "", "confianza": "baja"},
+    )
+    assert r.status_code == 200
+    persona = client.get("/people/p-003").json()
+    assert persona["status"] == "no_answer", "sin interlocutor no hay contacto"
+    assert persona["triage"]["level"] == "unknown", "un nivel vacío no se inventa"
+
+
+def test_los_campos_vacios_del_extract_no_tumban_la_peticion(client):
+    """Todo llega como texto desde la plantilla del nodo webhook: `""` es lo normal, no un 422."""
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-001",
+            "duration_s": "",
+            "llamas": "",
+            "nivel": "Naranja",
+            "zona_declarada": "null",
+        },
+    )
+    assert r.status_code == 200
+    persona = client.get("/people/p-001").json()
+    assert persona["triage"]["level"] == "orange", "el nivel tolera mayúsculas"
+    assert persona["triage"]["declared_zone"] is None, "«null» de una plantilla es nada"
+
+
+def test_una_observacion_de_alguien_desconocido_crea_la_ficha(client):
+    """El agente puede acabar hablando con quien no estaba en el censo: no se tira el dato."""
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={"PERSONA_ID": "p-nueva", "NUMERO_TELEFONO": "+34600990999", "nivel": "verde"},
+    )
+    assert r.status_code == 200
+    assert client.get("/people/p-nueva").json()["triage"]["level"] == "green"

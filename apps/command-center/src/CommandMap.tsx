@@ -7,6 +7,7 @@ import { FIRE_CELL_SIZE_M } from './scenario'
 import type { Incident } from './scenario'
 import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
+import { TRIAGE_COLOR, TRIAGE_ORDER } from './crisisApi'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints } from './fire-model'
 import type { Exposure, FireForecast } from './fire-model'
 import { CENTER_COLOR, SITE_EMOJI } from './response'
@@ -312,10 +313,33 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
       properties: {
         id: citizen.id, name: citizen.name, status: citizen.status, answered: Boolean(citizen.call),
         reference: !citizen.locationSource || citizen.locationSource === 'reference' || citizen.locationSource === 'unknown',
+        color: citizenColor(citizen), rank: citizenRank(citizen),
       },
       geometry: { type: 'Point', coordinates: [citizen.lng, citizen.lat] },
     })),
   }
+}
+
+/**
+ * El color del punto, decidido en un solo sitio.
+ *
+ * El triaje manda sobre todo lo demás: que alguien haya descolgado dice mucho menos que lo que
+ * dijo al descolgar. Si nadie ha hablado con esa persona, se cae al código de siempre —verde si
+ * contestó, ámbar si está sonando, azul si no se ha intentado— que sigue siendo lo que se ve
+ * cuando Vigía corre sin backend.
+ */
+function citizenColor(citizen: Citizen): string {
+  if (citizen.triage) return TRIAGE_COLOR[citizen.triage.level]
+  if (citizen.call) return '#4de3a6'
+  if (citizen.status === 'ringing') return '#f3bd61'
+  return PERSON_COLOR
+}
+
+/** Quién se pinta encima cuando dos puntos se solapan: primero el que hay que sacar antes. */
+function citizenRank(citizen: Citizen): number {
+  if (citizen.triage) return TRIAGE_ORDER.length - TRIAGE_ORDER.indexOf(citizen.triage.level) + 2
+  if (citizen.call) return 2
+  return citizen.status === 'ringing' ? 1 : 0
 }
 
 function zonesGeo(zones: SafeZone[], exposure: Record<string, Exposure>): FeatureCollection<Point> {
@@ -505,13 +529,13 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('people', { type: 'geojson', data: citizensGeo(current.citizens) })
       map.addLayer({ id: 'people-glow', type: 'circle', source: 'people', paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.6, 11, 3.6, 14, 6, 17, 8.5],
-        'circle-color': ['case', ['get', 'answered'], '#4de3a6', ['==', ['get', 'status'], 'ringing'], '#f3bd61', PERSON_COLOR],
+        'circle-color': ['get', 'color'],
         'circle-opacity': 0.22,
         'circle-blur': 0.9,
       } })
-      map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', layout: { 'circle-sort-key': ['case', ['get', 'answered'], 2, ['==', ['get', 'status'], 'ringing'], 1, 0] }, paint: {
+      map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', layout: { 'circle-sort-key': ['get', 'rank'] }, paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 1.3, 11, 2, 14, 3.4, 17, 4.6],
-        'circle-color': ['case', ['get', 'answered'], '#4de3a6', ['==', ['get', 'status'], 'ringing'], '#f3bd61', PERSON_COLOR],
+        'circle-color': ['get', 'color'],
         'circle-opacity': 1,
         'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 1, 17, 1.3],
         'circle-stroke-color': '#0a1117',
