@@ -1,4 +1,6 @@
 import type { FeatureCollection, Polygon } from 'geojson'
+import { destination, haversineMeters, nearestZone } from './geo'
+import type { Corridor } from './routing'
 import type { Citizen, FireSpot, RiskArea, SafeZone } from './types'
 
 export const INCIDENT = {
@@ -7,8 +9,24 @@ export const INCIDENT = {
   area: 'Valle del Tiétar · Ávila',
   cecop: 'CECOP Ávila · INFOCAL',
   declaredAt: '2026-09-19T01:12:00+02:00',
-  center: [-5.121, 40.241] as [number, number],
-  zoom: 12.1,
+  center: [-5.112, 40.232] as [number, number],
+  zoom: 13,
+}
+
+/**
+ * El escenario original ocupaba todo el valle y dejaba los puntos de encuentro
+ * a 7-11 km del fuego, fuera de plano. Se compacta en torno a un centro nuevo
+ * para que el incidente y sus salidas quepan en la misma vista.
+ */
+const FIRE_SCALE = 0.4
+const FIRE_ORIGIN = { lng: -5.1315, lat: 40.2449 }
+const FIRE_CENTER = { lng: -5.1165, lat: 40.2345 }
+
+function compact(lng: number, lat: number): [number, number] {
+  return [
+    FIRE_CENTER.lng + (lng - FIRE_ORIGIN.lng) * FIRE_SCALE,
+    FIRE_CENTER.lat + (lat - FIRE_ORIGIN.lat) * FIRE_SCALE,
+  ]
 }
 
 export const SAFE_ZONES: SafeZone[] = [
@@ -17,31 +35,31 @@ export const SAFE_ZONES: SafeZone[] = [
     name: 'Pabellón municipal · Arenas de San Pedro',
     lng: -5.0874,
     lat: 40.2042,
-    radiusM: 160,
+    radiusM: 150,
     capacity: 420,
   },
   {
-    id: 'z-candeleda',
-    name: 'Recinto ferial · Candeleda',
-    lng: -5.2416,
-    lat: 40.1568,
-    radiusM: 180,
-    capacity: 350,
+    id: 'z-arenal',
+    name: 'Polideportivo · El Arenal',
+    lng: -5.0858,
+    lat: 40.2657,
+    radiusM: 130,
+    capacity: 220,
   },
   {
-    id: 'z-mombeltran',
-    name: 'Campo de fútbol · Mombeltrán',
-    lng: -5.0208,
-    lat: 40.2574,
-    radiusM: 140,
-    capacity: 220,
+    id: 'z-parra',
+    name: 'Área recreativa · La Parra',
+    lng: -5.0745,
+    lat: 40.2281,
+    radiusM: 130,
+    capacity: 260,
   },
 ]
 
 export const RISK_AREA: RiskArea = {
   id: 'risk-gredos',
   name: 'Perímetro de riesgo',
-  coordinates: [
+  coordinates: ([
     [-5.195, 40.255],
     [-5.145, 40.272],
     [-5.09, 40.268],
@@ -50,10 +68,10 @@ export const RISK_AREA: RiskArea = {
     [-5.1, 40.2],
     [-5.16, 40.208],
     [-5.195, 40.255],
-  ],
+  ] as [number, number][]).map(([lng, lat]) => compact(lng, lat)),
 }
 
-export const SCENARIO_FIRES: FireSpot[] = [
+const SCENARIO_FIRE_SPOTS: FireSpot[] = [
   { id: 'f1', lng: -5.138, lat: 40.242, frp: 86.4, confidence: 'high', source: 'scenario', acquiredAt: '01:08' },
   { id: 'f2', lng: -5.129, lat: 40.249, frp: 124.1, confidence: 'high', source: 'scenario', acquiredAt: '01:08' },
   { id: 'f3', lng: -5.118, lat: 40.238, frp: 67.2, confidence: 'high', source: 'scenario', acquiredAt: '01:11' },
@@ -68,16 +86,23 @@ export const SCENARIO_FIRES: FireSpot[] = [
   { id: 'f12', lng: -5.141, lat: 40.232, frp: 48.4, confidence: 'nominal', source: 'scenario', acquiredAt: '01:24' },
 ]
 
+export const SCENARIO_FIRES: FireSpot[] = SCENARIO_FIRE_SPOTS.map((fire) => {
+  const [lng, lat] = compact(fire.lng, fire.lat)
+  return { ...fire, lng, lat }
+})
+
 export const FIRE_CELL_SIZE_M = 25
 
 export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
-  const west = -5.185
-  const south = 40.217
   const metersPerLng = 111_320 * Math.cos(40.24 * Math.PI / 180)
+  const widthM = 9100 * FIRE_SCALE
+  const heightM = 6200 * FIRE_SCALE
+  const west = FIRE_CENTER.lng - widthM / 2 / metersPerLng
+  const south = FIRE_CENTER.lat - heightM / 2 / 111_320
   const dx = FIRE_CELL_SIZE_M / metersPerLng
   const dy = FIRE_CELL_SIZE_M / 111_320
-  const columns = Math.ceil(9100 / FIRE_CELL_SIZE_M)
-  const rows = Math.ceil(6200 / FIRE_CELL_SIZE_M)
+  const columns = Math.ceil(widthM / FIRE_CELL_SIZE_M)
+  const rows = Math.ceil(heightM / FIRE_CELL_SIZE_M)
   const footprints: [number, number][][] = [
     [[2, 7], [7, 6], [9, 9], [12, 8], [15, 5], [20, 6], [23, 9], [28, 8], [29, 12], [35, 11], [37, 14], [42, 15], [45, 19], [42, 22], [38, 22], [38, 26], [33, 25], [30, 28], [26, 26], [23, 28], [18, 26], [14, 27], [12, 23], [9, 23], [9, 30], [6, 30], [5, 25], [6, 22], [3, 20], [4, 16], [1, 14]],
     [[38, 19], [44, 20], [48, 24], [52, 23], [55, 25], [60, 24], [63, 27], [66, 27], [67, 31], [72, 29], [75, 32], [80, 31], [81, 35], [77, 36], [77, 40], [73, 39], [72, 42], [68, 41], [65, 37], [62, 37], [60, 34], [55, 35], [52, 32], [48, 33], [46, 30], [42, 29], [41, 25], [37, 24]],
@@ -113,8 +138,8 @@ export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
     return value - Math.floor(value)
   }
   const occupied = (column: number, row: number) => {
-    const x = (column + 0.5) * FIRE_CELL_SIZE_M / 91
-    const y = (row + 0.5) * FIRE_CELL_SIZE_M / 100
+    const x = (column + 0.5) * FIRE_CELL_SIZE_M / (91 * FIRE_SCALE)
+    const y = (row + 0.5) * FIRE_CELL_SIZE_M / (100 * FIRE_SCALE)
     const wx = x + 0.65 * Math.sin(y * 1.7) + 0.3 * Math.sin(x * 3.1 + y)
     const wy = y + 0.65 * Math.sin(x * 1.35) + 0.35 * Math.cos(y * 2.7 - x)
     const tileX = Math.floor(x / 2.1)
@@ -161,7 +186,7 @@ export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
 export const FIRE_PERIMETER: RiskArea = {
   id: 'fire-perimeter',
   name: 'Superficie afectada · escenario',
-  coordinates: [
+  coordinates: ([
     [-5.172, 40.244], [-5.166, 40.250], [-5.162, 40.251],
     [-5.161, 40.256], [-5.155, 40.262], [-5.148, 40.261],
     [-5.142, 40.268], [-5.132, 40.265], [-5.128, 40.267],
@@ -172,19 +197,19 @@ export const FIRE_PERIMETER: RiskArea = {
     [-5.134, 40.223], [-5.139, 40.228], [-5.146, 40.227],
     [-5.152, 40.231], [-5.155, 40.237], [-5.164, 40.236],
     [-5.163, 40.241], [-5.172, 40.244],
-  ],
+  ] as [number, number][]).map(([lng, lat]) => compact(lng, lat)),
 }
 
-export const FIRE_FRONT: [number, number][] = [
+export const FIRE_FRONT: [number, number][] = ([
   [-5.142, 40.268], [-5.132, 40.265], [-5.128, 40.267],
   [-5.119, 40.262], [-5.113, 40.264], [-5.107, 40.258],
   [-5.097, 40.256], [-5.101, 40.250], [-5.091, 40.245],
-]
+] as [number, number][]).map(([lng, lat]) => compact(lng, lat))
 
 export const SPREAD_AREA: RiskArea = {
   id: 'spread-scenario',
   name: 'Posible propagación · hipótesis ilustrativa',
-  coordinates: [
+  coordinates: ([
     [-5.148, 40.263], [-5.145, 40.277], [-5.133, 40.287],
     [-5.115, 40.291], [-5.103, 40.286], [-5.087, 40.278],
     [-5.081, 40.267], [-5.069, 40.261], [-5.075, 40.250],
@@ -192,7 +217,7 @@ export const SPREAD_AREA: RiskArea = {
     [-5.107, 40.258], [-5.113, 40.264], [-5.119, 40.262],
     [-5.128, 40.267], [-5.132, 40.265], [-5.142, 40.268],
     [-5.148, 40.263],
-  ],
+  ] as [number, number][]).map(([lng, lat]) => compact(lng, lat)),
 }
 
 export const SETTLEMENTS = [
@@ -213,7 +238,8 @@ function person(index: number, lng: number, lat: number, locality: string, resid
     lng, lat, locality, resident,
     status: resident ? 'pending' : 'tracking',
     vulnerable: index % 17 === 0,
-    safeZoneId: '', speedKmh: 0,
+    safeZoneId: nearestZone(lng, lat, SAFE_ZONES).zone.id,
+    speedKmh: 26 + (index % 7) * 4,
     callDelaySec: 1 + (index % 48) * 1.4,
     outcome: index % 11 === 7 ? 'no_answer' : index % 13 === 9 ? 'refused' : index % 7 === 4 ? 'informed' : 'tracking',
     locationSource: resident ? 'reference' : 'simulation',
@@ -231,8 +257,8 @@ const OUTSIDE_LOCATIONS: [number, number, string][] = [
   [-5.1574, 40.2197, 'Entorno de Guisando'],
   [-5.1285, 40.2158, 'Entre Guisando y Arenas'],
   [-5.1208, 40.2125, 'Entre Guisando y Arenas'],
-  [-5.1095, 40.2253, 'Entorno de Arenas'],
-  [-5.1021, 40.2378, 'Entorno de El Hornillo'],
+  [-5.1095, 40.2175, 'Entorno de Arenas'],
+  [-5.1015, 40.2512, 'Entorno de El Hornillo'],
   [-5.0851, 40.2346, 'Entorno de La Parra'],
   [-5.0754, 40.2248, 'Entorno de La Parra'],
   [-5.0736, 40.2537, 'Entorno de El Arenal'],
@@ -240,6 +266,48 @@ const OUTSIDE_LOCATIONS: [number, number, string][] = [
   [-5.0964, 40.1952, 'Sur de Arenas'],
   [-5.0658, 40.2037, 'Este de Arenas'],
 ]
+
+function closestZones(lng: number, lat: number, count: number) {
+  return [...SAFE_ZONES]
+    .sort((a, b) => haversineMeters(lng, lat, a.lng, a.lat) - haversineMeters(lng, lat, b.lng, b.lat))
+    .slice(0, count)
+}
+
+/**
+ * Cada corredor se resuelve contra la API de Directions para que las personas
+ * avancen por carretera y no en línea recta sobre el monte. Se piden los dos
+ * puntos de encuentro más próximos porque en este valle la distancia por
+ * carretera y la distancia en línea recta no coinciden.
+ */
+export const EVACUATION_CORRIDORS: Corridor[] = (() => {
+  const bearings = [30, 150, 270]
+  const corridors: Corridor[] = []
+  for (const settlement of SETTLEMENTS) {
+    for (const zone of closestZones(settlement.lng, settlement.lat, 2)) {
+      for (const bearing of bearings) {
+        corridors.push({
+          id: `${settlement.name}-${zone.id}-${bearing}`,
+          group: settlement.name,
+          zoneId: zone.id,
+          from: destination(settlement.lng, settlement.lat, bearing, settlement.radiusM * 0.6),
+          to: [zone.lng, zone.lat],
+        })
+      }
+    }
+  }
+  for (const [lng, lat, locality] of OUTSIDE_LOCATIONS) {
+    for (const zone of closestZones(lng, lat, 2)) {
+      corridors.push({
+        id: `${locality}-${lng.toFixed(4)}-${zone.id}`,
+        group: locality,
+        zoneId: zone.id,
+        from: [lng, lat],
+        to: [zone.lng, zone.lat],
+      })
+    }
+  }
+  return corridors
+})()
 
 export const INITIAL_CITIZENS: Citizen[] = (() => {
   const residents: Citizen[] = []

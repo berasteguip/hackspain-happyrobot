@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CommandMap } from './CommandMap'
 import { fetchFirmsSpain } from './firms'
-import { INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES } from './scenario'
-import { advanceProtocol } from './simulation'
+import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES } from './scenario'
+import { loadCorridorRoutes, resolveGroupZones } from './routing'
+import type { RouteIndex } from './routing'
+import { advanceProtocol, moveEvacuees } from './simulation'
 import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers } from './types'
 
 const STATUS_LABEL: Record<Citizen['status'], string> = {
@@ -46,8 +48,9 @@ export function CommandCenter({ token }: { token: string }) {
   const [firms, setFirms] = useState<FireSpot[]>([])
   const [showFirms, setShowFirms] = useState(false)
   const [firmsState, setFirmsState] = useState('Sin consultar · detecciones de las últimas 24 h')
-  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: false, thermal: false, citizens: true, references: true, zones: false })
+  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: false, thermal: false, citizens: true, references: true, zones: true })
   const citizensRef = useRef(citizens)
+  const routesRef = useRef<RouteIndex>(new Map())
   const elapsedRef = useRef(0)
   const peopleButtonRef = useRef<HTMLButtonElement>(null)
   const layersButtonRef = useRef<HTMLButtonElement>(null)
@@ -81,18 +84,42 @@ export function CommandCenter({ token }: { token: string }) {
     return () => { cancelled = true }
   }, [showFirms])
   useEffect(() => {
+    const controller = new AbortController()
+    loadCorridorRoutes(token, EVACUATION_CORRIDORS, controller.signal)
+      .then((routes) => {
+        if (controller.signal.aborted) return
+        routesRef.current = routes
+        const byGroup = resolveGroupZones(routes)
+        if (!byGroup.size) return
+        setCitizens((current) => {
+          const next = current.map((citizen) => {
+            const zoneId = citizen.locality ? byGroup.get(citizen.locality) : undefined
+            return zoneId && zoneId !== citizen.safeZoneId ? { ...citizen, safeZoneId: zoneId } : citizen
+          })
+          citizensRef.current = next
+          return next
+        })
+      })
+      .catch(() => { routesRef.current = new Map() })
+    return () => controller.abort()
+  }, [token])
+  useEffect(() => {
     if (!protocolOn) return
     const started = performance.now()
     const baseline = elapsedRef.current
+    let previousElapsed = baseline
     const timer = window.setInterval(() => {
       const nextElapsed = baseline + (performance.now() - started) / 1000
+      const dt = nextElapsed - previousElapsed
+      previousElapsed = nextElapsed
       elapsedRef.current = nextElapsed
       const advanced = advanceProtocol(citizensRef.current, nextElapsed, [])
-      citizensRef.current = advanced.citizens
-      setCitizens(advanced.citizens)
+      const moved = moveEvacuees(advanced.citizens, routesRef.current, SAFE_ZONES, dt)
+      citizensRef.current = moved
+      setCitizens(moved)
       setElapsed(nextElapsed)
       if (advanced.events.length) setEvents((previous) => [...advanced.events.reverse(), ...previous].slice(0, 700))
-    }, 250)
+    }, 100)
     return () => window.clearInterval(timer)
   }, [protocolOn])
   useEffect(() => {
@@ -150,7 +177,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
       </nav>
-      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point hollow" />Referencia residencial</span><span><i className="legend-point" />Ubicación compartida</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
+      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point hollow" />Referencia residencial</span><span><i className="legend-point" />Ubicación compartida</span><span><i className="legend-zone" />Punto de encuentro</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
       {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : 'Personas'}>
         <div className="floating-panel-heading"><h2>{selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : 'Personas'}</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
         <div className="floating-panel-body">

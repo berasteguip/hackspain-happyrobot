@@ -8,16 +8,16 @@ import { destination } from './geo'
 import type { Citizen, FireSpot, MapLayers, RiskArea, SafeZone } from './types'
 
 const STATUS_COLOR: Record<string, string> = {
-  pending: '#8c99a5', ringing: '#dac184', no_answer: '#d79770',
-  informed: '#b1bcd0', tracking: '#8bc9df', evacuating: '#8bc9df',
-  safe: '#82baa0', refused: '#8c99a5',
+  pending: '#aebdc9', ringing: '#f5cb6b', no_answer: '#ff9a5e',
+  informed: '#cfdcea', tracking: '#5fd8ff', evacuating: '#5fd8ff',
+  safe: '#4de3a6', refused: '#9aa7b3',
 }
 
 const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   perimeter: ['fire-cells-fill'],
   spread: ['spread-fill', 'spread-hatch', 'spread-edge'],
   thermal: ['thermal-core', 'thermal-satellite'],
-  citizens: ['people-dot', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
+  citizens: ['people-glow', 'people-dot', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
   zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
 }
@@ -87,6 +87,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
     }
   }
   const visible: mapboxgl.FilterSpecification = layers.references ? ['has', 'id'] : ['==', ['get', 'reference'], false]
+  map.setFilter('people-glow', visible)
   map.setFilter('people-dot', visible)
   for (const id of ['people-selection', 'people-label']) {
     map.setFilter(id, ['all', visible, ['==', ['get', 'id'], selectedId ?? '']])
@@ -110,7 +111,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       container: rootRef.current,
       accessToken: token,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: INCIDENT.center, zoom: rootRef.current.clientWidth < 680 ? 11.35 : INCIDENT.zoom, pitch: 0, bearing: 0,
+      center: INCIDENT.center, zoom: rootRef.current.clientWidth < 680 ? 12.1 : INCIDENT.zoom, pitch: 0, bearing: 0,
       attributionControl: false,
     })
     mapRef.current = map
@@ -153,8 +154,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           })),
         },
       })
-      map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': '#80bba2', 'fill-opacity': 0.12 } })
-      map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': '#80bba2', 'line-width': 1, 'line-opacity': 0.6 } })
+      map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': '#4de3a6', 'fill-opacity': 0.14 } })
+      map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': '#4de3a6', 'line-width': 1.3, 'line-opacity': 0.8 } })
       map.addSource('zones', {
         type: 'geojson', data: {
           type: 'FeatureCollection', features: current.zones.map((zone) => ({
@@ -163,7 +164,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           })),
         },
       })
-      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'text-field': '+', 'text-size': 19, 'text-allow-overlap': true }, paint: { 'text-color': '#a5d0bb', 'text-halo-color': '#15231c', 'text-halo-width': 2 } })
+      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'text-field': '+', 'text-size': 19, 'text-allow-overlap': true }, paint: { 'text-color': '#7ef0c0', 'text-halo-color': '#0d1a15', 'text-halo-width': 2 } })
       map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.6] }, paint: { 'text-color': '#add1be', 'text-halo-color': '#121b18', 'text-halo-width': 1.5 } })
 
       map.addSource('thermal', { type: 'geojson', data: firesGeo(current.fires) })
@@ -180,13 +181,19 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'accuracy-fill', type: 'fill', source: 'accuracy', paint: { 'fill-color': '#92c6d8', 'fill-opacity': 0.08 } })
       map.addLayer({ id: 'accuracy-line', type: 'line', source: 'accuracy', paint: { 'line-color': '#92c6d8', 'line-width': 1, 'line-dasharray': [2, 3] } })
       map.addSource('people', { type: 'geojson', data: citizensGeo(current.citizens) })
+      map.addLayer({ id: 'people-glow', type: 'circle', source: 'people', paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.6, 11, 3.6, 14, 6, 17, 8.5],
+        'circle-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#9aa7b3'],
+        'circle-opacity': ['case', ['get', 'reference'], 0.06, 0.22],
+        'circle-blur': 0.9,
+      } })
       map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 0.8, 11, 1.2, 14, 2.3, 17, 3.2],
-        'circle-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#8c99a5'],
-        'circle-opacity': ['case', ['get', 'reference'], 0.12, 0.95],
-        'circle-stroke-width': 0.85,
-        'circle-stroke-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#8c99a5'],
-        'circle-stroke-opacity': 0.8,
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 1.3, 11, 2, 14, 3.4, 17, 4.6],
+        'circle-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#9aa7b3'],
+        'circle-opacity': ['case', ['get', 'reference'], 0.3, 1],
+        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 0.5, 14, 1, 17, 1.3],
+        'circle-stroke-color': '#0a1117',
+        'circle-stroke-opacity': ['case', ['get', 'reference'], 0.25, 0.85],
       } })
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
@@ -281,7 +288,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
         <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
         <span className="toolbar-divider" />
-        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.18, 40.19], [-5.055, 40.298]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Encuadrar</button>
+        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.164, 40.191], [-5.06, 40.279]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Encuadrar</button>
         {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
