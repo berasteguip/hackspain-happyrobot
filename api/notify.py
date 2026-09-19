@@ -10,6 +10,7 @@ lo demás.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -190,6 +191,14 @@ def trigger_payload(
         "PRIOR_ZONA": sector,
         "PRIOR_NIVEL": nivel,
         "ORDEN_AUTORIDAD": settings.authority_order,
+        # --- lo que exige el cerrojo del propio workflow ---
+        # Un nodo Python del workflow revalida el destino contra esta lista y revienta el run
+        # con «Destino no autorizado para el simulacro» si no cuadra. Es el mismo criterio que
+        # `CALL_ALLOWLIST`, pero comprobado **en el otro lado**: si alguien apunta a nuestra API
+        # desde otro sitio, o si esta lista viajara vacía, HappyRobot se niega igual. Dos
+        # cerrojos independientes valen más que uno duplicado.
+        "ALLOWED_NUMBERS": json.dumps(sorted(settings.call_allowlist)),
+        "DEMO_MODE": "true" if settings.demo_mode else "false",
         # --- claves propias del repo ---
         "action": "call" if channel == Channel.call else "sms",
         "person_id": person.id,

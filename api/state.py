@@ -15,6 +15,7 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Iterable
 
@@ -34,6 +35,7 @@ from models import (
     RoadClosure,
     SafeZone,
     Sector,
+    parse_iso,
     utcnow_iso,
 )
 from settings import settings
@@ -166,6 +168,45 @@ class CrisisState:
         candidatos = [c for c in self.calls.values() if c.run_id == run_id]
         return max(candidatos, key=lambda c: c.started_at) if candidatos else None
 
+    def expire_stale_calls(self) -> list[CallRun]:
+        """Cierra como `stale` los intentos que llevan demasiado sin desenlace.
+
+        El resultado de una llamada llega por `POST /calls/outcome`, y ese callback **puede no
+        llegar nunca**: con la API en localhost HappyRobot no la alcanza. Sin esto, un intento
+        se queda en `ringing` para siempre y esa persona no se puede volver a llamar en toda
+        la crisis, que es justo lo contrario de lo que hace falta ensayando.
+
+        Se marcan `stale`, no `no_answer`: no sabemos si contestó. Inventarse el desenlace
+        sería peor que admitir que no lo sabemos.
+        """
+        limite = settings.call_stale_minutes * 60
+        ahora = datetime.now(timezone.utc)
+        caducados = []
+        with self.lock:
+            for call in self.calls.values():
+                if call.state in TERMINAL_CALL_STATES:
+                    continue
+                marca = parse_iso(call.updated_at)
+                if marca is None or (ahora - marca).total_seconds() < limite:
+                    continue
+                call.state = CallState.stale
+                call.detail = (
+                    f"sin desenlace tras {settings.call_stale_minutes:.0f} min: nunca llegó el "
+                    "resultado a /calls/outcome (¿HappyRobot no alcanza esta API?)"
+                )
+                call.updated_at = utcnow_iso()
+                caducados.append(call)
+            if caducados:
+                self.state_version += 1
+                self.t = utcnow_iso()
+        if caducados:
+            log.warning(
+                "%d llamada(s) sin desenlace marcadas como `stale`: %s",
+                len(caducados),
+                ", ".join(c.person_id for c in caducados),
+            )
+        return caducados
+
     def set_call_state(
         self,
         call_id: str,
@@ -274,6 +315,45 @@ class CrisisState:
 
     def clear_override(self, subject_type: str, subject_id: str | None, field: str) -> None:
         self.overrides.pop(self.override_key(subject_type, subject_id, field), None)
+
+    def log_action(
+        self,
+        reason: str,
+        *,
+        type: DecisionType,
+        actor: Actor = Actor.human,
+        approved_by: str | None = None,
+        before: dict[str, Any] | None = None,
+        after: dict[str, Any] | None = None,
+        root_event: bool = True,
+    ) -> DecisionLogEntry:
+        """Registra una acción que cambia el estado pero **no tiene una entidad como sujeto**.
+
+        `mutate()` siempre apunta a algo —una persona, una casa, el fuego— y si no lo encuentra
+        se rinde con un warning. Pero hay acciones del mando que son reales y no van contra una
+        ficha concreta: vaciar el tablero de llamadas es la primera. Sin esto, el timeline
+        tendría un agujero donde desaparecieron doce intentos, y «se entiende y se puede
+        intervenir» deja de cumplirse justo en la parte de intervenir.
+
+        `subject_type` queda en `"system"`: no es una colección del contrato, y por eso no toca
+        `_versions` ni el diff por entidad. Solo sube la versión y deja la entrada.
+        """
+        with self.lock:
+            self.state_version += 1
+            self.t = utcnow_iso()
+            return self._append_entry(
+                type=type,
+                subject_type="system",
+                subject_id=None,
+                before=before or {},
+                after=after or {},
+                reason=reason,
+                actor=actor,
+                trigger_event_id=None,
+                approved_by=approved_by,
+                notified=None,
+                root_event=root_event,
+            )
 
     # ------------------------------------------------------------------ LA mutación
     def mutate(

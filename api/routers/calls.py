@@ -484,9 +484,56 @@ def post_call_dispatch(body: CallDispatch) -> CallDispatchResponse:
 @router.get("/calls", response_model=list[CallRun])
 def get_calls(batch_id: str | None = None, active: bool = False) -> list[CallRun]:
     """El tablero de llamadas. `batch_id` acota a una ráfaga; `active=true`, a las vivas."""
+    # Que el tablero no enseñe «Llamando» eternamente a quien colgó hace veinte minutos.
+    state.expire_stale_calls()
     filas = list(state.calls.values())
     if batch_id:
         filas = [c for c in filas if c.batch_id == batch_id]
     if active:
         filas = [c for c in filas if c.state not in TERMINAL_CALL_STATES]
     return sorted(filas, key=lambda c: c.started_at, reverse=True)
+
+
+@router.post("/calls/reset", response_model=WriteResponse)
+def post_calls_reset(batch_id: str | None = None, operator: str | None = None) -> WriteResponse:
+    """Vacía el tablero de llamadas **sin tocar nada más**.
+
+    Existe porque lo único que había para «empezar otra tanda» era `POST /reset`, que recarga
+    el escenario entero: se lleva por delante el decision_log, las posiciones compartidas por
+    GPS y todo lo ocurrido. Entre ensayos da igual; con el jurado delante es un botón de
+    pánico. Esto solo borra los intentos de llamada, que es lo que de verdad estorba cuando
+    quieres volver a llamar a alguien.
+
+    Queda registrado en el decision_log: borrar el tablero es una intervención del mando, y
+    el timeline no puede tener un agujero donde desaparecieron doce llamadas.
+
+    `batch_id` acota a una sola ráfaga. Sin él, se vacía entero.
+    """
+    quien = operator or "puesto de mando"
+    with state.lock:
+        a_borrar = [
+            c.id for c in state.calls.values() if batch_id is None or c.batch_id == batch_id
+        ]
+        for call_id in a_borrar:
+            state.calls.pop(call_id, None)
+        if a_borrar:
+            state.state_version += 1
+            state.t = utcnow_iso()
+
+    if not a_borrar:
+        log.info("tablero de llamadas ya vacío%s", f" (ráfaga {batch_id})" if batch_id else "")
+        return write_response([], event="calls-reset(vacío)")
+
+    entrada = state.log_action(
+        f"{quien} vacía el tablero de llamadas: {len(a_borrar)} intento(s) retirados"
+        + (f" de la ráfaga {batch_id}" if batch_id else "")
+        + ". El escenario, las posiciones y el resto del historial NO se tocan.",
+        type=DecisionType.human_override,
+        actor=Actor.human,
+        approved_by=quien,
+        after={"calls_cleared": len(a_borrar)},
+    )
+    decisiones = [entrada] if entrada else []
+    if entrada:
+        state.last_event_id = entrada.id
+    return write_response(decisiones, event=f"calls-reset({len(a_borrar)})")
