@@ -13,7 +13,7 @@ import { planCitizenRoute } from './routing'
 import type { RouteIndex } from './routing'
 import { detectAlerts, initialWatch, mergeAlerts } from './alerts'
 import type { AlertAction, AlertWatch, CommandAlert } from './alerts'
-import { createDispatch, moveUnits, originsFrom, planUnitRoute } from './units'
+import { applyUnitPlan, createDispatch, createPatrolFleet, moveUnits, originsFrom, pickAvailableUnit, planUnitRoute, redirectUnit, retryUnitRoute } from './units'
 import type { DispatchTarget, DispatchUnit, UnitKind } from './units'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
 import {
@@ -155,11 +155,13 @@ export function CommandCenter({ token }: { token: string }) {
   }, [firePlaying])
   const [alerts, setAlerts] = useState<CommandAlert[]>([])
   const [readAlertIds, setReadAlertIds] = useState<Set<string>>(() => new Set())
-  const [units, setUnits] = useState<DispatchUnit[]>([])
+  const [units, setUnits] = useState<DispatchUnit[]>(() => createPatrolFleet(scenarioById(DEFAULT_SCENARIO_ID)))
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
+  const [unitsPaused, setUnitsPaused] = useState(false)
   const watchRef = useRef<AlertWatch | null>(null)
-  const unitsRef = useRef<DispatchUnit[]>([])
-  const unitSeqRef = useRef(0)
-  const unitFlightRef = useRef(new Set<string>())
+  const unitsRef = useRef<DispatchUnit[]>(units)
+  const unitSeqRef = useRef(4)
+  const unitFlightRef = useRef(new Map<string, { revision: number; controller: AbortController }>())
   const citizensRef = useRef(citizens)
   const routesRef = useRef<RouteIndex>(new Map())
   const plannedRef = useRef(new Set<string>())
@@ -347,34 +349,44 @@ export function CommandCenter({ token }: { token: string }) {
     if (detected.alerts.length) setAlerts(previous => mergeAlerts(previous, detected.alerts))
   }, [citizens, forecast, horizon, marginM, fireSettings.windTowardDeg, scenario.settlements, scenario.safeZones])
   useEffect(() => {
+    const flights = unitFlightRef.current
     const timer = window.setInterval(() => {
-      const pending = unitsRef.current.filter(unit => unit.status === 'requested' && !unitFlightRef.current.has(unit.id))
+      for (const [id, flight] of flights) {
+        if (!unitsRef.current.some(unit => unit.id === id && unit.revision === flight.revision)) {
+          flight.controller.abort()
+          flights.delete(id)
+        }
+      }
+      const pending = unitsRef.current.filter(unit => unit.status === 'requested' && !flights.has(unit.id)).slice(0, Math.max(0, 2 - flights.size))
       for (const unit of pending) {
-        unitFlightRef.current.add(unit.id)
-        void planUnitRoute(token, unit).then(planned => {
-          unitsRef.current = unitsRef.current.map(item => item.id === planned.id ? planned : item)
+        const controller = new AbortController()
+        flights.set(unit.id, { revision: unit.revision, controller })
+        void planUnitRoute(token, unit, controller.signal).then(planned => {
+          if (controller.signal.aborted) return
+          unitsRef.current = applyUnitPlan(unitsRef.current, planned)
           setUnits(unitsRef.current)
         }).catch(() => {
-          unitsRef.current = unitsRef.current.map(item => item.id === unit.id ? { ...item, status: 'hold', hold: 'No se pudo calcular el acceso. Puede reintentar el envío.' } : item)
+          if (controller.signal.aborted) return
+          unitsRef.current = applyUnitPlan(unitsRef.current, { ...unit, status: 'hold', hold: 'No se pudo calcular el acceso. Puede reintentar la ruta.' })
           setUnits(unitsRef.current)
-        }).finally(() => { unitFlightRef.current.delete(unit.id) })
+        }).finally(() => { if (flights.get(unit.id)?.controller === controller) flights.delete(unit.id) })
       }
     }, 250)
-    return () => window.clearInterval(timer)
-  }, [token])
+    return () => { window.clearInterval(timer); for (const flight of flights.values()) flight.controller.abort(); flights.clear() }
+  }, [token, scenario.id])
   useEffect(() => {
     let previous = performance.now()
     const timer = window.setInterval(() => {
       const now = performance.now()
-      const dt = (now - previous) / 1000
+      const dt = Math.min(1, (now - previous) / 1000)
       previous = now
-      if (!unitsRef.current.some(unit => unit.status === 'en_route')) return
+      if (document.hidden || unitsPaused || !unitsRef.current.some(unit => unit.status === 'en_route' || unit.status === 'patrolling')) return
       const next = moveUnits(unitsRef.current, dt)
       unitsRef.current = next
       setUnits(next)
     }, 100)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [unitsPaused])
 
   const fires = useMemo(() => showFirms ? [...scenario.fires, ...firms] : scenario.fires, [showFirms, firms, scenario.fires])
   const rosterCenter = useMemo(() => {
@@ -465,14 +477,16 @@ export function CommandCenter({ token }: { token: string }) {
     setProtocolOn(true)
   }
   const dispatchUnit = (kind: UnitKind, target: DispatchTarget) => {
-    if (unitsRef.current.length >= MAX_UNITS) return
+    const available = pickAvailableUnit(unitsRef.current, kind, target)
+    if (!available && unitsRef.current.length >= MAX_UNITS) return
     try {
-      const unit = createDispatch(kind, target, Date.now(), unitSeqRef.current, origins)
-      unitSeqRef.current += 1
-      unitsRef.current = [unit, ...unitsRef.current]
+      const unit = available ? redirectUnit(available, target, Date.now()) : createDispatch(kind, target, Date.now(), unitSeqRef.current++, origins)
+      if (!available) unit.id = `${scenario.id}-${unit.id}`
+      unitsRef.current = available ? unitsRef.current.map(item => item.id === unit.id ? unit : item) : [unit, ...unitsRef.current]
       setUnits(unitsRef.current)
+      setSelectedUnitId(unit.id)
       setLayers(previous => ({ ...previous, units: true }))
-      setFocusTarget({ lng: unit.origin.lng, lat: unit.origin.lat, bounds: [[unit.origin.lng, unit.origin.lat], [target.lng, target.lat]] })
+      setFocusTarget({ lng: unit.lng, lat: unit.lat, bounds: [[unit.lng, unit.lat], [target.lng, target.lat]] })
       setSelectedId(null)
       setPanel('alerts')
     } catch {
@@ -503,10 +517,15 @@ export function CommandCenter({ token }: { token: string }) {
     const target = kind ? targetFromCitizens(alert.citizenIds, alert.focus, alert.title) : null
     if (kind && target) dispatchUnit(kind, target)
   }
+  const retryUnit = (id: string) => {
+    unitsRef.current = unitsRef.current.map(unit => unit.id === id && unit.status === 'hold' ? retryUnitRoute(unit) : unit)
+    setUnits(unitsRef.current)
+  }
   const selectUnit = (id: string) => {
     const unit = unitsRef.current.find(item => item.id === id)
     if (!unit) return
     setSelectedId(null)
+    setSelectedUnitId(id)
     setPanel('alerts')
     setFocusTarget({ lng: unit.lng, lat: unit.lat, zoom: 14 })
   }
@@ -545,9 +564,13 @@ export function CommandCenter({ token }: { token: string }) {
     setNotices([])
     setAlerts([])
     setReadAlertIds(new Set())
-    setUnits([])
-    unitsRef.current = []
-    unitSeqRef.current = 0
+    const fleet = createPatrolFleet(next)
+    setUnits(fleet)
+    unitsRef.current = fleet
+    setSelectedUnitId(null)
+    setUnitsPaused(false)
+    unitSeqRef.current = fleet.length
+    for (const flight of unitFlightRef.current.values()) flight.controller.abort()
     unitFlightRef.current.clear()
     setLiveBatch(null)
     setLiveCalls([])
@@ -626,7 +649,7 @@ export function CommandCenter({ token }: { token: string }) {
       {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" className="floating-panel" aria-label={panelTitle}>
         <div className="floating-panel-heading"><h2>{panelTitle}</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
         <div className="floating-panel-body" key={selected?.id ?? panel}>
-          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><i className="incident-dot" aria-hidden="true" /><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} /> : panel === 'layers' ? (
+          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><i className="incident-dot" aria-hidden="true" /><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} selectedUnitId={selectedUnitId} unitsPaused={unitsPaused} onToggleUnits={() => setUnitsPaused(value => !value)} onRetryUnit={retryUnit} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} /> : panel === 'layers' ? (
             <div className="layer-content">
               <div className="map-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><span className="site-emoji" aria-hidden="true">{SITE_EMOJI.meeting}</span>Punto de encuentro</span><span><Icon name="units" />Medios</span><span><i className="legend-fire" />Huella térmica</span></div>
               {layerOptions(scenario).map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><LayerMark layer={layer.key} symbol={layer.symbol} /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}

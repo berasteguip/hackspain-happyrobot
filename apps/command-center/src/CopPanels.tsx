@@ -125,7 +125,8 @@ function windCardinal(deg: number) {
 }
 
 function UnitMark({ kind }: { kind: UnitKind }) {
-  const symbol = kind === 'ambulance' ? 'M8 7v6m-3-3h6' : kind === 'police' ? 'm8 6 4 2v3l-4 3-4-3V8Z' : 'M8 5c3 3 4 5 4 6a4 4 0 0 1-8 0c0-2 2-3 4-6Z'
+  if (kind === 'police') return <svg className="unit-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m5 10 2-5h10l2 5M4 10h16v8H4ZM6 18v3m12-3v3M7 14h2m6 0h2" /><path d="M9 2h3" stroke="#72a9ed" /><path d="M12 2h3" stroke="#e38589" /></svg>
+  const symbol = kind === 'ambulance' ? 'M8 7v6m-3-3h6' : 'M8 5c3 3 4 5 4 6a4 4 0 0 1-8 0c0-2 2-3 4-6Z'
   return <svg className="unit-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M2 3h13v14H2Zm13 5h4l3 5v4h-7M6 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm15 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" /><path d={symbol} /></svg>
 }
 
@@ -133,9 +134,13 @@ export function DispatchActions({ kinds, disabled, onDispatch }: { kinds: UnitKi
   return <div className="dispatch-actions">{kinds.map(kind => <button type="button" key={kind} className="dispatch-action" disabled={disabled} onClick={() => onDispatch(kind)}><UnitMark kind={kind} /><span>{UNIT_LABEL[kind]}</span></button>)}</div>
 }
 
-export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFocusUnit }: {
+export function AlertsPanel({ alerts, units, selectedUnitId, unitsPaused, onToggleUnits, onRetryUnit, onAction, onDispatch, onFocus, onFocusUnit }: {
   alerts: CommandAlert[]
   units: DispatchUnit[]
+  selectedUnitId: string | null
+  unitsPaused: boolean
+  onToggleUnits: () => void
+  onRetryUnit: (id: string) => void
   onAction: (alert: CommandAlert, action: AlertAction) => void
   onDispatch: (alert: CommandAlert, kind: UnitKind) => void
   onFocus: (alert: CommandAlert) => void
@@ -144,7 +149,11 @@ export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFo
   const sendable = alerts.filter(alert => alert.focus || alert.citizenIds.length > 0)
   const [sendId, setSendId] = useState(sendable[0]?.id)
   const send = sendable.find(alert => alert.id === sendId) ?? sendable[0]
+  const selectedUnit = units.find(unit => unit.id === selectedUnitId)
   return <div className="cop-content">
+    <div className="unit-fleet-toolbar"><span className="eyebrow">Medios de demostración</span><button type="button" className="cop-secondary" aria-pressed={unitsPaused} onClick={onToggleUnits}>{unitsPaused ? 'Reanudar medios' : 'Pausar medios'}</button></div>
+    <p className="fine">{units.filter(unit => unit.mission === 'patrol').length} sin asignar · {units.filter(unit => unit.mission === 'dispatch').length} asignados. {unitsPaused ? 'Movimiento en pausa.' : 'Patrullaje simulado por calles.'}</p>
+    {selectedUnit && <section className="unit-detail" aria-label={`Unidad ${selectedUnit.callSign}`}><div className="unit-detail-heading"><UnitMark kind={selectedUnit.kind} /><div><strong>{selectedUnit.callSign} · {UNIT_LABEL[selectedUnit.kind]}</strong><span className={`unit-state ${selectedUnit.status}`}>{UNIT_STATUS_LABEL[selectedUnit.status]}</span></div></div><p className="fine">{selectedUnit.mission === 'patrol' ? 'Recorrido urbano · sin tarea asignada' : `Destino: ${selectedUnit.target.label}`}</p>{selectedUnit.mission === 'dispatch' && <p className="fine">{selectedUnit.summary}</p>}{selectedUnit.hold && <p className="need-note">{selectedUnit.hold}</p>}{selectedUnit.status === 'hold' && <button type="button" className="cop-secondary" onClick={() => onRetryUnit(selectedUnit.id)}>Reintentar ruta del medio</button>}<p className="fine">Posición simulada, no GPS real. La decisión del agente no está conectada.</p></section>}
     {!alerts.length && <p className="fine" role="status">Sin avisos</p>}
     <ol className="alert-list">{alerts.map(alert => (
       <li key={alert.id} className={`alert-card ${alert.severity}`}>
@@ -162,9 +171,9 @@ export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFo
     {!units.length && <p className="fine">Ninguno enviado</p>}
     <div className="cop-list">{units.map(unit => {
       const eta = unitEta(unit)
-      return <button type="button" key={unit.id} onClick={() => onFocusUnit(unit.id)}>
+      return <button type="button" key={unit.id} aria-pressed={unit.id === selectedUnitId} onClick={() => onFocusUnit(unit.id)}>
         <UnitMark kind={unit.kind} />
-        <span><strong>{UNIT_LABEL[unit.kind]} · {unit.target.label}</strong><small>{UNIT_STATUS_LABEL[unit.status]}{eta ? ` · ${eta}` : ''}</small></span>
+        <span><strong>{unit.callSign} · {UNIT_LABEL[unit.kind]}</strong><small>{UNIT_STATUS_LABEL[unit.status]}{eta ? ` · ${eta}` : ''}</small><small>{unit.mission === 'patrol' ? 'Circuito urbano · demo' : unit.target.label}</small></span>
       </button>
     })}</div>
   </div>
