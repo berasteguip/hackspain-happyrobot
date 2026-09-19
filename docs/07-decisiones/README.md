@@ -1,6 +1,6 @@
 # Decisiones
 
-> **Actualizado:** 2026-09-18 · **Estado:** estable
+> **Actualizado:** 2026-09-19 · **Estado:** estable
 
 Registro de decisiones cerradas para no reabrir debates a las 4 de la mañana.
 Formato ADR ligero, un fichero por decisión: `NNN-decision-en-una-frase.md`.
@@ -20,4 +20,4 @@ Formato ADR ligero, un fichero por decisión: `NNN-decision-en-una-frase.md`.
 
 | # | Decisión | Fecha | Estado |
 | --- | --- | --- | --- |
-| — | *(ninguna aún)* | — | — |
+| 001 | CECOP como frontend Mapbox propio | 2026-09-19 | aceptada |

@@ -2,6 +2,10 @@
 .env
 .env.*
 !.env.example
+node_modules/
+dist/
+*.local
+
 
 # Config local de agentes (no se comparte)
 .devin/config.local.json

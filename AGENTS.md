@@ -12,12 +12,15 @@ este.
 - **Tesis de partida (aún abierta):** llevar los *AI workers* de HappyRobot —hoy desplegados
   en logística, energía, telco, seguros— al **sector público y la gestión de crisis**
   (112, protección civil, post-catástrofe tipo DANA).
-- **Estado actual:** fase de conocimiento. **Todavía no hay código ni arquitectura decidida.**
-  No inventes estructura de aplicación ni empieces a programar salvo petición explícita.
+- **Estado actual:** hay un primer frontend del CECOP en `apps/command-center` y una
+  tesis de producto (Vigía) en `docs/06-producto/01-vigia.md`. La base de conocimiento
+  sigue siendo obligatoria.
+
 
 ## 2. Cómo está organizado el repo
 
 ```
+apps/command-center  Frontend del CECOP (Vite + React + Mapbox)
 docs/
   00-meta/           Convenciones de escritura y de la base de conocimiento
   01-evento/         HackSpain: formato, track, reglas, criterios, timeline

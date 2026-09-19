@@ -1,6 +1,6 @@
 # Índice de conocimiento — router123 @ HackSpain 2026 (track HappyRobot)
 
-> **Actualizado:** 2026-09-18 · **Estado:** vivo
+> **Actualizado:** 2026-09-19 · **Estado:** vivo
 
 Base de conocimiento del equipo. Todo lo que aprendemos vive aquí, con fuente y fecha.
 Las reglas de escritura están en [`../AGENTS.md`](../AGENTS.md) y
@@ -36,4 +36,5 @@ Las reglas de escritura están en [`../AGENTS.md`](../AGENTS.md) y
 - ✅ Marco regulatorio (AI Act, ENS, RGPD, LCSP).
 - ⬜ Enunciado y criterios oficiales del track — **pendiente de los materiales de HappyRobot**.
 - ⬜ Acceso técnico a la plataforma (keys, límites, entorno).
-- ⬜ Definición de producto y guion de demo.
+- ✅ Primer corte de producto: **Vigía** ([`06-producto/01-vigia.md`](06-producto/01-vigia.md)).
+- ✅ Frontend inicial del CECOP en `apps/command-center`.
