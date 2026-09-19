@@ -44,6 +44,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--processes", type=int, default=None)
     p.add_argument("--top", type=int, default=15, help="cuántas variantes detallar en el JSON")
     p.add_argument("--synthetic", action="store_true", help="fuerza el grafo sintético (plan B)")
+    p.add_argument(
+        "--spread-scale",
+        type=float,
+        default=1.0,
+        help="multiplica la velocidad de propagacion del contrato (peor caso: el viento arrecia)",
+    )
     p.add_argument("--wind-shift-min", type=float, default=None, help="minuto del giro de viento")
     p.add_argument("--wind-shift-bearing", type=float, default=None, help="rumbo nuevo de cabeza (grados)")
     p.add_argument("--no-figures", action="store_true", help="no generar GIF ni PNG")
@@ -67,6 +73,7 @@ def main(argv=None) -> int:
         force_synthetic=args.synthetic,
         wind_shift_min=args.wind_shift_min,
         wind_shift_bearing=args.wind_shift_bearing,
+        spread_scale=args.spread_scale,
         pop_seed=args.seed,
     )
     t_build = time.perf_counter() - t0
@@ -122,6 +129,8 @@ def main(argv=None) -> int:
             "horizon_min": args.horizon,
             "dt_min": args.dt,
             "front_arrival_min": args.front_arrival,
+            "spread_scale": args.spread_scale,
+            "spread_rate_mh": round(float(world.fire.spread_rate_mh), 1),
             "fire_t0_min": round(world.config.fire_t0_min, 2),
             "graph": {
                 "source": g.source,

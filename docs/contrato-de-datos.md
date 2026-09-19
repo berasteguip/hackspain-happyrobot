@@ -365,7 +365,7 @@ del error en una evacuación. Derivación y fórmulas verificadas en `docs/resea
 
 | Factor | Peso | Por qué |
 |---|---|---|
-| Urgencia temporal `1 / max(minutes_to_front, 1)` | 0.45 | el reloj manda |
+| Urgencia temporal `exp(-minutes_to_front / 30)` | 0.45 | el reloj manda |
 | Penalización por movilidad (`immobile` 1.0, `reduced` 0.6, `walking` 0.3, `car` 0.0) | 0.20 | quien no puede salir solo necesita más antelación |
 | Incertidumbre (`status` en `unknown`/`no_answer`, o `position_source == "declared"`) | 0.15 | **lo que no se sabe sube la prioridad**, no la baja |
 | Tamaño del núcleo familiar `min(household_size,6)/6` | 0.10 | más gente por acción |
@@ -373,6 +373,16 @@ del error en una evacuación. Derivación y fórmulas verificadas en `docs/resea
 
 El factor de incertidumbre es deliberado y es el que responde a "¿decide algo sensato sin tener
 todos los datos?": el sistema trata la ignorancia como un riesgo, no como un vacío.
+
+⚠️ **La urgencia era `1 / max(minutes_to_front, 1)` y se cambió porque se midió.** Esa hipérbola se
+satura: con peso 0.45 aportaba **0.0900** a 5 minutos del frente y **0.0015** a cinco horas, o sea
+0.0885 de diferencia en todo el rango realista — **menos que un solo escalón de movilidad** (hasta
+0.20). En la cola real de 121 personas eso hacía que alguien a 4,6 min del frente empatase en el
+puesto 3 con dos personas a más de 5 horas: la urgencia no decidía nada y la movilidad decidía todo.
+La exponencial con constante de 30 min aporta 0.435 · 0.381 · 0.273 · 0.166 · 0.061 a 1 · 5 · 15 ·
+30 · 60 minutos: monótona, sin meseta de empates, y el reloj vuelve a mandar como dice la tabla.
+Esto importa delante del jurado porque el criterio es literalmente "prioridad cuando todo es
+urgente", y se ve en cuanto alguien mira la cola.
 
 Cada elemento de `/queue` viaja con `score_breakdown` (el diccionario factor → aportación) para que
 el dashboard pueda explicar **por qué** alguien está primero. Un número sin desglose no defiende nada

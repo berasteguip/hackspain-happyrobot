@@ -54,13 +54,21 @@ def load_scenario(path: str | Path) -> dict:
 
 
 # ---------------------------------------------------------------- fuego
-def fire_from_scenario_perimeter(frame: LocalFrame, fire_spec: dict, wind_shifts=None) -> FireModel:
+def fire_from_scenario_perimeter(
+    frame: LocalFrame, fire_spec: dict, wind_shifts=None, spread_scale: float = 1.0
+) -> FireModel:
     """Adapta el bloque `fire` del contrato (que trae `perimeter`) al `FireModel` (que quiere origen).
 
     El contrato da el perímetro actual como polígono GeoJSON; `FireModel` nace de un origen y un
     radio. Tomamos el centroide del anillo como origen y la distancia media centroide-vértice
     como radio inicial. Para el rectángulo que genera `data/generate.py` es exacto salvo la
     esquina; para un perímetro real es una aproximación razonable del área quemada.
+
+    `spread_scale` multiplica la velocidad de propagación del contrato. Sirve para explorar el
+    peor caso ("el viento arrecia"): con el incendio de `sierra-culebra` a su velocidad nominal
+    (1800 m/h) el frente tarda horas en barrer los tres pueblos y la elección de plan casi no
+    cambia los alcanzados; a x3 sí. Es un supuesto declarado, no un ajuste oculto: sale en el
+    JSON de salida.
     """
     ring = fire_spec["perimeter"]["coordinates"][0]
     lons = np.array([p[0] for p in ring], dtype=np.float64)
@@ -76,7 +84,7 @@ def fire_from_scenario_perimeter(frame: LocalFrame, fire_spec: dict, wind_shifts
         origin_lat=clat,
         origin_lon=clon,
         head_bearing_deg=float(fire_spec.get("head_bearing_deg", 45.0)),
-        spread_rate_mh=float(fire_spec.get("spread_rate_mh", 1800.0)),
+        spread_rate_mh=float(fire_spec.get("spread_rate_mh", 1800.0)) * float(spread_scale),
         initial_radius_m=max(radius, 100.0),
         wind_shifts=list(wind_shifts or []),
     )
@@ -160,6 +168,7 @@ def build_world(
     force_synthetic: bool = False,
     wind_shift_min: float | None = None,
     wind_shift_bearing: float | None = None,
+    spread_scale: float = 1.0,
     pop_seed: int = 0,
     record_positions: bool = False,
 ) -> SimWorld:
@@ -169,7 +178,7 @@ def build_world(
     shifts = []
     if wind_shift_min is not None and wind_shift_bearing is not None:
         shifts.append(WindShift(t_min=float(wind_shift_min), head_bearing_deg=float(wind_shift_bearing)))
-    fire = fire_from_scenario_perimeter(g.frame, scenario["fire"], shifts)
+    fire = fire_from_scenario_perimeter(g.frame, scenario["fire"], shifts, spread_scale=spread_scale)
 
     pop, village_ids, village_names = build_population(scenario, g, seed=pop_seed)
 

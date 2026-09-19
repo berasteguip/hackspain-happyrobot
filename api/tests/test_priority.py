@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from models import Mobility, Person, PersonStatus, PositionSource
@@ -39,11 +41,28 @@ def test_los_pesos_son_los_del_contrato():
     assert sum(WEIGHTS.values()) == pytest.approx(1.0)
 
 
-def test_la_urgencia_es_uno_partido_minutos_con_suelo_en_uno():
-    assert urgency_factor(10) == pytest.approx(0.1)
-    assert urgency_factor(1) == pytest.approx(1.0)
-    assert urgency_factor(0.2) == pytest.approx(1.0)  # no se pasa de 1
+def test_la_urgencia_decae_exponencialmente_con_el_horizonte():
+    assert urgency_factor(0) == pytest.approx(1.0)  # el frente encima
+    assert urgency_factor(30) == pytest.approx(math.exp(-1), abs=1e-6)
     assert urgency_factor(None) == 0.0
+    assert 0.0 < urgency_factor(300) < 0.001  # a cinco horas ya no aporta, pero no es cero exacto
+
+
+def test_la_urgencia_manda_sobre_la_movilidad_en_el_rango_realista():
+    """La regresión del bug que la hipérbola `1/max(minutes,1)` tenía.
+
+    Con la fórmula vieja, la diferencia de urgencia entre 5 minutos y 5 horas del frente era 0.0885,
+    menos que un solo escalón de movilidad (0.20): alguien a 4,6 min empataba con alguien a 5 horas.
+    """
+    spread = WEIGHTS["urgency"] * (urgency_factor(5) - urgency_factor(300))
+    assert spread > WEIGHTS["mobility"], (
+        f"la urgencia solo separa {spread:.4f} entre 5 min y 5 h, y la movilidad puede "
+        f"aportar {WEIGHTS['mobility']}: la cola la decidiría la movilidad, no el reloj"
+    )
+    # y es estrictamente monótona: nadie con el fuego más cerca puntúa menos
+    minutos = [0, 1, 5, 10, 15, 30, 60, 120, 300]
+    factores = [urgency_factor(m) for m in minutos]
+    assert factores == sorted(factores, reverse=True)
 
 
 def test_la_movilidad_penaliza_segun_la_tabla():

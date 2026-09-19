@@ -248,7 +248,9 @@ Personas que no pueden salir solas. Una entrada por persona.
 
 ## 3. Normalización de teléfonos a E.164
 
-Contrato §1: `+34600111222`. Reglas para el extractor, sin excepciones:
+Contrato §1: `+34600990012` — **todo teléfono del repo va en el rango reservado `+3460099xxxx`**,
+ejemplos incluidos, porque con `ALLOW_REAL_CALLS=true` un ejemplo copiado marca a una persona real.
+Reglas para el extractor, sin excepciones:
 
 | Lo que se oye / transcribe | Resultado | Por qué |
 |---|---|---|

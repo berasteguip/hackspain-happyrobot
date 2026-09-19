@@ -559,6 +559,35 @@ function note(text) {
    Render completo
    ================================================================== */
 let rendering = false;
+/* ------------------------------------------------------------------
+   Congelar listas mientras el operador las usa.
+   El escenario avanza cada segundo y cada versión repinta los paneles: los
+   botones se destruían DEBAJO del cursor (medido: un clic en "Anular ruta" no
+   llegaba nunca) y la lista saltaba al leerla. Mientras el ratón está encima de
+   una lista —o mientras se escribe el motivo de una intervención— esa lista no
+   se repinta. El mapa, los contadores y el banner sí siguen vivos.
+   ------------------------------------------------------------------ */
+const FREEZABLE = {
+  "queue-body": "panel-queue",
+  "patrol-body": "panel-patrol",
+  "air-body": "panel-air",
+  "tl-body": "panel-timeline",
+  "ap-body": "panel-approvals",
+};
+function bindFreeze() {
+  for (const [bodyId, panelId] of Object.entries(FREEZABLE)) {
+    const el = $(bodyId);
+    if (!el) continue;
+    el.addEventListener("mouseenter", () => { ui.frozen.add(bodyId); $(panelId)?.classList.add("frozen"); });
+    el.addEventListener("mouseleave", () => { ui.frozen.delete(bodyId); $(panelId)?.classList.remove("frozen"); render(getState()); });
+  }
+}
+/** ¿Se puede repintar esta lista ahora mismo? */
+function canPaint(bodyId) {
+  if (document.querySelector(".reason-modal")) return false; // se está escribiendo un motivo
+  return !ui.frozen.has(bodyId);
+}
+
 function render(s) {
   if (rendering) return;
   rendering = true;
@@ -566,12 +595,12 @@ function render(s) {
     renderTopbar(s);
     renderConn(s);
     renderMap();
-    renderTimeline(s);
-    renderQueue(s);
-    renderHouses(s);
-    renderAir(s);
+    if (canPaint("tl-body")) renderTimeline(s);
+    if (canPaint("queue-body")) renderQueue(s);
+    if (canPaint("patrol-body")) renderHouses(s);
+    if (canPaint("air-body")) renderAir(s);
     renderCalls(s);
-    renderApprovals(s);
+    if (canPaint("ap-body")) renderApprovals(s);
     renderStrip(s);
     refreshCard();
     ui.booted = true;

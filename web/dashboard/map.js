@@ -89,6 +89,15 @@ export function initMap() {
   // Escala: sin callejero, es la única forma de leer distancias en el proyector.
   L.control.scale({ imperial: false, position: "bottomleft", maxWidth: 160 }).addTo(map);
 
+  // Muy alejado, las etiquetas de sector se pisan entre ellas y no se lee ninguna:
+  // a partir de z12 se muestran; por debajo, el dato está en el panel aéreo.
+  const syncZoom = () => {
+    const el = map.getContainer();
+    el.classList.toggle("z-far", map.getZoom() < 12);
+  };
+  map.on("zoomend", syncZoom);
+  syncZoom();
+
   // Orden de pintado (panes): fuego debajo, personas arriba.
   map.createPane("p-history"); map.getPane("p-history").style.zIndex = 380;
   map.createPane("p-fire");    map.getPane("p-fire").style.zIndex = 400;
@@ -253,11 +262,13 @@ function renderSectors(sectors) {
       interactive: false,
       icon: L.divIcon({
         className: "",
-        html: `<div class="sector-label">${s.name || s.id} · <b>${inside}</b> dentro${unk ? ` (${unk} ?)` : ""}${
-          s.minutes_to_front != null ? ` · ${Math.round(s.minutes_to_front)}′ al frente` : ""
-        }</div>`,
-        iconSize: [260, 16],
-        iconAnchor: [130, 8],
+        // Etiqueta corta: el nombre largo del sector se tapaba con los de al lado.
+        // El nombre completo y el motivo están en el panel de prioridad aérea y en la ficha.
+        html: `<div class="sector-label">${(s.name || s.id).split("—")[0].trim()} · <b>${inside}</b> dentro${
+          unk ? ` (${unk}?)` : ""
+        }${s.minutes_to_front != null ? ` · ${Math.round(s.minutes_to_front)}′` : ""}</div>`,
+        iconSize: [150, 16],
+        iconAnchor: [75, 8],
       }),
     }).addTo(layers.sectors);
   }
@@ -265,6 +276,13 @@ function renderSectors(sectors) {
 
 /* ---------------------- Zonas seguras ---------------------- */
 const ZONE_COLOR = { open: "#2fd06a", filling: "#ffb02e", threatened: "#ff8a00", closed: "#ff3b30" };
+
+/** Nombre recortado para etiquetas del mapa (el completo está en la ficha). */
+function shortName(name, max) {
+  const s = String(name);
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd() + "…";
+}
 
 function renderZones(zones) {
   layers.zones.clearLayers();
@@ -282,7 +300,7 @@ function renderZones(zones) {
       interactive: false,
       icon: L.divIcon({
         className: "",
-        html: `<div class="zone-label">🏁 ${z.name || z.id}<br>${z.occupancy ?? 0}/${z.capacity ?? "?"}${
+        html: `<div class="zone-label">🏁 ${shortName(z.name || z.id, 22)}<br>${z.occupancy ?? 0}/${z.capacity ?? "?"}${
           occ != null ? ` (${occ}%)` : ""
         }${z.status && z.status !== "open" ? ` · ${z.status.toUpperCase()}` : ""}</div>`,
         iconSize: [220, 30],
@@ -465,11 +483,15 @@ function houseIcon(h) {
   const late = h.minutes_to_front != null && h.patrol_eta_min != null && h.minutes_to_front < h.patrol_eta_min;
   const size = 18;
   const cls = ["house-sq", late ? "late" : "", h.vulnerable ? "vuln" : ""].join(" ");
+  // Solo se etiquetan las casas que la patrulla tiene que mirar ya: las que el
+  // fuego alcanza antes que la patrulla o con alguien vulnerable dentro.
+  // (El motivo de vulnerabilidad NO se pinta en el mapa: es dato de salud, RGPD art. 9.)
+  const label = late || h.vulnerable ? `${h.id}${h.vulnerable ? " ♿" : ""}` : "";
   return L.divIcon({
     className: "",
     html: `<div style="position:relative;width:${size}px;height:${size}px">
              <div class="${cls}" style="position:absolute;inset:0"></div>
-             <span class="person-label">${h.id}${h.vulnerable ? " ♿" : ""}</span>
+             ${label ? `<span class="person-label">${label}</span>` : ""}
            </div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
