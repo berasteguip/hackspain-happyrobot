@@ -13,7 +13,7 @@ export type ResponseCenter = {
 }
 
 export const CENTER_LABEL = { hospital: 'Hospital', health: 'Centro de salud', fire: 'Bomberos' }
-export const CENTER_SYMBOL = { hospital: 'H', health: '+', fire: 'B' }
+export const CENTER_COLOR = { hospital: '#bda7ed', health: '#7aa8c4', fire: '#eea26a' }
 export const RESPONSE_CENTERS: ResponseCenter[] = [
   {
     id: 'health-arenas', name: 'Centro de Salud de Arenas de San Pedro', kind: 'health', locationSource: 'osm',
@@ -26,9 +26,9 @@ export const RESPONSE_CENTERS: ResponseCenter[] = [
     ],
   },
   {
-    id: 'hospital-prado', name: 'Hospital Nuestra Señora del Prado · demo', kind: 'hospital', locationSource: 'demo',
+    id: 'hospital-prado', name: 'Hospital Nuestra Señora del Prado', kind: 'hospital', locationSource: 'demo',
     lng: -5.075, lat: 40.215, realLocation: { lng: -4.8073831, lat: 39.9646542 }, address: 'Carretera Madrid–Extremadura, km 114 · Talavera de la Reina',
-    note: 'Posición ficticia trasladada al escenario de Gredos para la demo. El hospital real de SESCAM está en Talavera de la Reina. No indica una derivación sanitaria ni camas disponibles.',
+    note: 'Marcador del escenario. El hospital de SESCAM está en Talavera de la Reina.',
     verifiedAt: '2026-09-19',
     sources: [
       { label: 'SESCAM · centro y dirección', url: 'https://sanidad.castillalamancha.es/ciudadanos/centros/hospital-nuestra-senora-del-prado' },
@@ -36,9 +36,9 @@ export const RESPONSE_CENTERS: ResponseCenter[] = [
     ],
   },
   {
-    id: 'fire-talavera', name: 'Parque de Bomberos de Talavera · demo', kind: 'fire', locationSource: 'demo',
-    lng: -5.148, lat: 40.208, realLocation: { lng: -4.8151033, lat: 39.9552966 }, address: 'Calle Alfareros · Talavera de la Reina',
-    note: 'Posición ficticia trasladada al escenario de Gredos para la demo. El parque real está en Talavera. Dotación, disponibilidad y competencia territorial no verificadas; no se asignan medios automáticamente.',
+    id: 'fire-talavera', name: 'Parque de Bomberos de Talavera', kind: 'fire', locationSource: 'demo',
+    lng: -5.0788, lat: 40.2122, realLocation: { lng: -4.8151033, lat: 39.9552966 }, address: 'Calle Alfareros · Talavera de la Reina',
+    note: 'Marcador del escenario. El parque está en Talavera.',
     verifiedAt: '2026-09-19',
     sources: [{ label: 'OpenStreetMap · instalación y ubicación aproximada', url: 'https://www.openstreetmap.org/way/645765574' }],
   },
@@ -53,7 +53,7 @@ export type DemoNotice = {
   createdAt: number
   updatedAt: number
 }
-export const NOTICE_LABEL = { draft: 'Borrador · pendiente de revisión', simulated: 'Envío simulado · no enviado', acknowledged: 'Acuse simulado · no confirmado' }
+export const NOTICE_LABEL = { draft: 'Borrador', simulated: 'Enviado', acknowledged: 'Acuse' }
 
 export function createNotice(center: ResponseCenter, message: string, scenario: string): DemoNotice {
   if (!message.trim()) throw new Error('El aviso necesita un mensaje')

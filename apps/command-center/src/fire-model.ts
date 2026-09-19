@@ -157,24 +157,6 @@ function intersectsBox(ax: number, ay: number, bx: number, by: number, west: num
   return true
 }
 
-export function initialFireClearance(forecast: FireForecast, lng: number, lat: number) {
-  const px = (lng - forecast.origin[0]) * forecast.lngScale
-  const py = (lat - forecast.origin[1]) * 111320
-  const size = forecast.cellSizeM
-  let clearance = Infinity
-  for (const { x, y } of forecast.initialCells) {
-    clearance = Math.min(clearance, Math.max(x * size - px, px - (x + 1) * size, y * size - py, py - (y + 1) * size, 0))
-  }
-  return clearance
-}
-
-export function routeApproachesFire(forecast: FireForecast, coordinates: [number, number][]) {
-  if (coordinates.length < 2) return true
-  const start = initialFireClearance(forecast, ...coordinates[0])
-  const end = initialFireClearance(forecast, ...coordinates[coordinates.length - 1])
-  return !Number.isFinite(start) || end + 1 < start || routeBlocked(forecast, coordinates, 0, Math.max(0, start - forecast.cellSizeM))
-}
-
 export function routeBlocked(forecast: FireForecast, coordinates: [number, number][], horizon: number, marginM: number) {
   if (!forecast.cells.size || coordinates.length < 2) return true
   const points = coordinates.map(([lng, lat]) => [(lng - forecast.origin[0]) * forecast.lngScale, (lat - forecast.origin[1]) * 111320])
