@@ -112,3 +112,16 @@ Con un número español comprado (Telnyx, 0,80 USD) las llamadas y SMS salen de 
 - Fecha de despliegue de ES-Alert en España y cobertura.
 - Si Google Maps en HappyRobot permite zonas a evitar; si no, el cálculo de rutas lo hace nuestro backend y HappyRobot solo lo comunica.
 - Créditos disponibles en la cuenta del hackathon y base URL de la API EU (preguntar en el stand).
+
+## 14. Backlog (decidido, no en el alcance base de 36 h)
+
+Todo esto se construye encima del mapa de personas y del fuego. Orden = prioridad.
+
+| # | Feature | Qué es | Por qué gana |
+|---|---|---|---|
+| B1 | **Simulador de evacuación** | Antes de dar la primera orden, el backend simula la evacuación completa: 300 agentes sobre la red de carreteras real (OSM), capacidad por tramo (un camino rural traga 6 coches/min, no 60), fuego avanzando según el viento. Prueba cientos de variantes (quién sale primero, por qué salida, escalonado o no, contraflujo sí o no) y elige la que menos gente pierde. Muestra el número: "plan ingenuo: 31 interceptados en la cola de la N-631; plan elegido: 2". Al girar el viento, resimula en segundos delante del jurado. | Adaptación y prioridad convertidas en algo que se ve moverse y en una cifra que nadie más tendrá. Es Paradise 2018 (gente muerta en el coche en la cola de la única salida) evitado. |
+| B2 | **Hora de caducidad de cada decisión** | Cada decisión pendiente tiene un punto de no retorno calculado por el simulador: abrir la N-631 en contraflujo vale hasta las 17:52 (después la cola ya está formada); evacuar sector 3 vale hasta las 18:05 (después es refugio, no evacuación). Se muestra como cuenta atrás al lado del botón Aprobar. | "Cuándo tirar el plan" con reloj. El humano decide, pero sabe cuánto tiempo tiene. Criterio Control convertido en tensión visible. |
+| B3 | **Replay del incendio real (Sierra de la Culebra 2022)** | Cargar la línea de tiempo real (perímetros por horas de Copernicus EMS, lugar y hora de los cuatro fallecidos) y ver qué habría ordenado el sistema a las 17:10 cuando giró el viento. "El sistema habría sacado a Losacio 40 minutos antes." | Credibilidad que ninguna demo sintética da. Diapositiva de cierre del pitch. Bonus de aprendizaje en su versión seria. **Verificar datos antes del pitch.** |
+| B4 | **El simulador aprende su propio error** | Tras cada incidente (o cada ensayo en la demo) compara predicción con realidad y recalibra parámetros: tiempo de salida de casa tras la orden (predijo 8 min, fueron 14), velocidad en camino rural, tasa de gente que no se mueve. En la segunda pasada de la demo los números cambian y se explica por qué. | Bonus de aprendizaje aplicado al modelo, no a los guiones. Es lo que hace que un VC se lo crea como producto. |
+
+Dependencias: B2, B3 y B4 necesitan B1. B1 es un fin de semana de JS (grafo OSM + polígono que crece); B2 y B4 son lecturas distintas de la misma simulación; B3 depende de encontrar los datos.
