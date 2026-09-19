@@ -15,7 +15,11 @@ vía que el fuego puede cruzar, y una cola de 10 se gestiona con una patrulla; u
 no es una vida salvada, y este simulador no debe venderlo como tal.
 
 Consecuencia de diseño: el valor de la búsqueda de variantes NO está en el escalonado, está en la
-elección de salida y en el orden de aviso. Lo que hace la búsqueda es descartar los planes malos.
+**elección de salida**. El último test de este fichero lo demuestra en el caso extremo: cuando el
+refugio más cercano está en la trayectoria del frente, el plan obvio pierde a los 30 y el plan que
+manda a la gente al refugio lejano salva a los 30. La búsqueda discrimina; lo que pasa en Sierra de
+la Culebra (donde el plan naive ya es el óptimo) es una propiedad de esa geografía, no un empate
+del modelo.
 """
 
 from __future__ import annotations
@@ -137,6 +141,67 @@ def test_escalonar_si_reduce_el_pico_de_cola():
     # y no se paga con tiempo: el tramo sirve 1 coche/min en los dos casos
     assert abs(wave.clearance_max_min - base.clearance_max_min) < 1e-6
     assert base.safe == wave.safe == 30
+
+
+def _two_exit_world(n_vehicles: int = 30, cap_vpm: float = 2.0) -> SimWorld:
+    """Pueblo con dos refugios: el cercano (2 km al norte) está en la trayectoria del frente.
+
+    El frente baja del norte: la carretera del refugio cercano se quema en el minuto 16, la del
+    lejano (5 km al este) no se quema en todo el horizonte. Es el caso en el que la decisión de
+    plan vale vidas, y sirve para comprobar que la búsqueda tiene poder de discriminación.
+    """
+    frame = LocalFrame(41.7, -6.0)
+    nodes = [(41.700, -6.000), (41.718, -6.000), (41.700, -5.940)]
+    edges = [
+        {"from": 0, "to": 1, "len_m": 2000.0, "speed_kmh": 36.0, "cap_vpm": cap_vpm, "lanes": 1,
+         "name": "salida norte", "ref": "N-1", "highway": "unclassified"},
+        {"from": 0, "to": 2, "len_m": 5000.0, "speed_kmh": 36.0, "cap_vpm": cap_vpm, "lanes": 1,
+         "name": "salida este", "ref": "E-1", "highway": "unclassified"},
+    ]
+    g = RoadGraph.from_edge_list(frame, nodes, edges, source="test")
+    fire = FireModel(
+        frame=frame, origin_lat=41.7145, origin_lon=-6.000, head_bearing_deg=180.0,
+        spread_rate_mh=1500.0, initial_radius_m=200.0,
+    )
+    x, y = frame.to_xy(41.700, -6.000)
+    house_arrival = float(front_arrival_times(fire, np.array([x]), np.array([y]), 600.0, 0.5)[0])
+    ex, ey = g.edge_midpoints()
+    edge_burn = front_arrival_times(fire, ex, ey, 600.0, 0.5)
+    pop = Population(
+        person_id=[f"v-{i}" for i in range(n_vehicles)],
+        village_idx=np.zeros(n_vehicles, dtype=np.int32),
+        sector_id=["s-1"] * n_vehicles,
+        node=np.zeros(n_vehicles, dtype=np.int32),
+        x=np.full(n_vehicles, float(x)),
+        y=np.full(n_vehicles, float(y)),
+        mobility=["car"] * n_vehicles,
+        consumes_capacity=np.ones(n_vehicles, dtype=bool),
+        speed_kmh=np.zeros(n_vehicles),
+        ready_delay_min=np.zeros(n_vehicles),
+        never_leaves=np.zeros(n_vehicles, dtype=bool),
+        front_arrival_min=np.full(n_vehicles, house_arrival),
+        weight=np.ones(n_vehicles, dtype=np.int32),
+    )
+    routes = build_route_tables(g, [1, 2], edge_burn, np.arange(0.0, 125.0, 5.0))
+    return SimWorld(
+        graph=g, fire=fire, pop=pop, exit_ids=["cerca", "lejos"], exit_nodes=[1, 2],
+        exit_capacity=[999, 999], routes=routes, village_ids=["T"], village_names=["T"],
+        edge_burn_min=edge_burn,
+        config=SimConfig(dt_min=0.5, horizon_min=120.0, reaction_jitter_min=0.0),
+    )
+
+
+def test_elegir_refugio_si_cambia_el_resultado():
+    """El refugio más cercano puede ser el peor: 30 alcanzados contra 0.
+
+    Es la prueba de que la búsqueda de variantes no es un adorno: la palanca que vale vidas en
+    este modelo es a qué refugio se manda a cada pueblo, no cuándo se avisa.
+    """
+    near = run_variant(_two_exit_world(), Plan(plan_id=0, exit_per_village=(0,), release_order=(0,), order_key="random"), seed=1)
+    far = run_variant(_two_exit_world(), Plan(plan_id=1, exit_per_village=(1,), release_order=(0,), order_key="random"), seed=1)
+    assert near.intercepted == 30, near.intercepted
+    assert far.intercepted == 0 and far.safe == 30, (far.intercepted, far.safe)
+    assert far.exit_load == {"cerca": 0, "lejos": 30}
 
 
 def test_escalonar_demasiado_pierde_mas_gente():

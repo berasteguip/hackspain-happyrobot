@@ -284,6 +284,19 @@ button.sm { font-size: var(--fs-xs); padding: 5px 8px; }
 .panel > header .spacer { flex: 1; }
 .panel > .body { overflow-y: auto; overflow-x: hidden; padding: 6px; flex: 1 1 auto; min-height: 0; }
 
+/* Lista congelada: el ratón está encima, así que no se repinta mientras se lee
+   o se pulsa un botón. Se avisa en la cabecera para que nadie crea que se ha
+   colgado. El escenario sigue avanzando: al salir, la lista se pone al día. */
+.panel.frozen > header { background: #2a2418; }
+.panel.frozen > header::after {
+  content: "⏸ en pausa mientras lo lees";
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--amber);
+  white-space: nowrap;
+}
+
 .empty { color: var(--muted-2); font-size: var(--fs-sm); padding: 14px 10px; text-align: center; }
 
 /* Scrollbars visibles pero discretas */

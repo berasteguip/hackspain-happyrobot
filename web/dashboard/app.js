@@ -29,6 +29,7 @@ const ui = {
   expandedQueue: new Set(),
   lastWindDir: null,
   seenDecisions: new Set(),   // para el destello .is-new solo la primera vez
+  frozen: new Set(),          // listas que el operador tiene bajo el ratón: no se repintan
   booted: false,
 };
 
@@ -697,13 +698,14 @@ function bindButtons() {
 function boot() {
   initMap();
   bindButtons();
+  bindFreeze();
   subscribe(render);
   render(getState());
   // Reloj/cuenta atrás: 1 s. Lo único que se repinta solo, sin esperar a la API.
   setInterval(() => {
     const s = getState();
     renderConn(s);
-    renderApprovals(s);
+    if (canPaint("ap-body")) renderApprovals(s);
   }, 1000);
   start();
   console.info(`[dashboard] API ${CONFIG.apiBase} · operador ${CONFIG.operator}${CONFIG.mock ? " · MOCK local" : ""}`);

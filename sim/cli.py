@@ -28,7 +28,7 @@ from .search import search
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="sim.cli", description="Simulador de evacuación por incendio")
-    p.add_argument("--scenario", required=True, help="JSON del escenario (contrato docs/contrato-de-datos.md)")
+    p.add_argument("--scenario", required=True, help="JSON del escenario (contrato docs/06-producto/03-contrato-de-datos.md)")
     p.add_argument("--variants", type=int, default=200, help="planes a simular (el naive es siempre el primero)")
     p.add_argument("--out", default="out/", help="directorio de salida")
     p.add_argument("--seed", type=int, default=42)
@@ -111,7 +111,16 @@ def main(argv=None) -> int:
         f"ELEGIDO alcanzados {chosen.intercepted:3d}  a salvo {chosen.safe:3d}  sin salir {chosen.not_out:3d}  "
         f"p95 {chosen.clearance_p95_min:.0f} min  cola max {chosen.max_queue}"
     )
-    print(f"DIFERENCIA: {naive.intercepted - chosen.intercepted} personas | plan {chosen.plan}")
+    worst_r = results[-1]
+    print(
+        f"PEOR    alcanzados {worst_r.intercepted:3d}  a salvo {worst_r.safe:3d}  sin salir {worst_r.not_out:3d}  "
+        f"p95 {worst_r.clearance_p95_min:.0f} min  cola max {worst_r.max_queue}"
+    )
+    print(
+        f"DIFERENCIA: {naive.intercepted - chosen.intercepted} personas frente al naive, "
+        f"{worst_r.intercepted - chosen.intercepted} frente al peor plan del abanico"
+    )
+    print(f"PLAN ELEGIDO: {chosen.plan}")
 
     # --- re-simulación de los dos planes con posiciones, para animar y dibujar ---
     vis_world = with_config(world, record_positions=True, record_every_min=1.0)
@@ -120,6 +129,8 @@ def main(argv=None) -> int:
     _init_worker(vis_world)
     chosen_vis = _worker((plans[chosen.plan_id], args.seed))
     naive_vis = _worker((plans[0], args.seed))
+    worst = results[-1]
+    worst_vis = _worker((plans[worst.plan_id], args.seed))
 
     payload = {
         "meta": {
@@ -148,9 +159,10 @@ def main(argv=None) -> int:
             "naive": _summary(naive),
             "chosen": _summary(chosen),
             "people_saved_vs_naive": naive.intercepted - chosen.intercepted,
+            "people_saved_vs_worst": worst.intercepted - chosen.intercepted,
         },
         "ranking": [_summary(r) for r in results[: args.top]],
-        "worst": _summary(results[-1]),
+        "worst": _summary(worst),
     }
     (out / "sim-result.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -162,6 +174,7 @@ def main(argv=None) -> int:
         ],
         "chosen": {"plan": chosen.plan, "frames": chosen_vis.timeline},
         "naive": {"plan": naive.plan, "frames": naive_vis.timeline},
+        "worst": {"plan": worst.plan, "frames": worst_vis.timeline},
     }
     (out / "sim-replay.json").write_text(json.dumps(replay, ensure_ascii=False), encoding="utf-8")
     print(f"escrito {out / 'sim-result.json'} y {out / 'sim-replay.json'}")
@@ -170,8 +183,21 @@ def main(argv=None) -> int:
         try:
             from .viz import comparison_png, side_by_side_gif
 
-            comparison_png(out / "comparison.png", naive_vis, chosen_vis)
-            side_by_side_gif(out / "evacuation.gif", world, naive_vis, chosen_vis, n_frames=args.gif_frames)
+            comparison_png(
+                out / "comparison.png",
+                [("Plan naive", naive_vis), ("Plan elegido", chosen_vis), ("Peor del abanico", worst_vis)],
+            )
+            # el GIF anima el par que DE VERDAD se diferencia: el elegido contra el peor plan
+            # plausible. Animar naive vs elegido cuando salen empatados es enseñar dos veces lo mismo.
+            side_by_side_gif(
+                out / "evacuation.gif",
+                world,
+                worst_vis,
+                chosen_vis,
+                n_frames=args.gif_frames,
+                left_label="PEOR PLAN",
+                right_label="PLAN ELEGIDO",
+            )
             print(f"escrito {out / 'comparison.png'} y {out / 'evacuation.gif'}")
         except Exception as exc:  # las figuras son para el pitch, no bloquean el resultado
             print(f"AVISO: figuras no generadas ({type(exc).__name__}: {exc})")

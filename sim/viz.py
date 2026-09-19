@@ -25,10 +25,16 @@ COL_MOVE = "#1f5fd3"
 COL_HIT = "#000000"
 
 
-def comparison_png(path: Path, naive_res, chosen_res) -> None:
-    """Curvas de a salvo / alcanzados / en movimiento de los dos planes."""
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4), sharey=True)
-    for ax, res, title in ((axes[0], naive_res, "Plan naive"), (axes[1], chosen_res, "Plan elegido")):
+def comparison_png(path: Path, panels: list[tuple[str, object]]) -> None:
+    """Curvas de a salvo / alcanzados / en movimiento, un panel por plan.
+
+    Se dibujan tres: naive, elegido y el PEOR del abanico. El tercero no es relleno: en Sierra de
+    la Culebra el naive ya es óptimo, así que lo que la búsqueda aporta solo se ve comparando con
+    el plan malo que un humano también podría haber dado.
+    """
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.5 * len(panels), 4), sharey=True)
+    axes = np.atleast_1d(axes)
+    for ax, (title, res) in zip(axes, panels):
         t = [f["t_min"] for f in res.timeline]
         ax.plot(t, [f["safe"] for f in res.timeline], color=COL_SAFE, label="a salvo")
         ax.plot(t, [f["moving"] for f in res.timeline], color=COL_MOVE, label="en carretera")
@@ -51,9 +57,18 @@ def _road_segments(g):
     return seg, main
 
 
-def side_by_side_gif(path: Path, world, naive_res, chosen_res, n_frames: int = 40) -> None:
+def side_by_side_gif(
+    path: Path,
+    world,
+    left_res,
+    right_res,
+    n_frames: int = 40,
+    left_label: str = "NAIVE",
+    right_label: str = "ELEGIDO",
+) -> None:
     g = world.graph
     seg, main = _road_segments(g)
+    naive_res, chosen_res = left_res, right_res
     frames_n = min(len(naive_res.timeline), len(chosen_res.timeline))
     idx = np.unique(np.linspace(0, frames_n - 1, min(n_frames, frames_n)).astype(int))
 
@@ -69,7 +84,7 @@ def side_by_side_gif(path: Path, world, naive_res, chosen_res, n_frames: int = 4
     for k, i in enumerate(idx):
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
         t = naive_res.timeline[i]["t_min"]
-        for ax, res, title in ((axes[0], naive_res, "NAIVE"), (axes[1], chosen_res, "ELEGIDO")):
+        for ax, res, title in ((axes[0], naive_res, left_label), (axes[1], chosen_res, right_label)):
             ax.add_collection(LineCollection(seg[~main], colors=COL_ROAD, linewidths=0.4))
             ax.add_collection(LineCollection(seg[main], colors=COL_MAIN, linewidths=1.1))
             for poly in world.fire.polygons_xy(t + world.config.fire_t0_min, n=48):
@@ -105,3 +120,9 @@ def side_by_side_gif(path: Path, world, naive_res, chosen_res, n_frames: int = 4
     imgs = [Image.open(p).convert("P", palette=Image.ADAPTIVE) for p in images]
     if imgs:
         imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=220, loop=0)
+        # los PNG sueltos eran andamio del GIF (~4 MB por ejecución): fuera una vez montado
+        for img in imgs:
+            img.close()
+        for fp in images:
+            fp.unlink(missing_ok=True)
+        tmp.rmdir()
