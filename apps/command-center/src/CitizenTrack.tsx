@@ -86,13 +86,15 @@ export function CitizenTrack({ presetId }: Props) {
           <>
             <label>
               Nombre
-              <input value={name} onChange={(event) => setName(event.target.value)} />
+              <input data-demo="citizen-name" value={name} onChange={(event) => setName(event.target.value)} />
             </label>
             <fieldset>
               <legend>Cómo aparecer en el mapa</legend>
               <label className="row">
                 <input
                   type="radio"
+                  data-demo="citizen-mode"
+                  data-demo-id="demo"
                   checked={mode === 'demo'}
                   onChange={() => setMode('demo')}
                 />
@@ -101,13 +103,15 @@ export function CitizenTrack({ presetId }: Props) {
               <label className="row">
                 <input
                   type="radio"
+                  data-demo="citizen-mode"
+                  data-demo-id="gps"
                   checked={mode === 'gps'}
                   onChange={() => setMode('gps')}
                 />
                 Usar mi GPS real
               </label>
             </fieldset>
-            <button type="button" onClick={() => { setStatus(mode === 'gps' ? 'Solicitando permiso de ubicación…' : 'Compartiendo ubicación…'); setConsented(true) }}>
+            <button type="button" data-demo="citizen-consent" onClick={() => { setStatus(mode === 'gps' ? 'Solicitando permiso de ubicación…' : 'Compartiendo ubicación…'); setConsented(true) }}>
               Consiento el seguimiento
             </button>
             <p className="fine">
@@ -124,7 +128,7 @@ export function CitizenTrack({ presetId }: Props) {
                 <span>{Math.round(nearest.distanceM / 10) * 10} m</span>
               </div>
             )}
-            <button type="button" onClick={() => { setConsented(false); setStatus('Envío detenido') }}>Dejar de compartir</button>
+            <button type="button" data-demo="citizen-stop" onClick={() => { setConsented(false); setStatus('Envío detenido') }}>Dejar de compartir</button>
             <p className="fine">Los lugares existen, pero su uso como refugios no está validado. Al detener el envío, la última posición permanece en el visor con su hora de actualización; no se enviarán posiciones nuevas.</p>
           </>
         )}
