@@ -15,7 +15,7 @@ DASH_PORT   ?= 8080
 GPS_PORT    ?= 8081
 
 .DEFAULT_GOAL := help
-.PHONY: help check env install api engine dashboard gps data sim test demo stop clean
+.PHONY: help check env install api engine dashboard gps data twin-seed sim test demo stop clean
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -61,6 +61,10 @@ gps: ## Sirve la pagina de ubicacion (puerto 8081)
 data: ## Regenera el dataset sintetico y lo valida
 	cd data && .venv/bin/python generate.py --scenario $(SCENARIO) --seed $(SEED) --houses $(HOUSES) --out scenarios/$(SCENARIO).json
 	cd data && .venv/bin/python validate.py scenarios/$(SCENARIO).json
+
+twin-seed: ## Regenera el SQL del padron de Twin (data/twin/seed.sql) desde el dataset
+	cd data && .venv/bin/python twin_seed.py --scenario scenarios/$(SCENARIO).json --out twin/seed.sql
+	@echo "Cargalo en Twin con data/twin/schema.sql primero. Ver docs/06-producto/12-tablas-basicas-twin.md"
 
 sim: ## Corre el simulador de evacuacion y compara planes
 	cd sim && .venv/bin/python -m sim.cli --scenario ../data/scenarios/$(SCENARIO).json --variants 200 --out out/

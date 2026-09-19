@@ -1,0 +1,220 @@
+# Las tablas básicas de Twin: el padrón sobre el que se apoya el log
+
+> **Creado:** 2026-09-19 (tarde) · **Estado:** creadas y cargadas en Twin, verificado
+> **En una frase:** el log de llamadas guarda un `person_id`, y hasta ahora ese id no apuntaba a nada.
+>
+> ⚠️ Los docs 07 a 11 de esta carpeta viven hoy en otra rama sin fusionar. Los enlaces a
+> `07-twin-log-de-llamadas.md` y `11-plan-log-compartido.md` quedan rotos hasta que esa rama entre;
+> se numera este como 12 para no chocar con ellos.
+
+## 1. El agujero que esto tapa
+
+[`11-plan-log-compartido.md`](11-plan-log-compartido.md) y [`07-twin-log-de-llamadas.md`](07-twin-log-de-llamadas.md)
+diseñan `call_log` con `created_at`, `persona`, `telefono` y `zona`. Tres de esas cuatro columnas son
+texto libre que no se puede resolver contra nada:
+
+- `persona` es un nombre. Hay dos «Josefa Mateos» y tres «Adoración» en 120 vecinos.
+- `zona` mezcla dos cosas distintas: «Sesnández» (un núcleo), «Ferreruela» (un municipio **y** un
+  núcleo) y «la pista de La Cernada» (un paraje sin entidad administrativa). Filtrar por ahí es
+  filtrar por `like`.
+- `telefono` sí es una llave, pero sin nada al otro lado.
+
+Con eso, la pregunta que el agente necesita responder en mitad de una llamada —«¿qué se sabe de la
+zona **de esta persona**?»— no tiene consulta. Este documento es la otra mitad: las tablas contra
+las que ese `person_id` y esa `zona` significan algo.
+
+## 2. La jerarquía, que es la real y no una inventada
+
+```
+municipality  Losacio · Ferreruela de Tábara · Tábara     (ayuntamiento; el alcalde dirige el PEMU)
+   └─ locality   Losacio · Ferreruela · Sesnández · Tábara  (núcleo: lo que el vecino dice por teléfono)
+        └─ house    h-001 … h-120                            (lo que la patrulla visita)
+             └─ person  p-001 … p-120                        (a quien se llama)
+```
+
+Los dos niveles de arriba no son burocracia: **Sesnández de Tábara no es un municipio, es pedanía de
+Ferreruela de Tábara**. Sin `locality`, «estoy en Sesnández» no se resuelve; sin `municipality`, no
+se puede decir a qué alcalde se escala ni contar cuánta gente hay en su término. Son dos preguntas
+distintas y hacían falta dos tablas.
+
+Y cruzando la jerarquía, una sola cosa operativa: `sector`, el polígono del incidente. Un sector
+**no respeta límites municipales** —se dibuja sobre el fuego, no sobre el mapa administrativo— y por
+eso es una dimensión aparte y no un nivel más del árbol. Confundir «zona administrativa» con «zona
+operativa» es exactamente lo que hoy hace ambigua la columna `zona` del log.
+
+## 3. La regla que decide qué vive aquí
+
+> **¿El dato cambia durante el incendio?**
+> **No** → Twin. Es padrón: quién vive dónde, y dónde está ese dónde.
+> **Sí** → `api/`. Es estado, y el contrato dice que en runtime solo hay una fuente de verdad.
+
+Por eso en estas tablas **no hay** `status`, `call_attempts`, `priority_score`, `minutes_to_front`,
+`assigned_route`, `assigned_exit_id`, `occupancy` ni `answered`. No es que se hayan olvidado: si
+estuvieran, habría dos sitios afirmando a la vez en qué estado está `p-001`, y en una demo en vivo
+esa es la clase de bug que no se depura delante de un jurado. Decisión completa en
+[`../07-decisiones/005-padron-en-twin-estado-en-api.md`](../07-decisiones/005-padron-en-twin-estado-en-api.md).
+
+## 4. Las tablas
+
+DDL completo en [`../../data/twin/schema.sql`](../../data/twin/schema.sql). Aquí va el porqué de
+cada una; los nombres van en inglés (AGENTS.md §4) y alineados con el contrato: `house.id` es el
+`House.id` del contrato (`h-001`) y `person.id` es el `Person.id` (`p-001`), no ids nuevos.
+
+| Tabla | Filas hoy | Para qué existe |
+| --- | --- | --- |
+| `municipality` | 3 | A quién se escala y sobre qué término se cuenta. Lleva `province`, `comarca` y población con año. |
+| `locality` | 4 | El núcleo. `kind` distingue `capital` de `pedania`, que es la diferencia que hace falta para no tratar Sesnández como municipio. |
+| `sector` | 6 | El polígono operativo del incidente, con su GeoJSON. Sin contadores: esos cambian cada minuto. |
+| `house` | 120 | El domicilio. `street` + `number` separados, y `address` tal y como se dice en voz alta. |
+| `person` | 120 | A quien se llama. `phone` con índice **único**: es la llave de resolución de una llamada entrante. |
+| `support_need` | 27 | Quién no sale solo de casa. Tabla aparte a propósito, §4.3. |
+
+### 4.1 `house`: una casa sin persona no es un hueco en los datos
+
+Cinco de las 120 casas no tienen ninguna persona asociada. No falta información: **son exactamente
+las casas a las que hay que mandar a la patrulla**, y por eso `house` existe como tabla propia y no
+como columnas dentro de `person`. La lista viva de la sección 4.1 del escenario sale de aquí.
+
+`number` es `text` y admite `NULL`: en los 18 diseminados no hay número: no existe, que no es lo
+mismo que el número 0 (§1 del contrato de datos).
+
+### 4.2 `person.source`: el padrón está mal a propósito
+
+`source` vale `padron` o `call`. Hoy hay 108 y 12. Los doce de `call` son gente que **el censo no
+tiene**: el nieto en agosto, la cuidadora, el visitante. El escenario ya los genera
+(`_sim.uncensored`) y hasta ahora se perdían en la carga.
+
+Esta columna es la que deja **enseñar** el momento más vistoso de la demo —30 llamadas convierten
+120 números en muchos más— en vez de que ese crecimiento parezca un error de datos. Y es honesta
+sobre lo que un padrón real es: una foto vieja de un pueblo de 90 habitantes.
+
+`house` lleva la misma columna, para las casas que aparecen por `neighbors_mentioned`.
+
+### 4.3 `support_need`: tabla aparte, y el motivo no es de diseño
+
+El contrato ya avisa (§2.1) de que `mobility` en `reduced`/`immobile` es **probablemente dato de
+salud**: categoría especial del art. 9 del RGPD, no dato ordinario. Si eso es una columna de
+`person`, viaja en cada `SELECT *`, en cada log de depuración y en cada consulta que el agente de voz
+haga en caliente.
+
+Separado en su propia tabla: se puede dar acceso a `person` sin dar acceso a esto, y **la vista que
+lee el agente durante la llamada no lo incluye**. Ausencia de fila = la persona se vale por sí misma.
+
+De paso deshace una mezcla que traía el contrato: el enum `mobility` junta dos cosas que no son la
+misma, **tener coche** (dato ordinario) y **poder andar** (dato de salud). Aquí van separadas —
+`person.has_vehicle` y `support_need.mobility`— y la vista reconstruye el enum original. Se comprobó
+que la reconstrucción es exacta: `car` 77 · `walking` 21 · `reduced` 17 · `immobile` 5, los mismos
+números que el dataset. No se pierde nada al separarlo.
+
+## 5. Dos vistas, y la frontera entre ellas es la de privacidad
+
+- **`v_person_location`** — sin dato de salud. Es la que lee el agente de voz en mitad de una
+  llamada: `where phone = ?` contra un índice único, sin joins escritos a mano, y nada que no pueda
+  salir por un altavoz. Esto responde al presupuesto de «< 1 s» del plan 3.
+- **`v_person_support`** — con el dato de salud y el enum `mobility` reconstruido. Para `api/` y para
+  el puesto de mando, no para el agente.
+
+```sql
+-- lo que hace el agente cuando entra una llamada, una vez:
+select person_id, name, address, locality, municipality, sector_id
+from v_person_location where phone = '+34600994010';
+-- p-001 · Mercedes Cid · Calle de la Iglesia 2, Losacio · Losacio · Losacio · s-2
+```
+
+Con eso, la consulta al log deja de ser `like '%Sesnández%'` y pasa a ser
+`where locality_id = 'n-sesnandez-de-tabara'`.
+
+## 6. Cómo engancha `call_log`
+
+`call_log` **no se crea aquí**: es del plan 3 ([`11-plan-log-compartido.md`](11-plan-log-compartido.md)),
+y sigue siendo suyo. Lo único que cambia es que tres columnas dejan de ser texto suelto:
+
+```sql
+persona   text  ->  person_id    text references person(id)
+telefono  text  ->  phone        text                          -- se queda: resuelve a person por el índice único
+zona      text  ->  locality_id  text references locality(id)   -- cuando el sitio tiene entidad
+                +   place_text   text                           -- cuando no la tiene: «la pista de La Cernada»
+```
+
+La pareja `locality_id` / `place_text` es el punto: **una llave cuando el sitio existe en el padrón,
+texto libre cuando no**, y nunca las dos cosas mezcladas en una sola columna ambigua. Un paraje sin
+entidad administrativa es un caso real y frecuente en esta comarca; lo que no vale es no saber cuál
+de los dos tienes.
+
+> Los identificadores de `call_log` están hoy en castellano y los de estas tablas en inglés.
+> AGENTS.md §4 pide inglés, y la tabla no existe todavía en Twin, así que el cambio es gratis. Queda
+> señalado para que lo decida quien ejecute el plan 3, no cambiado por la espalda.
+
+## 7. Lo que esto destapó del dataset
+
+Cuatro cosas que estaban en `data/scenarios/sierra-culebra.json` y que no se veían hasta cruzarlas:
+
+1. **97 teléfonos fijos fantasma.** Las 120 casas tienen `phone`, pero solo 23 tienen
+   `_sim.has_landline`. Un número que no existe es peor que ninguno: la patrulla lo marcaría. La
+   carga pone `landline = NULL` en las 97, y queda como fallo a corregir en `data/generate.py`.
+2. **`village` mezclaba dos niveles.** Losacio y Ferreruela son municipios; Sesnández es pedanía. La
+   traducción vive en un único bloque de `data/twin_seed.py`, con la fuente citada.
+3. **La vulnerabilidad estaba en el edificio.** `House.vulnerable` describe a quien vive dentro, no a
+   la casa. Al pasarla a `support_need` hay **un caso ambiguo** (una casa marcada como vulnerable con
+   dos residentes y ninguno con movilidad afectada): se le asigna al primero y el generador lo
+   cuenta y lo dice, en vez de repartirlo en silencio.
+4. **`household_size` no es consistente dentro de una casa.** En h-016 conviven un `1` y un `3`.
+   Resulta ser correcto —el segundo residente es `uncensored`, no está en el censo—, pero solo se
+   entiende con la columna `source` del §4.2.
+
+## 8. Cómo se recarga
+
+```bash
+python data/twin_seed.py          # data/scenarios/*.json -> data/twin/seed.sql (determinista)
+```
+
+Y luego `data/twin/schema.sql` + `data/twin/seed.sql` contra Twin (nodo `Query Twin with SQL`, o
+`execute_sql` del MCP). El `seed.sql` empieza borrando las seis tablas en orden inverso de
+dependencia, así que recargarlo dos veces no duplica nada.
+
+`sector` es la única excepción consciente a la regla del §3: los sectores se dibujan **para** un
+incidente, no existen antes. Llevan columna `incident` y se reescriben enteros al cargar escenario.
+
+## 9. Lo que deliberadamente NO está aquí
+
+| Fuera | Por qué |
+| --- | --- |
+| `safe_zones` | Su `status` (`open → filling → threatened → closed`) es lo más volátil del escenario. Es estado, vive en `api/`. |
+| `road_closures`, `convoys`, `patrols` | Lo mismo: nacen y mueren dentro del incidente. |
+| Una tabla `street` | Ocho nombres de vía en tres pueblos. Un join más en la ruta caliente para normalizar 24 filas no se paga. |
+| `ine_code` relleno | La columna está; los valores van a `NULL`. No hay fuente verificada en el repo y AGENTS.md §3.2 prohíbe inventarlos. |
+
+## 10. Estado real, comprobado
+
+Creado y cargado en Twin (org `hackspainteam11`, base `twin`) el 2026-09-19:
+`municipality` 3 · `locality` 4 · `sector` 6 · `house` 120 · `person` 120 · `support_need` 27.
+Verificado además: 5 casas sin residente conocido (las cinco, segunda residencia), 23 casas con fijo,
+12 personas fuera del padrón, y la reconstrucción exacta del enum `mobility` del contrato.
+
+```sql
+-- una consulta, y sale el número que le importa a cada alcalde
+select m.name as municipio, l.name as nucleo, l.kind,
+       count(distinct h.id) as casas,
+       count(distinct p.id) as personas,
+       count(distinct s.person_id) as no_salen_solas
+from locality l join municipality m on m.id = l.municipality_id
+left join house h on h.locality_id = l.id
+left join person p on p.house_id = h.id
+left join support_need s on s.person_id = p.id
+group by 1,2,3 order by 1,2;
+--  Ferreruela de Tábara | Ferreruela de Tábara | capital | 77 | 75 | 15
+--  Ferreruela de Tábara | Sesnández de Tábara  | pedania | 26 | 26 |  8
+--  Losacio              | Losacio              | capital | 17 | 19 |  4
+--  Tábara               | Tábara               | capital |  0 |  0 |  0
+```
+
+Tábara sale con cero casas y está bien: es el destino, no un origen. Tiene fila porque es el sitio
+que más se nombra por teléfono («¿cabe alguien ya en Tábara?») y sin `locality_id` esa pregunta no
+se podría colgar de nada en el log.
+
+## Fuentes
+
+- Jerarquía municipio/pedanía, poblaciones INE y coordenadas: [`../03-dominio-crisis/05-geografia-sierra-culebra.md`](../03-dominio-crisis/05-geografia-sierra-culebra.md) §1 y §4.
+- Entidades, convenciones de id, nulos y el aviso de RGPD sobre `mobility`: [`03-contrato-de-datos.md`](03-contrato-de-datos.md) §1 y §2.1.
+- Diseño de `call_log` y presupuesto de latencia del read: [`07-twin-log-de-llamadas.md`](07-twin-log-de-llamadas.md) y [`11-plan-log-compartido.md`](11-plan-log-compartido.md).
+- Acceso a Twin como `twin_admin`, verificado vía MCP el 2026-09-19; tablas creadas y cargadas ese mismo día por esta sesión.
