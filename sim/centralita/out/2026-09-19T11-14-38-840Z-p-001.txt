@@ -1,0 +1,20 @@
+[2026-09-19T11:15:05.744Z] VIGÍA: Le escribo de Protección Civil de Ávila. Soy un sistema automático de inteligencia artificial, y esto no es una prueba: hay un incendio forestal acercándose a su pueblo y tiene que salir de casa. ¿Está en casa ahora mismo?
+
+[2026-09-19T11:15:08.392Z] VECINO: Sí, estoy en casa, en la Calle Real. Estamos mi mujer y yo.
+
+[2026-09-19T11:15:11.323Z] VIGÍA: Esta conversación queda registrada, es el registro de la emergencia. ¿Ve humo o llamas desde casa? ¿El humo le molesta para respirar o ver?
+
+[2026-09-19T11:15:13.754Z] VECINO: Se ve algo de humo por detrás del monte, pero aquí respiramos y vemos bien.
+
+[2026-09-19T11:15:16.218Z] VIGÍA: De acuerdo. ¿Hay con ustedes menores, personas mayores, movilidad reducida o problemas respiratorios?
+
+[2026-09-19T11:15:18.665Z] VECINO: No, estamos mi mujer y yo, los dos nos movemos bien. Tenemos dos perros.
+
+[2026-09-19T11:15:21.168Z] VIGÍA: Salgan ya con los perros. Lleven móvil, medicinas y documentación. ¿Tienen coche?
+
+[2026-09-19T11:15:23.751Z] VECINO: Sí, tenemos coche y dos plazas libres. Cogemos el móvil, los papeles y a los perros, y salimos ya.
+
+[2026-09-19T11:15:26.229Z] VIGÍA: Salga ahora. Si el fuego cambia de dirección le volvemos a avisar por aquí.
+
+
+--- fin: sesión V cerrada (user_requested) ---
