@@ -165,6 +165,59 @@ def test_dos_ejecuciones_dan_la_misma_secuencia():
     assert [o["path"] for o in c1.outbox] == [o["path"] for o in c2.outbox]
 
 
+class RelojFalso:
+    """Tiempo real falso: `sleep` adelanta el cronómetro en vez de esperar de verdad."""
+
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def sleep(self, s: float) -> None:
+        self.t += max(float(s), 1e-6)
+
+
+def test_con_reloj_real_los_eventos_se_reparten_en_el_tiempo():
+    """Regresión: con `--time-scale 60` el bucle dormía de golpe hasta el final.
+
+    El bug solo aparecía con reloj que corre (con `time_scale=0` el reloj está congelado y
+    todos los vencimientos caían justo en el borde). Efecto en la demo: 88 segundos de pantalla
+    quieta y luego los ocho eventos a la vez. Aquí el reloj es falso, así que el test es
+    instantáneo pero ejercita el mismo camino.
+    """
+    reloj = RelojFalso()
+    sc = Scenario.load(SCENARIO_FILE)
+    client = FakeClient("http://test.local", log=lambda _t: None)
+    clock = SimClock(
+        time_scale=60,
+        starts_at=sc.starts_at,
+        monotonic=reloj.monotonic,
+        sleeper=reloj.sleep,
+    )
+    momentos: list[tuple[str, float]] = []
+    original = client._send
+
+    def espia(method, path, payload, channel):
+        momentos.append((path, clock.sim_minutes))
+        return original(method, path, payload, channel)
+
+    client._send = espia  # type: ignore[method-assign]
+    runner = ScenarioRunner(sc, client, clock, console=Console(stream=open("/dev/null", "w")))
+    runner.run()
+
+    fires = [m for p, m in momentos if p == "/events/fire"]
+    assert len(fires) > 60  # un push por minuto simulado, no dos en total
+    assert max(fires) == pytest.approx(88, abs=0.5)
+    road = next(m for p, m in momentos if p == "/events/road-closure")
+    exit_ev = next(m for p, m in momentos if p == "/events/exit-threatened")
+    pos = next(m for p, m in momentos if p == "/positions")
+    assert road == pytest.approx(42, abs=1.0)
+    assert exit_ev == pytest.approx(58, abs=1.0)
+    assert pos == pytest.approx(66, abs=1.0)
+    assert road < exit_ev < pos
+
+
 def test_from_min_se_salta_lo_anterior_pero_lo_aplica():
     """`--from-min 42` sirve para ensayar: el mundo llega ya girado y con la vía cortada."""
     sc = Scenario.load(SCENARIO_FILE)

@@ -13,6 +13,7 @@ from priority import (
     priority_score,
     ranked_no_answer_houses,
 )
+from settings import settings
 from state import state
 
 router = APIRouter(tags=["lectura"])
@@ -25,8 +26,13 @@ def health() -> dict:
         "ok": True,
         "state_version": state.state_version,
         "people_count": len(state.people),
+        "people": len(state.people),
+        "houses": len(state.houses),
         "uptime_s": state.uptime_s,
         "scenario": state.scenario,
+        # Se expone a propósito: hay que poder comprobar de un vistazo si esta instancia puede
+        # llamar a teléfonos de verdad antes de lanzarle 120 vecinos encima.
+        "allow_real_calls": settings.allow_real_calls,
     }
 
 

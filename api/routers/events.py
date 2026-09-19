@@ -156,6 +156,10 @@ def post_exit_threatened(event: ExitThreatenedEvent) -> WriteResponse:
         force=True,
     )
     state.last_event_id = primera.id if primera else None
+    # La amenaza la reporta alguien de fuera (patrulla, CECOPI) y el planner no la puede deducir
+    # del perímetro: sin esto, `_refresh_safe_zones` la devolvería a `open` en la misma pasada.
+    # Se quita con un override humano (`POST /human/override` safe_zone.status = open).
+    state.set_override("safe_zone", zone.id, "status", SafeZoneStatus.threatened, "informe externo")
     state.mark_exit_dirty(afectados)
     state.mark_route_dirty(afectados)
     decisiones = [primera] + planner.run_planner(state, trigger_event_id=state.last_event_id)
@@ -231,10 +235,16 @@ def post_position(event: PositionEvent) -> WriteResponse:
                 trigger_event_id=state.last_event_id,
             )
         )
-    elif person.status == PersonStatus.contacted and (velocidad or 0) > 2:
+    elif person.status == PersonStatus.contacted and (
+        (velocidad or 0) > 2
+        # Con el primer punto GPS todavía no hay velocidad (falta el punto anterior), pero si se
+        # ha separado de donde decía estar, ya ha salido de casa: eso es ponerse en marcha.
+        or (movido is not None and movido >= settings.position_significant_move_m)
+    ):
+        cuanto = f"{velocidad:.0f} km/h" if velocidad else f"{movido:.0f} m desde donde estaba"
         decisiones.append(
             state.mutate(
-                f"{person.name or person.id} se ha puesto en marcha ({velocidad:.0f} km/h).",
+                f"{person.name or person.id} se ha puesto en marcha ({cuanto}).",
                 type=DecisionType.person_status_changed,
                 subject_type="person",
                 subject_id=person.id,
