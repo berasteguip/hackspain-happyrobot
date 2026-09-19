@@ -6,7 +6,7 @@ export function windVisualStyle(zoom: number, windKmh: number, width: number, he
   const scale = 2 ** ((Math.max(4, Math.min(19, zoom)) - 11) * 0.18)
   const active = windKmh > 0 && width > 0 && height > 0
   return {
-    speedPx: active ? Math.min(28, (6 + windKmh * 0.2) * scale) : 0,
+    speedPx: active ? Math.min(28, (6 + windKmh * 0.2) * scale * 1.2) : 0,
     trailPx: Math.max(8, Math.min(38, (12 + windKmh * 0.2) * scale)),
     count: active ? Math.max(35, Math.min(650, Math.round(width * height / (3000 * Math.sqrt(scale))))) : 0,
   }
