@@ -384,7 +384,11 @@ class ScenarioRunner:
                 candidates.append(sc.timeline[idx].at_min)
             candidates += [b.next_push_min for b in self.behaviours]
             candidates += [o.until_min for o in self.outages]
-            target = min(c for c in candidates if c > now - 1e-9)
+            # Lo que ya está vencido se atiende YA; solo dormimos si no hay nada pendiente
+            # para este instante. (Con `time_scale=0` el reloj no corre y todo caía justo en
+            # el borde, así que el bug de dormir hasta `end` solo salía con reloj real.)
+            vencidos = [c for c in candidates if c <= now + 1e-9]
+            target = now if vencidos else min(candidates)
             self.clock.sleep_until(target)
             now = self.clock.sim_minutes
 
