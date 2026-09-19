@@ -141,6 +141,13 @@ def dispatch(state, body: CallDispatch) -> tuple[str, list[CallRun], list[dict[s
     # de hace media hora que nunca se cerró impide volver a llamar a esa persona.
     state.expire_stale_calls()
 
+    if settings.allow_real_calls and settings.secret_is_public:
+        raise DispatchError(
+            "HR_SHARED_SECRET es uno de los valores de ejemplo del repo, y el repo es público: "
+            "cualquiera que lo lea puede hacer sonar estos teléfonos. Cambia la clave antes de "
+            "marcar de verdad (por ejemplo `openssl rand -hex 32`), o pon ALLOW_REAL_CALLS=false."
+        )
+
     objetivos = resolve_targets(state, body)
     batch_id = f"b-{uuid.uuid4().hex[:8]}"
 

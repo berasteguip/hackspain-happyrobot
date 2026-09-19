@@ -73,6 +73,15 @@ async def lifespan(app: FastAPI):
         len(decisiones),
         state.state_version,
     )
+    if settings.secret_is_public:
+        log.error("  " + "!" * 70)
+        log.error("  HR_SHARED_SECRET es un valor de EJEMPLO del repo, y el repo es PÚBLICO.")
+        log.error("  Quien lea el repositorio puede entrar en esta API. Cámbiala ya:")
+        log.error("      openssl rand -hex 32")
+        if settings.allow_real_calls:
+            log.error("  Con ALLOW_REAL_CALLS=true eso significa que puede hacer sonar teléfonos.")
+            log.error("  /calls/dispatch se NEGARÁ a marcar hasta que la cambies.")
+        log.error("  " + "!" * 70)
     if not settings.allow_real_calls:
         log.info("  ⚠️  ALLOW_REAL_CALLS=false → llamadas y SMS SIMULADOS (nadie recibe nada)")
     else:

@@ -19,11 +19,17 @@ jurado delante, no se pulsa. Por eso el suave es el que está a mano y el otro h
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
-import httpx
+# Solo biblioteca estándar, a propósito: esto se corre desde cualquier checkout, con o sin
+# `make install`, y fallar con «.venv/bin/python: No such file or directory» cuando lo que
+# quieres es limpiar un tablero en mitad de un ensayo es una broma pesada.
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
@@ -63,43 +69,52 @@ def main() -> int:
 
     url = args.url.rstrip("/")
     # latin-1: lo que dice el RFC y lo que manda el navegador. Con UTF-8 una `ñ` da 401.
-    cabecera = args.key.encode("latin-1", errors="replace")
-    ruta, cuerpo_peticion = (
-        ("/reset", {"scenario": args.scenario}) if args.todo else ("/calls/reset", None)
+    # latin-1 es lo que dice el RFC 9110 y lo que manda el navegador. Con UTF-8 una `ñ` da 401.
+    cabecera = args.key.encode("latin-1", errors="replace").decode("latin-1")
+    if args.todo:
+        ruta, cuerpo = "/reset", json.dumps({"scenario": args.scenario}).encode()
+    else:
+        quien = urllib.parse.quote(os.getenv("USER", "puesto de mando"))
+        ruta, cuerpo = f"/calls/reset?operator={quien}", b"{}"
+
+    peticion = urllib.request.Request(
+        f"{url}{ruta}",
+        data=cuerpo,
+        method="POST",
+        headers={"x-api-key": cabecera, "Content-Type": "application/json"},
     )
     try:
-        r = httpx.post(
-            f"{url}{ruta}",
-            json=cuerpo_peticion,
-            params=None if args.todo else {"operator": os.getenv("USER", "puesto de mando")},
-            headers={"x-api-key": cabecera, "Content-Type": "application/json"},
-            timeout=30,
-        )
+        with urllib.request.urlopen(peticion, timeout=30) as respuesta:
+            datos = json.loads(respuesta.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        detalle = exc.read().decode("utf-8", "replace")[:200]
+        print(f"FALLO {exc.code}: {detalle}", file=sys.stderr)
+        if exc.code == 401:
+            print(
+                "  (401 = clave equivocada. La del desplegado NO tiene por qué ser la del .env\n"
+                "   local: mírala en Railway → Variables → HR_SHARED_SECRET)",
+                file=sys.stderr,
+            )
+        elif exc.code == 404:
+            print(
+                "  (404 = ese despliegue todavía no tiene /calls/reset. ¿Está mergeado el PR?)",
+                file=sys.stderr,
+            )
+        return 1
     except Exception as exc:
         print(f"no se pudo hablar con {url}: {exc}", file=sys.stderr)
         return 1
 
-    if r.status_code >= 400:
-        print(f"FALLO {r.status_code}: {r.text[:200]}", file=sys.stderr)
-        if r.status_code == 401:
-            print(
-                "  (401 = clave equivocada. La de Railway NO es la del .env local:\n"
-                "   está en Railway → Variables → HR_SHARED_SECRET)",
-                file=sys.stderr,
-            )
-        return 1
-
-    cuerpo = r.json()
     que = (
         f"escenario '{args.scenario}' recargado ENTERO (decision_log y posiciones incluidos)"
         if args.todo
         else "tablero de llamadas vaciado (el resto del estado, intacto)"
     )
-    print(f"reset ok · {url} · {que} · state_version {cuerpo.get('state_version')}")
+    print(f"reset ok · {url} · {que} · state_version {datos.get('state_version')}")
     try:
-        tablero = httpx.get(f"{url}/calls", headers={"x-api-key": cabecera}, timeout=20)
-        if tablero.status_code < 400:
-            print(f"  tablero: {len(tablero.json())} llamadas")
+        comprobar = urllib.request.Request(f"{url}/calls", headers={"x-api-key": cabecera})
+        with urllib.request.urlopen(comprobar, timeout=20) as respuesta:
+            print(f"  tablero: {len(json.loads(respuesta.read()))} llamadas")
     except Exception:
         pass  # la confirmación es un extra, no vale la pena fallar por ella
     return 0

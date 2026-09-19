@@ -73,7 +73,7 @@ ensayo: ## Arranca la API con el banco de pruebas de la Complutense (telefonos R
 	cd api && SCENARIO=ucm-madrid .venv/bin/python -m uvicorn main:app --reload --port $(API_PORT)
 
 reset: ## Vacia el tablero de llamadas. URL=... KEY=... al desplegado; TODO=1 recarga el escenario
-	@cd api && .venv/bin/python ../scripts/reset.py \
+	@python3 scripts/reset.py \
 	  --url "$(or $(URL),http://localhost:$(API_PORT))" \
 	  $(if $(KEY),--key "$(KEY)",) $(if $(TODO),--todo,)
 

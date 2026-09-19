@@ -71,6 +71,19 @@ def _phone_set(name: str) -> set[str]:
     return {t for t in limpio if t}
 
 
+# Secretos que están escritos en un fichero versionado de un repo PÚBLICO. Quien lea el repo
+# los tiene. Si alguno de estos es la clave de un despliegue, ese despliegue está abierto.
+SECRETOS_PUBLICOS = frozenset(
+    {
+        "cambiame-por-algo-largo",
+        "clave-de-ensayo",
+        "changeme",
+        "secret",
+        "test",
+    }
+)
+
+
 @dataclass
 class Settings:
     # --- HappyRobot / auth -------------------------------------------------
@@ -172,6 +185,11 @@ class Settings:
     max_houses_per_patrol: int = 3
     escalate_after_attempts: int = 2
 
+    @property
+    def secret_is_public(self) -> bool:
+        """¿La clave de nuestra API es una que está escrita en el repo?"""
+        return self.hr_shared_secret.strip().lower() in SECRETOS_PUBLICOS
+
     def summary(self) -> dict:
         """Lo que se imprime al arrancar (sin secretos)."""
         return {
@@ -188,7 +206,13 @@ class Settings:
                 if self.call_allowlist
                 else "VACÍA (se marca lo que diga el escenario)"
             ),
-            "auth": "on" if self.hr_shared_secret else "OFF (HR_SHARED_SECRET vacío)",
+            "auth": (
+                "⚠️  CLAVE PÚBLICA (está en el repo: cámbiala)"
+                if self.secret_is_public
+                else "on"
+                if self.hr_shared_secret
+                else "OFF (HR_SHARED_SECRET vacío)"
+            ),
             "webhook_happyrobot": "configurado" if self.hr_workflow_webhook else "sin configurar",
             "state_jsonl": str(self.state_jsonl),
         }

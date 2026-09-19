@@ -393,3 +393,42 @@ def test_tras_calls_reset_se_puede_volver_a_llamar(client):
     client.post("/calls/reset")
 
     assert client.post("/calls/dispatch", json={"person_ids": ["p-001"]}).json()["dispatched"] == 1
+
+
+# --------------------------------------------------------------------------------------
+# No se marca de verdad con una clave que está publicada en el repo
+# --------------------------------------------------------------------------------------
+
+
+def test_no_se_marca_con_la_clave_de_ejemplo_del_repo(poblado, monkeypatch):
+    """Pasó de verdad: producción quedó protegida con el marcador de `.env.example`.
+
+    El repo es público, así que esa clave la tiene cualquiera — y con las llamadas reales
+    encendidas, cualquiera podía hacer sonar los móviles del equipo.
+    """
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_shared_secret", "cambiame-por-algo-largo")
+
+    with pytest.raises(dispatcher.DispatchError, match="el repo es público"):
+        dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+
+
+def test_con_las_llamadas_simuladas_la_clave_de_ejemplo_no_estorba(poblado, monkeypatch):
+    """Sin `ALLOW_REAL_CALLS` no hay nada que proteger: que nadie se quede sin poder ensayar."""
+    monkeypatch.setattr(settings, "allow_real_calls", False)
+    monkeypatch.setattr(settings, "hr_shared_secret", "cambiame-por-algo-largo")
+
+    _, intentos, _, _ = dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+
+    assert len(intentos) == 1
+
+
+@pytest.mark.parametrize("clave,publica", [
+    ("cambiame-por-algo-largo", True),
+    ("CAMBIAME-POR-ALGO-LARGO", True),
+    ("clave-de-ensayo", True),
+    ("3f8a91c2e5b74d06a1f9c3e7b2d85a40", False),
+])
+def test_deteccion_de_claves_publicas(monkeypatch, clave, publica):
+    monkeypatch.setattr(settings, "hr_shared_secret", clave)
+    assert settings.secret_is_public is publica
