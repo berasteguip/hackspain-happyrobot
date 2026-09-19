@@ -134,3 +134,38 @@ Preferencia posterior de Mateo (2026-09-19): los sitios sí usan los emojis soli
 `SITE_EMOJI` de `src/response.ts` entre mapa, listas, capas y leyenda. Mantener un pequeño
 indicador de exposición junto al punto de encuentro, sus nombres y las interacciones.
 La navegación y el resto de controles conservan los iconos SVG.
+
+## 9. Medios en patrullaje — 2026-09-19
+
+Petición de Mateo: dos patrullas y dos ambulancias recorren calles por escenario; pins con
+punta apoyada en la posición y dibujos de vehículos, sin emojis para los medios móviles.
+Los sitios conservan los emojis del apartado anterior. Posiciones y movimiento son simulados,
+no GPS de servicios reales. No implementar todavía decisiones ni integración de agentes.
+
+`units.ts` expone `createPatrolFleet`, `redirectUnit(unit, target, now, requestedBy)` y
+`applyUnitPlan`. El ID y distintivo de cada unidad son estables; `mission` separa patrulla de
+asignación y `revision` impide aplicar rutas antiguas tras una redirección. La ruta nueva sale
+de la posición actual, nunca vuelve a la base. Los botones manuales existentes reutilizan
+primero una unidad sin asignación; no hay órdenes automáticas de HappyRobot.
+
+Los circuitos se calculan con tres tramos dirigidos de Mapbox y se reutilizan en memoria al
+dar vueltas (hasta 12 consultas iniciales por escenario, consumen cuota). Máximo dos unidades
+planificando simultáneamente. Pausa y pestaña oculta detienen el avance; al cambiar de escenario
+se abortan consultas y se sustituyen las unidades. Sin ruta válida, estado `hold` y reintento
+manual: no reintroducir el fallback recto. `fetchDrivingRoute(..., roadOnly=true)` conserva la
+geometría de carretera sin conectores a edificios; llegada al acceso, no a una posición inventada.
+La continuidad del circuito admite hasta 2 m de diferencia de ajuste entre extremos.
+
+Verificación: 48 tests, lint y build; navegador con proveedores controlados para movimiento,
+pausa, clic en pin, redirección, resultado tardío al cambiar de escenario, fallo sin movimiento,
+reintento y móvil. Script temporal: `/tmp/vigia-patrol-ui.mjs`. Se consultó Mapbox Directions
+con el token público aportado: los ocho circuitos Madrid/Gredos devolvieron geometrías válidas;
+esto no valida seguridad operativa frente al incendio. Sin llamadas ni cambios en workflows.
+
+Cambio visual posterior de Mateo: solo la policía pasa de pin a coche azul con volumen.
+`heading` se calcula sobre la carretera con una ventana de 8 m a ambos lados para suavizar
+curvas. El mapa selecciona entre 24 vistas del coche y compensa el giro de cámara; la posición
+permanece sobre la ruta. Ambulancias y bomberos móviles conservan su pin. No usar un emoji
+ni volver a implementar decisiones de agente como parte de este ajuste. 49 tests, lint y build.
+Navegador verificado con `/tmp/vigia-police-car-ui.mjs`: 24 vistas, cambios de rumbo,
+compensación de cámara y clic sobre el coche; proveedores externos controlados.

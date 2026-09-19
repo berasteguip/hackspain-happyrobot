@@ -12,9 +12,9 @@
  * demo no se cae porque un backend no esté levantado.
  */
 
-import type { CallStateName } from './types'
+import type { CallStateName, TriageLevel } from './types'
 
-export type { CallStateName }
+export type { CallStateName, TriageLevel }
 
 const KEY = 'vigia.operatorKey'
 
@@ -31,6 +31,11 @@ export type RosterEntry = {
   status: string
   call_state: CallStateName | null
   location_source: string | null
+  /** El color con el que el agente cerró la llamada (`POST /calls/observation`). */
+  triage_level: TriageLevel | null
+  triage_reason: string | null
+  triage_confidence: string | null
+  triage_at: string | null
 }
 
 export type CallRun = {
@@ -74,6 +79,34 @@ export const CALL_STATE_LABEL: Record<CallStateName, string> = {
 }
 
 export const CALL_STATE_OPEN: CallStateName[] = ['queued', 'dialing', 'ringing']
+
+/**
+ * El color del triaje. Es lo único del mapa que viene de haber HABLADO con alguien: el resto
+ * de capas son geometría (perímetro, exposición, rutas). Por eso pinta por encima del estado
+ * de la llamada — que alguien haya descolgado dice menos que lo que dijo al descolgar.
+ *
+ * `unknown` es su propio color a propósito: «el agente habló con esta persona y aun así no pudo
+ * clasificarla» no es lo mismo que «nadie la ha llamado todavía», y en un mapa que ordena a
+ * quién se saca primero esa diferencia decide a quién se vuelve a llamar.
+ */
+export const TRIAGE_COLOR: Record<TriageLevel, string> = {
+  red: '#ff4d4f',
+  orange: '#ff9f43',
+  yellow: '#f4d03f',
+  green: '#4de3a6',
+  unknown: '#b0bec5',
+}
+
+export const TRIAGE_LABEL: Record<TriageLevel, string> = {
+  red: 'Rojo · crítico',
+  orange: 'Naranja · alto',
+  yellow: 'Amarillo · medio',
+  green: 'Verde · seguro',
+  unknown: 'Sin clasificar',
+}
+
+/** Orden operativo: el que se atiende primero va primero. */
+export const TRIAGE_ORDER: TriageLevel[] = ['red', 'orange', 'yellow', 'unknown', 'green']
 
 // --------------------------------------------------------------------------- clave
 

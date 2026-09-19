@@ -235,6 +235,15 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .dispatch-action { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #ffffff1c; background: #ffffff03; border-radius: 7px; padding: 10px 7px; font-size: 10px; }
 .dispatch-action:hover { background: #a3c3cf12; }
 .unit-mark { width: 18px; height: 18px; flex: 0 0 18px; color: #a4b9c4; }
+.unit-fleet-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.unit-detail { border: 1px solid #ffffff20; border-radius: 10px; padding: 16px; margin: 18px 0; background: #ffffff04; }
+.unit-detail-heading { display: flex; align-items: center; gap: 12px; }
+.unit-detail-heading > .unit-mark { width: 30px; height: 30px; flex-basis: 30px; }
+.unit-detail-heading strong { display: block; font-size: 13px; font-weight: 550; }
+.unit-state { display: inline-block; font-size: 10px; color: var(--muted); margin-top: 4px; }
+.unit-state.patrolling { color: var(--safe); }
+.unit-state.en_route { color: var(--move); }
+.unit-state.hold { color: var(--warn); }
 .alert-toasts { position: absolute; top: 90px; right: 20px; z-index: 4; display: grid; gap: 8px; width: min(340px, calc(100% - 40px)); margin: 0; padding: 0; list-style: none; pointer-events: none; }
 .alert-toast { pointer-events: auto; width: 100%; text-align: left; border: 1px solid #d3ac7840; border-left: 3px solid var(--warn); background: #242624f5; border-radius: 8px; padding: 13px 16px; font-size: 12px; box-shadow: var(--shadow); }
 .alert-toast.critical { border-left-color: #d88d7c; background: #302723f5; }
