@@ -139,23 +139,37 @@ por pasada), límite de sesiones de chat en paralelo, y si el `chat.createToken`
 
 ### F5 · Vecinos simulados que contestan (el canal de mensajería)
 
-**Entregable:** 150 conversaciones por pasada dentro de HappyRobot; el resto de la población simulada solo
-en estado.
+**Entregable:** 150 conversaciones por pasada, **con los dos lados dentro de HappyRobot**. Sin claves de LLM
+externas: los modelos los paga la cuenta del hackathon.
 
-- `sim/personas.py` (nuevo): para cada persona de la cola, `POST /chat/tokens` de la API v2 de HappyRobot
-  (`Authorization: Bearer HR_API_KEY`, `workflow_id` de WF-1, `data` = payload del trigger 02→03), abre el
-  WebSocket del chat, recibe el mensaje inicial del agente y responde con el LLM de persona hasta que el
-  agente cierra o se llega a 8 turnos. Concurrencia configurable (`WAVE_CONCURRENCY`, empezar en 5).
-- LLM de persona: clave en `.env` (`PERSONA_LLM_API_KEY`, `PERSONA_LLM_MODEL`). Prompt por personalidad
-  (`cooperative 60 % · anxious 15 % · reluctant 10 % · confused 7 % · no_answer 5 % · wrong_info 3 %`) con
-  la ficha del vecino: casa, familia, movilidad, coche, smartphone, vecinos conocidos, si está fuera. Los
-  `no_answer` no abren sesión: `api/` registra `answered: false` directamente. Los `wrong_info` declaran un
-  sitio y su GPS simulado los pone en otro.
-- Opción para enseñar "los dos lados en la plataforma": WF-P `Vigía · vecino simulado` (webhook → AI Generate
-  en carácter). Solo si sobran créditos; por defecto la persona vive en `api/`.
-- Si `chat.createToken` no está disponible: respaldo de la decisión 002 (`POST /persona/{id}/reply` +
-  `Generate` + `Loop` en HappyRobot), o `WAVE_HR_LIMIT=N` con el resto resuelto por un agente local con el
-  mismo prompt y marcado `source: local`.
+**Estado 19 sep, 13:00 — WF-P ya creado en borrador:** `Vigía · vecino simulado`, id
+`01a0b942-b5d6-7823-8d61-3e936478dd04`, versión `01a0b942-b620-7699-9598-4babb2112c00`,
+editor: https://platform.eu.happyrobot.ai/hackspainteam11/workflows/8yj9tmk34vg4/editor/31p3ls086rt0
+Trigger *Chatbot Request* con la ficha (`person_id, name, age, village, address, household, mobility, has_car,
+seats_free, has_smartphone, personality, neighbors_known, vulnerable_note, is_away, true_location,
+has_animals`) → *Inbound Text Agent* "Vecino" sin mensaje inicial, con prompt por personalidad
+(`cooperative · anxious · reluctant · confused · wrong_info`; los `no_answer` no abren sesión). Mismo bloqueo
+del validador de canal que WF-1.
+
+**La centralita (`sim/centralita.py`, nuevo, lo hago yo):**
+
+```
+api/ cola priorizada ──► por cada persona (concurrencia WAVE_CONCURRENCY, empezar en 5):
+   1. POST /chat/tokens  workflow=WF-1  data={payload 02→03}      → sesión A (agente Vigía)
+   2. POST /chat/tokens  workflow=WF-P  data={ficha del vecino}    → sesión V (vecino)
+   3. A manda su mensaje inicial → se reenvía a V → V contesta → se reenvía a A → ...
+   4. Fin cuando A cierra, V se despide, o 8 turnos. WF-1 hace su Extract y POST /calls/outcome solo.
+   5. Si la persona es no_answer: sin sesiones; POST /calls/outcome {answered:false} directo.
+```
+
+- Auth de `/chat/tokens`: `Authorization: Bearer HR_API_KEY` (API key del workspace, Settings → API Keys).
+  Es la única clave que hace falta y es de HappyRobot.
+- Cada conversación deja **dos runs** (agente y vecino) con transcripción. Créditos ≈ 2 × 150 × ~7 mensajes
+  × ~7 ≈ 15k por pasada; el equipo ha aceptado el coste.
+- Rellamadas (WF-2): la misma centralita abre las sesiones cuando `notify` lo pide; el vecino recuerda su
+  ficha porque va en el trigger.
+- Respaldo si `chat.createToken` no está habilitado: `POST /persona/{id}/reply` + `Generate` + `Loop`
+  (decisión 002), con el vecino resuelto por WF-P vía `trigger_run`.
 
 **Movimiento de la población:** `engine/population.py` (nuevo) mueve a los sintéticos por
 `assigned_route` a la velocidad del más lento del núcleo, a escala del reloj, y hace `POST /positions`
@@ -182,10 +196,25 @@ llegadas contadas por personas en los PE; luego 150.
 
 | Quién | Qué |
 |---|---|
-| Mateo + Devin | HappyRobot: WF-1 (hecho en borrador), WF-2, arreglo del canal, `test_all`. `sim/personas.py` (chat tokens + LLM de persona). F2 (mapa contra `api/`, polígono arrastrable). |
-| Pablo (workflows) | Revisar prompt y Extract de WF-1 frente a `prompts/01` y `05`; deprecar `test`; stand: número/SIP, créditos, chat tokens, sesiones en paralelo. |
-| Equipo `api/` (Luis/Allan) | F1 (escenario Gredos en `data/` y `engine/`), `POST /links/send`, `partial: true` en `/calls/outcome`, `POST /wave/start`, `POST /clock/pause`, `needs_rescue` + `MapboxProvider` (F3), `engine/population.py`. |
-| Todos | LLM de persona y su clave (`PERSONA_LLM_*`); `HR_API_KEY` en `.env`; decidir cuándo activar `ALLOW_REAL_CALLS`. |
+| Mateo + Devin | **Dirección técnica de `api/` y de HappyRobot.** HappyRobot: WF-1 y WF-P (hechos en borrador), WF-2, arreglo del canal, `test_all`. `sim/centralita.py`. Plan y contrato de los cambios de `api/` (tabla de abajo); los implemento yo salvo que Luis/Allan cojan alguno, avisando en el canal para no pisarnos. F2 (mapa contra `api/`, polígono arrastrable). |
+| Pablo (workflows) | Revisar prompt y Extract de WF-1 y el prompt de WF-P frente a `prompts/01`, `05` y `04-brief`; deprecar `test`; stand: créditos, chat tokens, sesiones en paralelo, número/SIP solo si queremos voz real. |
+| Luis / Allan (`api/`, `engine/`) | Los que elijan de la tabla de abajo, empezando por F1 (escenario Gredos) y `engine/population.py`. |
+| Todos | `HR_API_KEY` del workspace en `.env`; decidir cuándo activar `ALLOW_REAL_CALLS`. Ninguna clave de LLM externa. |
+
+### Cambios en `api/` — contrato exacto (se añaden a `03-contrato-de-datos.md` en el mismo commit)
+
+| # | Cambio | Contrato | Por qué |
+|---|---|---|---|
+| A1 | Escenario `gredos` en `data/scenarios/` y `engine/scenarios/`, generado con `scripts/export-scenario.mjs` desde `apps/command-center/src/scenario.ts` | `Person` + campos nuevos `personality`, `neighbors_known[]`, `has_animals`, `true_location`; `SafeZone` PE-01/02/03 con `capacity` | Un solo dataset (decisión 003). Sin él `GET /instructions` habla de Tábara. |
+| A2 | `POST /links/send {person_id, phone, channel, consent_quote}` → `{ok, url}` | Registra `consent_position: true` + cita; simula o envía SMS según `ALLOW_REAL_CALLS`; `url = PUBLIC_BASE_URL/track?id=` | Tool `send_gps_link` de WF-1. |
+| A3 | `POST /calls/outcome` acepta `partial: true` | Solo actualiza los campos presentes en `extracted`; no toca `status`, `call_attempts` ni `answered`; deja `decision_log` | Tool `register_vulnerable` a mitad de conversación. |
+| A4 | `POST /wave/start {limit?, concurrency?}` y `GET /wave/status` | Arranca la centralita sobre `GET /queue`; `status` devuelve en curso / hechas / fallidas | Botón Play del mapa. |
+| A5 | `POST /clock/pause` y `POST /clock/resume` | Congela `engine` y la población simulada; no cancela conversaciones en curso | Botón Pausa. |
+| A6 | `needs_rescue`: `PersonStatus.needs_rescue`, `DecisionType.rescue_required`; `RoutingChain` sin `StraightProvider` salvo `ALLOW_STRAIGHT_ROUTES=true` | `assign_exits` marca rescate si ninguna candidata tiene ruta limpia con plaza; `GET /rescue-queue` | Principio de la biblia. |
+| A7 | `MapboxProvider` en `api/routing.py`: Directions `alternatives=true`, filtro `path_intersects_polygon`, caché por versión de polígono, `MAPBOX_TOKEN` en `.env` | Sustituye a Valhalla como proveedor por defecto | Sin infraestructura local. |
+| A8 | `engine/population.py`: mueve sintéticos por `assigned_route` a la velocidad del más lento del núcleo y hace `POST /positions` | Reglas de `simulation.ts`: sin consentir+confirmar+ruta+plaza+preparación no hay movimiento; GPS real intocable | Ver la evacuación en el mapa. |
+
+Orden: A1 → A2/A3 (desbloquean WF-1) → A6/A7 → A4/A5 → A8.
 
 ## 4. Orden en el tiempo (36 h, ya consumidas ~20)
 
