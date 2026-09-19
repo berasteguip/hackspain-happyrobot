@@ -8,9 +8,10 @@ alwaysApply: true
 Equipo `router123` en **HackSpain 2026** (Madrid, 18–20 sept 2026), **track HappyRobot**.
 Explorando llevar los AI workers de HappyRobot al **sector público y la gestión de crisis**.
 
-**Estado:** hay un primer frontend del CECOP (`apps/command-center`) y una tesis de
-producto (Vigía). Sigue aplicando la disciplina de `docs/`. No inventes otro stack
-salvo que se pida.
+**Estado:** hay un frontend del CECOP (`apps/command-center`) con grupos, puntos de
+encuentro y traslado simulado, y una tesis de producto (Vigía). Estado de ramas, diseño
+cerrado y reglas de simulación en `AGENTS.md` §7. Sigue aplicando la disciplina de
+`docs/`. No inventes otro stack salvo que se pida.
 
 ## Reglas obligatorias
 

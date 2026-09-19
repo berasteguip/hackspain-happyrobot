@@ -38,3 +38,6 @@ Las reglas de escritura están en [`../AGENTS.md`](../AGENTS.md) y
 - ⬜ Acceso técnico a la plataforma (keys, límites, entorno).
 - ✅ Primer corte de producto: **Vigía** ([`06-producto/01-vigia.md`](06-producto/01-vigia.md)).
 - ✅ Frontend inicial del CECOP en `apps/command-center`.
+- ✅ Grupos, puntos de encuentro y traslado simulado por rutas (rama
+  `devin/vigia-grupos-puntos-encuentro`). Estado, ramas y reglas de simulación en
+  [`../AGENTS.md`](../AGENTS.md) §7.
