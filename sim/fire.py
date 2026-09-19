@@ -5,7 +5,7 @@ aproximadamente elíptica; es el modelo estándar en simulación de incendios
 (Van Wagner 1969; Alexander 1985, "Estimating the length-to-breadth ratio of elliptical
 forest fire patterns"; es también el modelo del núcleo de FARSITE / Prometheus).
 
-Anisotropía: usamos exactamente los ratios que fija `docs/contrato-de-datos.md` §4
+Anisotropía: usamos exactamente los ratios que fija `docs/06-producto/03-contrato-de-datos.md` §4
 (cabeza 100 %, flancos ~35 %, cola ~10 % de `spread_rate_mh`). Así el simulador y la
 fórmula de `minutes_to_front` de la API hablan del mismo fuego.
 

@@ -4,7 +4,7 @@ La simulación trabaja en metros sobre un plano local (equirectangular centrado 
 escenario). A esta escala (~25 km) el error de la equirectangular frente a UTM es de
 decenas de centímetros, irrelevante para un modelo mesoscópico, y nos ahorra pyproj.
 
-Convención del repo (docs/contrato-de-datos.md §1): en JSON siempre `lat`, `lon` en ese
+Convención del repo (docs/06-producto/03-contrato-de-datos.md §1): en JSON siempre `lat`, `lon` en ese
 orden; en GeoJSON siempre `[lon, lat]`.
 """
 

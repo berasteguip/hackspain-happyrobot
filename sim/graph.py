@@ -2,7 +2,7 @@
 
 Representación: arrays paralelos (CSR) en vez de objetos. Un Dijkstra sobre arrays de numpy
 es dos órdenes de magnitud más rápido que sobre un `networkx.DiGraph`, y aquí hay que correr
-cientos de variantes (`docs/research/routing-zonas-evitar.md` ya avisaba de esto).
+cientos de variantes (`docs/06-producto/05-routing-zonas-evitar.md` ya avisaba de esto).
 
 Lo que hace creíble la simulación no es la geometría, es la **capacidad por tramo**: un camino
 rural traga ~6 coches/min, no 60. Sin capacidad no hay cola, y sin cola la simulación no dice
