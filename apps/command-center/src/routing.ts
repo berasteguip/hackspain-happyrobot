@@ -1,4 +1,7 @@
 import { haversineMeters } from './geo'
+import { exposureAt, MAX_FORECAST_MIN, routeBlocked } from './fire-model'
+import type { FireForecast } from './fire-model'
+import type { SafeZone } from './types'
 
 export type Corridor = {
   id: string
@@ -121,4 +124,70 @@ export function positionAt(route: Route, alongM: number): [number, number] {
   const [fromLng, fromLat] = route.coords[low]
   const [toLng, toLat] = route.coords[high]
   return [fromLng + (toLng - fromLng) * ratio, fromLat + (toLat - fromLat) * ratio]
+}
+
+export type RefugeRoute = {
+  id: string
+  zoneId: string
+  coordinates: [number, number][]
+  durationSec: number
+  distanceM: number
+  accessM: number
+}
+
+export async function fetchRefugeRoutes(
+  token: string,
+  origin: [number, number],
+  zones: SafeZone[],
+  profile: 'walking' | 'driving',
+  signal?: AbortSignal,
+  request: typeof fetch = fetch,
+): Promise<{ routes: RefugeRoute[]; failed: number; unsuitable: number }> {
+  const results = await Promise.all(zones.map(async zone => {
+    try {
+      const url = new URL(`https://api.mapbox.com/directions/v5/mapbox/${profile}/${origin.join(',')};${zone.lng},${zone.lat}`)
+      url.search = new URLSearchParams({ access_token: token, geometries: 'geojson', overview: 'full', alternatives: 'true' }).toString()
+      const timeout = AbortSignal.timeout(12000)
+      const response = await request(url.toString(), { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
+      if (!response.ok) return { routes: [], failed: 1, unsuitable: 0 }
+      const payload = await response.json()
+      if (!Array.isArray(payload.routes)) return { routes: [], failed: 1, unsuitable: 0 }
+      const routes: RefugeRoute[] = []
+      let unsuitable = 0
+      for (const [i, route] of payload.routes.entries()) {
+        const coords = route?.geometry?.coordinates
+        if (!Array.isArray(coords) || coords.length < 2 || !coords.every((point: unknown) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite) && Math.abs(point[0]) <= 180 && Math.abs(point[1]) <= 90) || !Number.isFinite(route.duration) || route.duration < 0 || !Number.isFinite(route.distance) || route.distance < 0) {
+          unsuitable += 1
+          continue
+        }
+        const coordinates = coords as [number, number][]
+        const start = coordinates[0]
+        const end = coordinates[coordinates.length - 1]
+        const startM = haversineMeters(...origin, ...start)
+        const endM = haversineMeters(...end, zone.lng, zone.lat)
+        if (startM > 100 || endM > 100) {
+          unsuitable += 1
+          continue
+        }
+        const accessM = startM + endM
+        routes.push({ id: `${zone.id}-${i}`, zoneId: zone.id, coordinates: [origin, ...coordinates, [zone.lng, zone.lat]], durationSec: route.duration + accessM / (4000 / 3600), distanceM: route.distance + accessM, accessM })
+      }
+      return { routes, failed: 0, unsuitable }
+    } catch (error) {
+      if (signal?.aborted) throw error
+      return { routes: [], failed: 1, unsuitable: 0 }
+    }
+  }))
+  return { routes: results.flatMap(result => result.routes), failed: results.reduce((sum, result) => sum + result.failed, 0), unsuitable: results.reduce((sum, result) => sum + result.unsuitable, 0) }
+}
+
+export function rankRefugeRoutes(routes: RefugeRoute[], zones: SafeZone[], forecast: FireForecast, horizon: number, marginM: number) {
+  const admitted = routes.filter(route => {
+    const zone = zones.find(item => item.id === route.zoneId)
+    const throughMinute = Math.max(horizon, Math.ceil(route.durationSec / 60))
+    return zone && throughMinute <= MAX_FORECAST_MIN
+      && exposureAt(forecast, zone.lng, zone.lat, throughMinute, marginM + zone.radiusM).level === 'clear'
+      && !routeBlocked(forecast, route.coordinates, throughMinute, marginM)
+  }).sort((a, b) => a.durationSec - b.durationSec)
+  return { routes: admitted, rejected: routes.length - admitted.length }
 }

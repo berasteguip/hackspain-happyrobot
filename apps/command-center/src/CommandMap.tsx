@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import type { GeoJSONSource } from 'mapbox-gl'
-import type { FeatureCollection, Polygon, Point } from 'geojson'
-import { FIRE_CELL_SIZE_M, SCENARIO_FIRE_CELLS, INCIDENT, SPREAD_AREA } from './scenario'
+import type { FeatureCollection, Polygon, Point, LineString } from 'geojson'
+import { FIRE_CELL_SIZE_M, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
 import { destination } from './geo'
-import type { Citizen, FireSpot, MapLayers, RiskArea, SafeZone } from './types'
+import type { Citizen, FireSpot, MapLayers, SafeZone } from './types'
+import { EXPOSURE_COLOR, EXPOSURE_LABEL } from './fire-model'
+import type { Exposure } from './fire-model'
+import { CENTER_SYMBOL, RESPONSE_CENTERS } from './response'
+import type { RefugeRoute } from './routing'
 
 const STATUS_COLOR: Record<string, string> = {
   pending: '#aebdc9', ringing: '#f5cb6b', no_answer: '#ff9a5e',
@@ -20,6 +24,10 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   citizens: ['people-glow', 'people-dot', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
   zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
+  hospitals: ['center-hospital', 'center-hospital-label'],
+  healthCenters: ['center-health', 'center-health-label'],
+  fireStations: ['center-fire', 'center-fire-label'],
+  routes: ['refuge-route-casing', 'refuge-route-line'],
 }
 
 type Props = {
@@ -30,6 +38,13 @@ type Props = {
   selectedId: string | null
   layers: MapLayers
   onSelect: (id: string | null) => void
+  projection: FeatureCollection<Polygon>
+  zoneExposure: Record<string, Exposure>
+  horizon: number
+  marginM: number
+  route: RefugeRoute | null
+  focusTarget: { lng: number; lat: number } | null
+  onCenterSelect: (id: string) => void
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
@@ -56,11 +71,22 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
   }
 }
 
-function polygonGeo(area: RiskArea): FeatureCollection<Polygon> {
-  return {
-    type: 'FeatureCollection',
-    features: [{ type: 'Feature', properties: { name: area.name }, geometry: { type: 'Polygon', coordinates: [area.coordinates] } }],
-  }
+function zonesGeo(zones: SafeZone[], exposure: Record<string, Exposure>): FeatureCollection<Point> {
+  return { type: 'FeatureCollection', features: zones.map(zone => ({
+    type: 'Feature', properties: { id: zone.id, code: zone.code, name: zone.name.split(' · ')[0], level: exposure[zone.id]?.level ?? 'unknown', color: EXPOSURE_COLOR[exposure[zone.id]?.level ?? 'unknown'] },
+    geometry: { type: 'Point', coordinates: [zone.lng, zone.lat] },
+  })) }
+}
+
+function zoneAreas(zones: SafeZone[], exposure: Record<string, Exposure>): FeatureCollection<Polygon> {
+  return { type: 'FeatureCollection', features: zones.map(zone => ({
+    type: 'Feature', properties: { color: EXPOSURE_COLOR[exposure[zone.id]?.level ?? 'unknown'] },
+    geometry: { type: 'Polygon', coordinates: [circle(zone.lng, zone.lat, zone.radiusM)] },
+  })) }
+}
+
+function routeGeo(route: RefugeRoute | null): FeatureCollection<LineString> {
+  return { type: 'FeatureCollection', features: route ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route.coordinates } }] : [] }
 }
 
 function circle(lng: number, lat: number, radius: number) {
@@ -94,16 +120,19 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
+  const popupRef = useRef<mapboxgl.Popup | null>(null)
   const onSelectRef = useRef(onSelect)
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers })
+  const onCenterSelectRef = useRef(onCenterSelect)
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers }
+  onCenterSelectRef.current = onCenterSelect
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -115,7 +144,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       attributionControl: false,
     })
     mapRef.current = map
-    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'vigia-popup', maxWidth: '270px' })
+    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'vigia-popup', maxWidth: '300px' })
+    popupRef.current = popup
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
     map.addControl(new mapboxgl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left')
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
@@ -135,8 +165,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         }
       }
       map.addImage('spread-pattern', { width: 8, height: 8, data: hatch })
-      map.addSource('spread', { type: 'geojson', data: polygonGeo(SPREAD_AREA) })
-      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': '#bb8a47', 'fill-opacity': 0.07 } })
+      map.addSource('spread', { type: 'geojson', data: current.projection, buffer: 0 })
+      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': ['match', ['get', 'band'], 30, '#f6a84f', 60, '#eec66d', '#dfd6a3'], 'fill-opacity': 0.25 } })
       map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.6 } })
       map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#c2a16c', 'line-width': 1, 'line-opacity': 0.65, 'line-dasharray': [4, 4] } })
 
@@ -146,58 +176,56 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         paint: { 'fill-color': '#ff0000', 'fill-opacity': 1, 'fill-antialias': false },
       }, firstLabel)
 
-      map.addSource('zones-area', {
-        type: 'geojson', data: {
-          type: 'FeatureCollection', features: current.zones.map((zone) => ({
-            type: 'Feature', properties: { name: zone.name },
-            geometry: { type: 'Polygon', coordinates: [circle(zone.lng, zone.lat, zone.radiusM)] },
-          })),
-        },
-      })
-      map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': '#4de3a6', 'fill-opacity': 0.14 } })
-      map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': '#4de3a6', 'line-width': 1.3, 'line-opacity': 0.8 } })
-      map.addSource('zones', {
-        type: 'geojson', data: {
-          type: 'FeatureCollection', features: current.zones.map((zone) => ({
-            type: 'Feature', properties: { id: zone.id, code: zone.code, name: zone.name.split(' · ')[0] },
-            geometry: { type: 'Point', coordinates: [zone.lng, zone.lat] },
-          })),
-        },
-      })
-      const canvas = document.createElement('canvas')
-      canvas.width = 64
-      canvas.height = 64
-      const context = canvas.getContext('2d')!
-      context.fillStyle = '#172d29'
-      context.strokeStyle = '#aad5ba'
-      context.lineWidth = 2.5
-      context.beginPath()
-      context.roundRect(5, 5, 54, 54, 12)
-      context.fill()
-      context.stroke()
-      context.strokeStyle = '#e5f3e9'
-      context.lineWidth = 3
-      context.lineJoin = 'round'
-      context.beginPath()
-      context.moveTo(17, 30)
-      context.lineTo(32, 18)
-      context.lineTo(47, 30)
-      context.moveTo(21, 29)
-      context.lineTo(21, 45)
-      context.lineTo(43, 45)
-      context.lineTo(43, 29)
-      context.moveTo(29, 45)
-      context.lineTo(29, 35)
-      context.lineTo(35, 35)
-      context.lineTo(35, 45)
-      context.stroke()
-      map.addImage('meeting-point', context.getImageData(0, 0, 64, 64), { pixelRatio: 2 })
-      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'icon-image': 'meeting-point', 'icon-size': 0.9, 'icon-allow-overlap': true } })
+      map.addSource('zones-area', { type: 'geojson', data: zoneAreas(current.zones, current.zoneExposure) })
+      map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.2 } })
+      map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.8 } })
+      map.addSource('zones', { type: 'geojson', data: zonesGeo(current.zones, current.zoneExposure) })
+      for (const [level, color] of Object.entries(EXPOSURE_COLOR)) {
+        const canvas = document.createElement('canvas')
+        canvas.width = 64
+        canvas.height = 64
+        const context = canvas.getContext('2d')!
+        context.fillStyle = '#14232d'
+        context.strokeStyle = color
+        context.lineWidth = 4
+        context.beginPath()
+        context.roundRect(5, 5, 54, 54, 12)
+        context.fill()
+        context.stroke()
+        context.lineWidth = 3
+        context.lineJoin = 'round'
+        context.beginPath()
+        context.moveTo(17, 30)
+        context.lineTo(32, 18)
+        context.lineTo(47, 30)
+        context.moveTo(21, 29)
+        context.lineTo(21, 45)
+        context.lineTo(43, 45)
+        context.lineTo(43, 29)
+        context.moveTo(29, 45)
+        context.lineTo(29, 35)
+        context.lineTo(35, 35)
+        context.lineTo(35, 45)
+        context.stroke()
+        map.addImage(`meeting-point-${level}`, context.getImageData(0, 0, 64, 64), { pixelRatio: 2 })
+      }
+      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'icon-image': ['concat', 'meeting-point-', ['get', 'level']], 'icon-size': 0.9, 'icon-allow-overlap': true } })
       map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: {
         'text-field': ['concat', ['get', 'code'], ' · ', ['get', 'name']],
         'text-size': 10, 'text-offset': [0, 2.1], 'text-anchor': 'top',
       }, paint: { 'text-color': '#d3eadb', 'text-halo-color': '#121b18', 'text-halo-width': 2 } })
 
+      map.addSource('refuge-route', { type: 'geojson', data: routeGeo(current.route) })
+      map.addLayer({ id: 'refuge-route-casing', type: 'line', source: 'refuge-route', paint: { 'line-color': '#12252e', 'line-width': 7 } }, 'zone-point')
+      map.addLayer({ id: 'refuge-route-line', type: 'line', source: 'refuge-route', paint: { 'line-color': '#8bddff', 'line-width': 3, 'line-dasharray': [3, 1] } }, 'zone-point')
+      map.addSource('response-centers', {
+        type: 'geojson', attribution: 'Centros: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+        data: { type: 'FeatureCollection', features: RESPONSE_CENTERS.map(center => ({ type: 'Feature', properties: { id: center.id, kind: center.kind, name: center.name, symbol: CENTER_SYMBOL[center.kind] }, geometry: { type: 'Point', coordinates: [center.lng, center.lat] } })) },
+      })
+      for (const [kind, color] of [['hospital', '#bda7ed'], ['health', '#a6d1e9'], ['fire', '#eea26a']]) {
+        map.addLayer({ id: `center-${kind}`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'symbol'], 'text-size': 23, 'text-allow-overlap': true }, paint: { 'text-color': color, 'text-halo-color': '#14232d', 'text-halo-width': 3 } })
+        map.addLayer({ id: `center-${kind}-label`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-max-width': 16 }, paint: { 'text-color': color, 'text-halo-color': '#14232d', 'text-halo-width': 2 } })
+      }
       map.addSource('thermal', { type: 'geojson', data: firesGeo(current.fires) })
       map.addLayer({ id: 'thermal-core', type: 'circle', source: 'thermal', filter: ['==', ['get', 'source'], 'scenario'], paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 1.5, 13, 2.5, 16, 4],
@@ -233,6 +261,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.on('click', (event) => {
         const { x, y } = event.point
         const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
+        const center = map.queryRenderedFeatures(box, { layers: ['center-hospital', 'center-hospital-label', 'center-health', 'center-health-label', 'center-fire', 'center-fire-label'] })[0]
+        if (center?.properties?.id) {
+          popup.remove()
+          onCenterSelectRef.current(String(center.properties.id))
+          return
+        }
         const meeting = map.queryRenderedFeatures(event.point, { layers: ['zone-point', 'zone-label'] })[0]
         const zone = dataRef.current.zones.find((item) => item.id === meeting?.properties?.id)
         if (zone) {
@@ -240,6 +274,10 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           const content = document.createElement('div')
           const title = document.createElement('strong')
           title.textContent = `${zone.code} · ${zone.name}`
+          const exposure = dataRef.current.zoneExposure[zone.id]
+          const risk = document.createElement('p')
+          risk.style.color = EXPOSURE_COLOR[exposure?.level ?? 'unknown']
+          risk.textContent = `${EXPOSURE_LABEL[exposure?.level ?? 'unknown']} · horizonte +${dataRef.current.horizon} min · margen ${dataRef.current.marginM} m${exposure && Number.isFinite(exposure.minute) ? ` · alcance simulado del margen a +${Math.ceil(exposure.minute)} min` : ''}`
           const description = document.createElement('p')
           description.textContent = zone.description
           const services = document.createElement('p')
@@ -251,7 +289,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           link.target = '_blank'
           link.rel = 'noreferrer'
           link.textContent = 'Fuente municipal'
-          content.append(title, description, services, note, document.createElement('br'), link)
+          content.append(title, risk, description, services, note, document.createElement('br'), link)
           popup.setLngLat([zone.lng, zone.lat]).setDOMContent(content).addTo(map)
           return
         }
@@ -297,7 +335,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'zone-point', 'zone-label'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
         map.getCanvas().style.cursor = features.length ? 'pointer' : ''
       })
       setLoaded(true)
@@ -322,7 +360,25 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     source(map, 'people')?.setData(citizensGeo(citizens))
     source(map, 'accuracy')?.setData(accuracyGeo(citizens.find((citizen) => citizen.id === selectedId)))
     patchLayers(map, layers, selectedId)
-  }, [citizens, fires, selectedId, layers])
+  }, [citizens, fires, selectedId, layers, loaded])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!loaded || !map) return
+    source(map, 'spread')?.setData(projection)
+    source(map, 'zones')?.setData(zonesGeo(zones, zoneExposure))
+    source(map, 'zones-area')?.setData(zoneAreas(zones, zoneExposure))
+  }, [loaded, projection, zones, zoneExposure])
+
+  useEffect(() => {
+    if (loaded && mapRef.current) source(mapRef.current, 'refuge-route')?.setData(routeGeo(route))
+  }, [loaded, route])
+
+  useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
+
+  useEffect(() => {
+    if (loaded && focusTarget) mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: 14, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 850 })
+  }, [loaded, focusTarget])
 
   useEffect(() => {
     const map = mapRef.current
@@ -343,6 +399,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         <span className="toolbar-divider" />
         <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.164, 40.191], [-5.06, 40.279]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Encuadrar</button>
         {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
+        {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
+        <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(INCIDENT.center, INCIDENT.center); RESPONSE_CENTERS.forEach(center => bounds.extend([center.lng, center.lat])); mapRef.current?.fitBounds(bounds, { padding: 100, duration: 800 }) }}>Ver centros</button>
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
       {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" onClick={() => setMapError('')}>Cerrar aviso</button></div>}

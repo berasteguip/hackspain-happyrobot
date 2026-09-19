@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CommandMap } from './CommandMap'
 import { fetchFirmsSpain } from './firms'
-import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES } from './scenario'
+import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS } from './scenario'
+import { buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
+import type { FireSettings } from './fire-model'
+import { FireControls, RefugeRoutesPanel, ResponsePanel } from './CopPanels'
+import { RESPONSE_CENTERS } from './response'
+import type { DemoNotice } from './response'
+import type { RefugeRoute } from './routing'
 import { loadCorridorRoutes, resolveGroupZones } from './routing'
 import type { RouteIndex } from './routing'
 import { advanceProtocol, moveEvacuees } from './simulation'
@@ -18,7 +24,11 @@ const LOCATION_LABEL = {
 }
 const LAYER_OPTIONS: { key: keyof MapLayers; name: string; detail: string; symbol: string }[] = [
   { key: 'perimeter', name: 'Huella térmica', detail: 'Manchas de celdas · escenario simulado', symbol: 'perimeter' },
-  { key: 'spread', name: 'Posible propagación', detail: 'Hipótesis · no es un pronóstico', symbol: 'spread' },
+  { key: 'spread', name: 'Propagación temporal', detail: 'Escenario configurable · no es un pronóstico', symbol: 'spread' },
+  { key: 'routes', name: 'Ruta seleccionada', detail: 'Comparación por tiempo · filtro de exposición', symbol: 'spread' },
+  { key: 'hospitals', name: 'Hospitales', detail: 'Centros reales · disponibilidad sin verificar', symbol: 'zone' },
+  { key: 'healthCenters', name: 'Centros de salud', detail: 'No equivalen a hospitales', symbol: 'zone' },
+  { key: 'fireStations', name: 'Bomberos', detail: 'Instalaciones · no dotaciones disponibles', symbol: 'zone' },
   { key: 'thermal', name: 'Detecciones térmicas', detail: 'Focos puntuales, no perímetros', symbol: 'thermal' },
   { key: 'citizens', name: 'Personas', detail: 'Ubicación y estado de contacto', symbol: 'person' },
   { key: 'references', name: 'Referencias residenciales', detail: 'No confirman presencia', symbol: 'reference' },
@@ -44,11 +54,23 @@ export function CommandCenter({ token }: { token: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
-  const [panel, setPanel] = useState<'people' | 'layers' | null>(null)
+  const [panel, setPanel] = useState<'people' | 'layers' | 'cop' | 'centers' | null>(null)
+  const [fireSettings, setFireSettings] = useState<FireSettings>({ windTowardDeg: 225, windKmh: 20, spreadMPerMin: 5 })
+  const [horizon, setHorizon] = useState(30)
+  const [marginM, setMarginM] = useState(150)
+  const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null)
+  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number } | null>(null)
+  const [mapRoute, setMapRoute] = useState<RefugeRoute | null>(null)
+  const [notices, setNotices] = useState<DemoNotice[]>([])
+  const forecast = useMemo(() => buildFireForecast(SCENARIO_FIRE_CELLS, fireSettings), [fireSettings])
+  const projection = useMemo(() => forecastGeo(forecast, horizon), [forecast, horizon])
+  const zoneExposure = useMemo(() => Object.fromEntries(SAFE_ZONES.map(zone => [zone.id, exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)])), [forecast, horizon, marginM])
+  const forecastRef = useRef({ forecast, horizon, marginM })
+  useEffect(() => { forecastRef.current = { forecast, horizon, marginM } }, [forecast, horizon, marginM])
   const [firms, setFirms] = useState<FireSpot[]>([])
   const [showFirms, setShowFirms] = useState(false)
   const [firmsState, setFirmsState] = useState('Sin consultar · detecciones de las últimas 24 h')
-  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: false, thermal: false, citizens: true, references: true, zones: true })
+  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: true, thermal: false, citizens: true, references: true, zones: true, hospitals: true, healthCenters: true, fireStations: true, routes: true })
   const citizensRef = useRef(citizens)
   const routesRef = useRef<RouteIndex>(new Map())
   const elapsedRef = useRef(0)
@@ -94,7 +116,7 @@ export function CommandCenter({ token }: { token: string }) {
         setCitizens((current) => {
           const next = current.map((citizen) => {
             const zoneId = citizen.locality ? byGroup.get(citizen.locality) : undefined
-            return zoneId && zoneId !== citizen.safeZoneId ? { ...citizen, safeZoneId: zoneId } : citizen
+            return !citizen.live && zoneId && zoneId !== citizen.safeZoneId ? { ...citizen, safeZoneId: zoneId } : citizen
           })
           citizensRef.current = next
           return next
@@ -114,7 +136,15 @@ export function CommandCenter({ token }: { token: string }) {
       previousElapsed = nextElapsed
       elapsedRef.current = nextElapsed
       const advanced = advanceProtocol(citizensRef.current, nextElapsed, [])
-      const moved = moveEvacuees(advanced.citizens, routesRef.current, SAFE_ZONES, dt)
+      const risk = forecastRef.current
+      const moved = moveEvacuees(advanced.citizens, routesRef.current, SAFE_ZONES, dt).map((next, index) => {
+        const previous = advanced.citizens[index]
+        if (next === previous || previous.live) return next
+        const zone = SAFE_ZONES.find(item => item.id === next.safeZoneId)
+        const hasRoad = [...routesRef.current.values()].some(route => route.zoneId === next.safeZoneId)
+        const exposed = !zone || exposureAt(risk.forecast, zone.lng, zone.lat, risk.horizon, risk.marginM + zone.radiusM).level !== 'clear'
+        return !hasRoad || exposed || routeBlocked(risk.forecast, [[previous.lng, previous.lat], [next.lng, next.lat]], risk.horizon, risk.marginM) ? previous : next
+      })
       citizensRef.current = moved
       setCitizens(moved)
       setElapsed(nextElapsed)
@@ -157,7 +187,18 @@ export function CommandCenter({ token }: { token: string }) {
     setPanel(null)
     if (id) setLayers((previous) => ({ ...previous, citizens: true, references: true }))
   }
-  const togglePanel = (next: 'people' | 'layers') => { setSelectedId(null); setPanel((current) => current === next ? null : next) }
+  const togglePanel = (next: 'people' | 'layers' | 'cop' | 'centers') => { setSelectedId(null); setPanel((current) => current === next ? null : next) }
+  const selectCenter = (id: string) => {
+    const center = RESPONSE_CENTERS.find(item => item.id === id)
+    if (!center) return
+    setSelectedId(null)
+    setSelectedCenterId(id)
+    setPanel('centers')
+    setFocusTarget({ lng: center.lng, lat: center.lat })
+    setLayers(previous => ({ ...previous, [center.kind === 'hospital' ? 'hospitals' : center.kind === 'health' ? 'healthCenters' : 'fireStations']: true }))
+  }
+  const panelTitle = selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : panel === 'cop' ? 'Simulación del incendio' : panel === 'centers' ? 'Centros y coordinación' : 'Personas'
+  const scenarioLabel = `Escenario +${horizon} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
   const closePanel = () => {
     if (panel === 'layers') layersButtonRef.current?.focus()
     else peopleButtonRef.current?.focus()
@@ -168,20 +209,23 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className="map-app">
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} />
+        <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} />
       </main>
       <header className="floating-brand">
         <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">Sierra de Gredos</span><span className="demo-badge">DEMO</span>
       </header>
       <nav className="floating-actions" aria-label="Herramientas del mapa">
+        <button type="button" aria-label="Simulación del incendio" className={panel === 'cop' ? 'active' : ''} aria-expanded={panel === 'cop'} aria-controls="map-panel" onClick={() => togglePanel('cop')}><Icon name="layers" /><span>Propagación</span></button>
+        <button type="button" aria-label="Centros y coordinación" className={panel === 'centers' ? 'active' : ''} aria-expanded={panel === 'centers'} aria-controls="map-panel" onClick={() => togglePanel('centers')}><Icon name="people" /><span>Centros</span></button>
         <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
       </nav>
       <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point hollow" />Referencia residencial</span><span><i className="legend-point" />Ubicación compartida</span><span><i className="legend-zone" />Punto de encuentro</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
-      {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : 'Personas'}>
-        <div className="floating-panel-heading"><h2>{selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : 'Personas'}</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
+      <button type="button" className="forecast-summary" onClick={() => togglePanel('cop')} aria-label="Configurar escenario de propagación"><span className="eyebrow">PROPAGACIÓN · ESCENARIO</span><strong>Inicio → +{horizon} min</strong><span>Viento hacia {['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][fireSettings.windTowardDeg / 45]} · {fireSettings.windKmh} km/h</span><small>No es un pronóstico</small></button>
+      {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={panelTitle}>
+        <div className="floating-panel-heading"><h2>{panelTitle}</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
         <div className="floating-panel-body">
-          {selected ? <PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} /> : panel === 'layers' ? (
+          {selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} /></> : panel === 'cop' ? <FireControls settings={fireSettings} onSettings={setFireSettings} horizon={horizon} onHorizon={setHorizon} marginM={marginM} onMargin={setMarginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} /> : panel === 'centers' ? <ResponsePanel selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} /> : panel === 'layers' ? (
             <div className="layer-content">
               {LAYER_OPTIONS.map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><span className={`layer-symbol ${layer.symbol}`} aria-hidden="true" /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}
               <details className="source-details"><summary>Fuente externa · NASA FIRMS</summary><label className="source-toggle"><span>Mostrar detecciones satélite</span><input type="checkbox" checked={showFirms} onChange={(event) => { setShowFirms(event.target.checked); if (event.target.checked) { setFirmsState('Consultando detecciones…'); setLayers((previous) => ({ ...previous, thermal: true })) } }} /></label><p className="fine" role="status">{firmsState}</p><p className="fine">No son datos en tiempo real ni delimitan un incendio.</p></details>

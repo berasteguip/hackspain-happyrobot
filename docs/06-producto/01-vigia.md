@@ -141,8 +141,40 @@ runner de Vite de coordenadas/metadatos, 300 personas, 48 corredores dirigidos a
 nuevos puntos, llegadas dentro del radio de demo y exclusión de sesiones GPS del
 movimiento simulado. No se ha validado visualmente el mapa en navegador.
 
+## Investigación para ampliar el COP — 2026-09-19
+
+- La propagación actual es una geometría fija (`SPREAD_AREA`), no una simulación
+  temporal. La documentación técnica de FARSITE describe modelos con combustible,
+  meteorología y topografía; una animación dirigida por viento no equivale a un
+  pronóstico validado. La huella inicial de esta demo también es sintética.
+- El routing actual compara longitudes y no conserva la duración del proveedor.
+  Mapbox Directions devuelve `duration` en segundos y permite solicitar alternativas;
+  es necesario conservar ese campo para comparar tiempos entre rutas consultadas.
+  La menor duración no demuestra seguridad ante un incendio.
+- SACYL confirma el Centro de Salud de Arenas de San Pedro en C/ Pintor Martínez
+  Vázquez, 21, y el Hospital Nuestra Señora de Sonsoles en Ávila. Son tipos de centro
+  distintos; no debe presentarse el centro de salud como hospital ni suponerse
+  disponibilidad de camas, urgencias o recursos a partir de su presencia en un mapa.
+- La operatividad actual del parque comarcal de bomberos de Ramacastañas queda
+  **[SIN VERIFICAR]**. La información periodística localizada sobre su puesta en
+  marcha en 2026 no basta para marcarlo como recurso disponible.
+- La petición del equipo del 2026-09-19 amplía el interés hacia avisos a centros
+  sanitarios y coordinación con bomberos. La frontera anterior «no despacha medios
+  de extinción» sigue vigente hasta concretar el alcance: mostrar un centro,
+  preparar un aviso y ordenar un despliegue son operaciones diferentes.
+
+Fuentes consultadas para esta investigación: referencias siguientes y revisión de
+`scenario.ts` y `routing.ts` el 2026-09-19. No hay nuevas capas COP implementadas
+como resultado de esta investigación; las coordenadas de los centros están pendientes
+de verificación antes de incorporarlas al mapa.
+
 ## Fuentes
 
+- USDA Forest Service, FARSITE — modelos de propagación, combustible y terreno — https://research.fs.usda.gov/sites/default/files/2024-01/firelab-finney_and_andrews_1999_fmn_v59_i2_pp13-15.pdf (extracto localizado 2026-09-19).
+- Mapbox Directions API — perfiles, alternativas y duración — https://docs.mapbox.com/api/navigation/directions/ (consultado 2026-09-19).
+- SACYL, Centro de Salud de Arenas de San Pedro — https://www.saludcastillayleon.es/CAAvila/es/area-influencia/z-b-s-arenas-san-pedro (consultado 2026-09-19).
+- SACYL, Hospital Nuestra Señora de Sonsoles — https://www.saludcastillayleon.es/CAAvila/es/hospital-senora-sonsoles (extracto localizado 2026-09-19).
+- Ávilared, selección de personal y apertura prevista de parques — https://avilared.com/art/91127/primeros-cabos-parques-bomberos-avila-seleccion-apertura-2026 (extracto localizado 2026-09-19; no confirma disponibilidad actual).
 - Branch de origen: `origin/devin/vigia-grupos-puntos-encuentro`, commit `a584037`, `src/scenario.ts`, `src/types.ts` y `src/CommandMap.tsx` (revisados 2026-09-19).
 - Ayuntamiento de Guisando, aparcamientos de La Dehesa y El Risquillo — https://guisando.net/servicios-publicos/aparcamientos (consultado 2026-09-19).
 - Ayuntamiento de Arenas de San Pedro, polideportivo Jesús Navarro — https://arenasdesanpedro.es/concejalias/deportes/polideportivo-jesus-navarro/ (consultado 2026-09-19).

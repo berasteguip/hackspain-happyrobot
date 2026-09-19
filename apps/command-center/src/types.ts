@@ -48,6 +48,10 @@ export type MapLayers = {
   citizens: boolean
   references: boolean
   zones: boolean
+  hospitals: boolean
+  healthCenters: boolean
+  fireStations: boolean
+  routes: boolean
 }
 
 export type LocationPing = {
