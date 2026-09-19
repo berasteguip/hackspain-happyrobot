@@ -14,8 +14,8 @@ export type Citizen = {
   phone: string
   lng: number
   lat: number
-  originLng: number
-  originLat: number
+  originLng?: number
+  originLat?: number
   status: CitizenStatus
   vulnerable: boolean
   safeZoneId: string
@@ -23,6 +23,38 @@ export type Citizen = {
   callDelaySec: number
   outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating'>
   live?: boolean
+  locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
+  locationUpdatedAt?: number
+  accuracyM?: number
+  locality?: string
+  resident?: boolean
+  household?: { name: string; situation: string; source: string }[]
+  call?: {
+    answeredAt: number
+    agent: string
+    summary: string
+    consent: 'granted' | 'declined' | 'not_requested'
+    needs: string[]
+  }
+}
+
+export type MapLayers = {
+  perimeter: boolean
+  spread: boolean
+  thermal: boolean
+  citizens: boolean
+  references: boolean
+  zones: boolean
+}
+
+export type LocationPing = {
+  id: string
+  name: string
+  lng: number
+  lat: number
+  ts: number
+  source?: 'gps' | 'simulation' | 'unknown'
+  accuracyM?: number
 }
 
 export type SafeZone = {

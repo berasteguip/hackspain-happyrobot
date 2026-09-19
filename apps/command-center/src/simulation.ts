@@ -1,4 +1,4 @@
-import { destination, haversineMeters, bearingDeg, nearestZone } from './geo'
+import { destination, haversineMeters, bearingDeg } from './geo'
 import { AGENTS } from './scenario'
 import type { CallEvent, Citizen, SafeZone } from './types'
 
@@ -6,12 +6,11 @@ const RING_SEC = 2.4
 
 export function advanceProtocol(
   citizens: Citizen[],
-  zones: SafeZone[],
   elapsedSec: number,
   prevEvents: CallEvent[],
 ): { citizens: Citizen[]; events: CallEvent[] } {
   const events = [...prevEvents]
-  const next = citizens.map((citizen, index) => {
+  const next = citizens.map((citizen, index): Citizen => {
     if (citizen.live) return citizen
     if (citizen.status === 'safe' || citizen.status === 'refused') return citizen
     if (citizen.status === 'no_answer') return citizen
@@ -37,11 +36,11 @@ export function advanceProtocol(
     ) {
       const detail =
         citizen.outcome === 'tracking'
-          ? 'contestada · consiente ubicación · zona segura asignada'
+          ? 'contestada · comparte ubicación en la demo'
           : citizen.outcome === 'informed'
             ? 'contestada · informado, no comparte ubicación'
             : citizen.outcome === 'no_answer'
-              ? 'sin respuesta · reintento en cola'
+              ? 'sin respuesta · pendiente de revisión'
               : 'contestada · rechaza seguimiento'
       events.push({
         id: `${citizen.id}-out`,
@@ -51,10 +50,29 @@ export function advanceProtocol(
         name: citizen.name,
         detail,
       })
-      const nearest = nearestZone(citizen.lng, citizen.lat, zones)
-      const status: Citizen['status'] =
-        citizen.outcome === 'tracking' ? 'evacuating' : citizen.outcome
-      return { ...citizen, status, safeZoneId: nearest.zone.id }
+      const status: Citizen['status'] = citizen.outcome
+      const answered = citizen.outcome !== 'no_answer'
+      return {
+        ...citizen,
+        status,
+        locationSource: citizen.outcome === 'tracking' ? 'simulation' : citizen.locationSource,
+        locationUpdatedAt: citizen.outcome === 'tracking' ? Date.now() : citizen.locationUpdatedAt,
+        call: answered ? {
+          answeredAt: Date.now(),
+          agent: AGENTS[index % AGENTS.length],
+          summary: citizen.outcome === 'tracking'
+            ? 'En el guion de demostración, la persona recibe el aviso y comparte una ubicación dentro de su localidad. No se infiere que haya salido ni se le asigna un destino.'
+            : citizen.outcome === 'informed'
+              ? 'En el guion de demostración, la persona recibe el aviso. No se obtiene una nueva ubicación.'
+              : 'En el guion de demostración, la persona rechaza compartir su ubicación. Se conserva únicamente la referencia inicial.',
+          consent: citizen.outcome === 'tracking' ? 'granted' : 'declined',
+          needs: citizen.vulnerable ? ['Necesidad de apoyo pendiente de valoración humana'] : [],
+        } : undefined,
+        household: answered && citizen.id === 'c-01' ? [
+          { name: 'Familiar A · dato ficticio', situation: 'La interlocutora indica que está con ella', source: 'Guion de llamada · sin confirmación independiente' },
+          { name: 'Familiar B · dato ficticio', situation: 'Ubicación desconocida', source: 'Guion de llamada · pendiente de contacto' },
+        ] : citizen.household,
+      }
     }
 
     return citizen
@@ -69,7 +87,7 @@ export function moveEvacuees(
   dtSec: number,
 ): Citizen[] {
   return citizens.map((citizen) => {
-    if (citizen.status !== 'evacuating') return citizen
+    if (citizen.live || citizen.status !== 'evacuating') return citizen
     const zone = zones.find((item) => item.id === citizen.safeZoneId)
     if (!zone) return citizen
 
@@ -80,6 +98,6 @@ export function moveEvacuees(
     }
     const brg = bearingDeg(citizen.lng, citizen.lat, zone.lng, zone.lat)
     const [lng, lat] = destination(citizen.lng, citizen.lat, brg, step)
-    return { ...citizen, lng, lat }
+    return { ...citizen, lng, lat, locationUpdatedAt: Date.now() }
   })
 }

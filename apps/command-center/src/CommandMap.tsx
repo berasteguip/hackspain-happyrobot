@@ -1,104 +1,42 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
-import type { GeoJSONSource, ExpressionSpecification } from 'mapbox-gl'
+import type { GeoJSONSource } from 'mapbox-gl'
 import type { FeatureCollection, Polygon, Point } from 'geojson'
-import { INCIDENT, RISK_AREA } from './scenario'
-import type { Citizen, FireSpot, SafeZone } from './types'
+import { FIRE_CELL_SIZE_M, SCENARIO_FIRE_CELLS, INCIDENT, SPREAD_AREA } from './scenario'
+import { destination } from './geo'
+import type { Citizen, FireSpot, MapLayers, RiskArea, SafeZone } from './types'
 
 const STATUS_COLOR: Record<string, string> = {
-  pending: '#6f7b88',
-  ringing: '#f5c84c',
-  no_answer: '#ff7a4d',
-  informed: '#c4b5fd',
-  tracking: '#5cc8ff',
-  evacuating: '#5cc8ff',
-  safe: '#3ee0a5',
-  refused: '#9aa3ad',
+  pending: '#8c99a5', ringing: '#dac184', no_answer: '#d79770',
+  informed: '#b1bcd0', tracking: '#8bc9df', evacuating: '#8bc9df',
+  safe: '#82baa0', refused: '#8c99a5',
+}
+
+const LAYER_IDS: Record<keyof MapLayers, string[]> = {
+  perimeter: ['fire-cells-fill'],
+  spread: ['spread-fill', 'spread-hatch', 'spread-edge'],
+  thermal: ['thermal-core', 'thermal-satellite'],
+  citizens: ['people-dot', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
+  references: [],
+  zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
 }
 
 type Props = {
   token: string
   citizens: Citizen[]
   fires: FireSpot[]
-  satelliteFires?: FireSpot[]
   zones: SafeZone[]
   selectedId: string | null
-  fireScale: number
+  layers: MapLayers
   onSelect: (id: string | null) => void
-}
-
-function fireHeatRadius(scale: number): ExpressionSpecification {
-  return [
-    'interpolate',
-    ['linear'],
-    ['zoom'],
-    9,
-    22 * scale,
-    11,
-    42 * scale,
-    13,
-    64 * scale,
-  ]
-}
-
-function fireHeatIntensity(scale: number): ExpressionSpecification {
-  const t = Math.min(Math.max((scale - 1) / 1.2, 0), 1)
-  return [
-    'interpolate',
-    ['linear'],
-    ['zoom'],
-    9,
-    1.05 + t * 0.7,
-    12,
-    1.7 + t * 1.1,
-  ]
-}
-
-function fireHaloRadius(scale: number): ExpressionSpecification {
-  return [
-    'interpolate',
-    ['linear'],
-    ['zoom'],
-    10,
-    ['interpolate', ['linear'], ['get', 'frp'], 5, 10 * scale, 40, 18 * scale, 120, 28 * scale],
-    13,
-    ['interpolate', ['linear'], ['get', 'frp'], 5, 18 * scale, 40, 32 * scale, 120, 44 * scale],
-  ]
-}
-
-function fireGlowRadius(scale: number): ExpressionSpecification {
-  return [
-    'interpolate',
-    ['linear'],
-    ['zoom'],
-    10,
-    ['interpolate', ['linear'], ['get', 'frp'], 5, 5.5 * scale, 40, 10 * scale, 120, 16 * scale],
-    13,
-    ['interpolate', ['linear'], ['get', 'frp'], 5, 9 * scale, 40, 16 * scale, 120, 24 * scale],
-  ]
-}
-
-function applyFireScale(map: mapboxgl.Map, scale: number) {
-  if (!map.getLayer('fires-heat')) return
-  map.setPaintProperty('fires-heat', 'heatmap-radius', fireHeatRadius(scale))
-  map.setPaintProperty('fires-heat', 'heatmap-intensity', fireHeatIntensity(scale))
-  map.setPaintProperty('fires-halo', 'circle-radius', fireHaloRadius(scale))
-  map.setPaintProperty('fires-glow', 'circle-radius', fireGlowRadius(scale))
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
   return {
     type: 'FeatureCollection',
     features: fires.map((fire) => ({
-      type: 'Feature',
-      properties: {
-        id: fire.id,
-        frp: fire.frp,
-        confidence: fire.confidence,
-        source: fire.source,
-        acquiredAt: fire.acquiredAt,
-      },
+      type: 'Feature', properties: { ...fire },
       geometry: { type: 'Point', coordinates: [fire.lng, fire.lat] },
     })),
   }
@@ -110,38 +48,31 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
     features: citizens.map((citizen) => ({
       type: 'Feature',
       properties: {
-        id: citizen.id,
-        name: citizen.name,
-        status: citizen.status,
-        vulnerable: citizen.vulnerable,
-        live: Boolean(citizen.live),
+        id: citizen.id, name: citizen.name, status: citizen.status,
+        reference: !citizen.locationSource || citizen.locationSource === 'reference' || citizen.locationSource === 'unknown',
       },
       geometry: { type: 'Point', coordinates: [citizen.lng, citizen.lat] },
     })),
   }
 }
 
-function zonesGeo(zones: SafeZone[]): FeatureCollection<Point> {
+function polygonGeo(area: RiskArea): FeatureCollection<Polygon> {
   return {
     type: 'FeatureCollection',
-    features: zones.map((zone) => ({
-      type: 'Feature',
-      properties: { id: zone.id, name: zone.name, radiusM: zone.radiusM },
-      geometry: { type: 'Point', coordinates: [zone.lng, zone.lat] },
-    })),
+    features: [{ type: 'Feature', properties: { name: area.name }, geometry: { type: 'Polygon', coordinates: [area.coordinates] } }],
   }
 }
 
-function riskGeo(): FeatureCollection<Polygon> {
+function circle(lng: number, lat: number, radius: number) {
+  return Array.from({ length: 65 }, (_, i) => destination(lng, lat, (i % 64) * 360 / 64, radius))
+}
+
+function accuracyGeo(citizen?: Citizen): FeatureCollection<Polygon> {
   return {
     type: 'FeatureCollection',
-    features: [
-      {
-        type: 'Feature',
-        properties: { name: RISK_AREA.name },
-        geometry: { type: 'Polygon', coordinates: [RISK_AREA.coordinates] },
-      },
-    ],
+    features: citizen?.locationSource === 'gps' && citizen.accuracyM !== undefined && citizen.accuracyM > 0
+      ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circle(citizen.lng, citizen.lat, citizen.accuracyM)] } }]
+      : [],
   }
 }
 
@@ -149,264 +80,174 @@ function source(map: mapboxgl.Map, id: string) {
   return map.getSource(id) as GeoJSONSource | undefined
 }
 
-export function CommandMap({
-  token,
-  citizens,
-  fires,
-  satelliteFires = [],
-  zones,
-  selectedId,
-  fireScale,
-  onSelect,
-}: Props) {
+function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | null) {
+  for (const [key, ids] of Object.entries(LAYER_IDS)) {
+    for (const id of ids) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', layers[key as keyof MapLayers] ? 'visible' : 'none')
+    }
+  }
+  const visible: mapboxgl.FilterSpecification = layers.references ? ['has', 'id'] : ['==', ['get', 'reference'], false]
+  map.setFilter('people-dot', visible)
+  for (const id of ['people-selection', 'people-label']) {
+    map.setFilter(id, ['all', visible, ['==', ['get', 'id'], selectedId ?? '']])
+  }
+}
+
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
-  const popupRef = useRef<mapboxgl.Popup | null>(null)
   const onSelectRef = useRef(onSelect)
-  const dataRef = useRef({ citizens, fires, satelliteFires, zones, selectedId, fireScale })
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers })
+  const [satellite, setSatellite] = useState(false)
+  const [mapError, setMapError] = useState('')
+  const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
-  dataRef.current = { citizens, fires, satelliteFires, zones, selectedId, fireScale }
+  dataRef.current = { citizens, fires, zones, selectedId, layers }
 
   useEffect(() => {
     if (!rootRef.current) return
-    mapboxgl.accessToken = token
-
     const map = new mapboxgl.Map({
       container: rootRef.current,
+      accessToken: token,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: INCIDENT.center,
-      zoom: INCIDENT.zoom,
-      pitch: 48,
-      bearing: -18,
+      center: INCIDENT.center, zoom: rootRef.current.clientWidth < 680 ? 11.35 : INCIDENT.zoom, pitch: 0, bearing: 0,
       attributionControl: false,
     })
     mapRef.current = map
-    popupRef.current = new mapboxgl.Popup({
-      closeButton: false,
-      offset: 12,
-      className: 'vigia-popup',
-    })
-
-    map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'bottom-right')
-    map.addControl(new mapboxgl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left')
+    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'vigia-popup', maxWidth: '270px' })
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
+    map.addControl(new mapboxgl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left')
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
+    map.on('error', (event) => setMapError(event.error.message || 'No se ha podido cargar la cartografía.'))
 
     const onLoad = () => {
-      map.addSource('risk', { type: 'geojson', data: riskGeo() })
-      map.addLayer({
-        id: 'risk-fill',
-        type: 'fill',
-        source: 'risk',
-        paint: { 'fill-color': '#ff5a1f', 'fill-opacity': 0.12 },
-      })
-      map.addLayer({
-        id: 'risk-line',
-        type: 'line',
-        source: 'risk',
-        paint: {
-          'line-color': '#ff7a3d',
-          'line-width': 1.6,
-          'line-dasharray': [2, 1.4],
-        },
-      })
+      const current = dataRef.current
+      const firstLabel = map.getStyle().layers.find((layer) => layer.type === 'symbol')?.id
+      map.addSource('satellite-base', { type: 'raster', url: 'mapbox://mapbox.satellite', tileSize: 256 })
+      map.addLayer({ id: 'satellite-base', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.12, 'raster-brightness-max': 0.95 } }, firstLabel)
 
-      map.addSource('zones', { type: 'geojson', data: zonesGeo(dataRef.current.zones) })
-      map.addLayer({
-        id: 'zones-halo',
-        type: 'circle',
-        source: 'zones',
-        paint: {
-          'circle-radius': 12,
-          'circle-color': '#3ee0a5',
-          'circle-opacity': 0.18,
-          'circle-stroke-width': 1.2,
-          'circle-stroke-color': '#3ee0a5',
-        },
-      })
-      map.addLayer({
-        id: 'zones-core',
-        type: 'circle',
-        source: 'zones',
-        paint: {
-          'circle-radius': 4.5,
-          'circle-color': '#3ee0a5',
-          'circle-opacity': 0.9,
-          'circle-stroke-width': 1,
-          'circle-stroke-color': '#d7fff0',
-        },
-      })
-      map.addLayer({
-        id: 'zones-label',
-        type: 'symbol',
-        source: 'zones',
-        layout: {
-          'text-field': ['get', 'name'],
-          'text-size': 11,
-          'text-offset': [0, 1.35],
-          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Regular'],
-        },
-        paint: {
-          'text-color': '#d7fff0',
-          'text-halo-color': '#07110c',
-          'text-halo-width': 1.2,
-        },
-      })
+      const hatch = new Uint8Array(8 * 8 * 4)
+      for (let y = 0; y < 8; y += 1) {
+        for (let x = 0; x < 8; x += 1) {
+          const offset = (y * 8 + x) * 4
+          hatch.set([210, 166, 99, (x + y) % 8 < 2 ? 85 : 0], offset)
+        }
+      }
+      map.addImage('spread-pattern', { width: 8, height: 8, data: hatch })
+      map.addSource('spread', { type: 'geojson', data: polygonGeo(SPREAD_AREA) })
+      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': '#bb8a47', 'fill-opacity': 0.07 } })
+      map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.6 } })
+      map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#c2a16c', 'line-width': 1, 'line-opacity': 0.65, 'line-dasharray': [4, 4] } })
 
-      map.addSource('fires', { type: 'geojson', data: firesGeo(dataRef.current.fires) })
+      map.addSource('fire-cells', { type: 'geojson', data: SCENARIO_FIRE_CELLS, buffer: 0, tolerance: 0 })
       map.addLayer({
-        id: 'fires-heat',
-        type: 'heatmap',
-        source: 'fires',
-        paint: {
-          'heatmap-weight': ['interpolate', ['linear'], ['get', 'frp'], 0, 0.45, 30, 0.85, 120, 1],
-          'heatmap-intensity': fireHeatIntensity(dataRef.current.fireScale),
-          'heatmap-radius': fireHeatRadius(dataRef.current.fireScale),
-          'heatmap-opacity': 0.92,
-          'heatmap-color': [
-            'interpolate',
-            ['linear'],
-            ['heatmap-density'],
-            0, 'rgba(0,0,0,0)',
-            0.08, 'rgba(255,170,40,0.35)',
-            0.25, 'rgba(255,110,20,0.7)',
-            0.5, 'rgba(255,50,8,0.9)',
-            0.8, 'rgba(255,220,140,1)',
-          ],
-        },
-      })
-      map.addLayer({
-        id: 'fires-halo',
-        type: 'circle',
-        source: 'fires',
-        paint: {
-          'circle-radius': fireHaloRadius(dataRef.current.fireScale),
-          'circle-color': '#ff6a1a',
-          'circle-opacity': 0.28,
-          'circle-blur': 0.85,
-        },
-      })
-      map.addLayer({
-        id: 'fires-glow',
-        type: 'circle',
-        source: 'fires',
-        paint: {
-          'circle-radius': fireGlowRadius(dataRef.current.fireScale),
-          'circle-color': [
-            'match',
-            ['get', 'confidence'],
-            'high', '#ff3b0a',
-            'nominal', '#ff7a1a',
-            '#ffc14d',
-          ],
-          'circle-opacity': 0.95,
-          'circle-blur': 0.25,
-          'circle-stroke-width': 1.2,
-          'circle-stroke-color': '#ffe7b0',
-        },
-      })
+        id: 'fire-cells-fill', type: 'fill', source: 'fire-cells',
+        paint: { 'fill-color': '#ff0000', 'fill-opacity': 1, 'fill-antialias': false },
+      }, firstLabel)
 
-      map.addSource('satellite', { type: 'geojson', data: firesGeo(dataRef.current.satelliteFires) })
-      map.addLayer({
-        id: 'satellite-dots',
-        type: 'circle',
-        source: 'satellite',
-        paint: {
-          'circle-radius': 3.2,
-          'circle-color': '#ffb347',
-          'circle-opacity': 0.7,
-          'circle-stroke-width': 0.6,
-          'circle-stroke-color': '#ffe7b0',
+      map.addSource('zones-area', {
+        type: 'geojson', data: {
+          type: 'FeatureCollection', features: current.zones.map((zone) => ({
+            type: 'Feature', properties: { name: zone.name },
+            geometry: { type: 'Polygon', coordinates: [circle(zone.lng, zone.lat, zone.radiusM)] },
+          })),
         },
       })
+      map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': '#80bba2', 'fill-opacity': 0.12 } })
+      map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': '#80bba2', 'line-width': 1, 'line-opacity': 0.6 } })
+      map.addSource('zones', {
+        type: 'geojson', data: {
+          type: 'FeatureCollection', features: current.zones.map((zone) => ({
+            type: 'Feature', properties: { name: zone.name.split(' · ')[1] ?? zone.name },
+            geometry: { type: 'Point', coordinates: [zone.lng, zone.lat] },
+          })),
+        },
+      })
+      map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'text-field': '+', 'text-size': 19, 'text-allow-overlap': true }, paint: { 'text-color': '#a5d0bb', 'text-halo-color': '#15231c', 'text-halo-width': 2 } })
+      map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.6] }, paint: { 'text-color': '#add1be', 'text-halo-color': '#121b18', 'text-halo-width': 1.5 } })
 
-      map.addSource('citizens', { type: 'geojson', data: citizensGeo(dataRef.current.citizens) })
-      map.addLayer({
-        id: 'citizens-pulse',
-        type: 'circle',
-        source: 'citizens',
-        filter: ['in', ['get', 'status'], ['literal', ['tracking', 'evacuating', 'ringing']]],
-        paint: {
-          'circle-radius': 7,
-          'circle-color': [
-            'match',
-            ['get', 'status'],
-            'ringing', '#f5c84c',
-            '#5cc8ff',
-          ],
-          'circle-opacity': 0.18,
-        },
-      })
-      map.addLayer({
-        id: 'citizens-dot',
-        type: 'circle',
-        source: 'citizens',
-        paint: {
-          'circle-radius': [
-            'case',
-            ['==', ['get', 'id'], dataRef.current.selectedId ?? ''],
-            6.2,
-            ['get', 'vulnerable'],
-            5,
-            4,
-          ],
-          'circle-color': [
-            'match',
-            ['get', 'status'],
-            ...Object.entries(STATUS_COLOR).flat(),
-            '#ffffff',
-          ],
-          'circle-stroke-width': [
-            'case',
-            ['==', ['get', 'id'], dataRef.current.selectedId ?? ''],
-            2.4,
-            ['get', 'vulnerable'],
-            1.6,
-            1,
-          ],
-          'circle-stroke-color': [
-            'case',
-            ['==', ['get', 'id'], dataRef.current.selectedId ?? ''],
-            '#ffffff',
-            ['get', 'vulnerable'],
-            '#ffd36a',
-            '#0b0f14',
-          ],
-        },
-      })
+      map.addSource('thermal', { type: 'geojson', data: firesGeo(current.fires) })
+      map.addLayer({ id: 'thermal-core', type: 'circle', source: 'thermal', filter: ['==', ['get', 'source'], 'scenario'], paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 1.5, 13, 2.5, 16, 4],
+        'circle-color': '#f7b481', 'circle-opacity': 0.95, 'circle-stroke-color': '#8b3a28', 'circle-stroke-width': 1,
+      } })
+      map.addLayer({ id: 'thermal-satellite', type: 'circle', source: 'thermal', filter: ['==', ['get', 'source'], 'firms'], paint: {
+        'circle-radius': 3.5, 'circle-color': '#e7aa68', 'circle-opacity': 0.15,
+        'circle-stroke-color': '#e7aa68', 'circle-stroke-width': 1.2,
+      } })
 
-      map.on('click', 'citizens-dot', (event) => {
-        const feature = event.features?.[0]
-        const id = feature?.properties?.id as string | undefined
-        if (id) onSelectRef.current(id)
+      map.addSource('accuracy', { type: 'geojson', data: accuracyGeo(current.citizens.find((citizen) => citizen.id === current.selectedId)) })
+      map.addLayer({ id: 'accuracy-fill', type: 'fill', source: 'accuracy', paint: { 'fill-color': '#92c6d8', 'fill-opacity': 0.08 } })
+      map.addLayer({ id: 'accuracy-line', type: 'line', source: 'accuracy', paint: { 'line-color': '#92c6d8', 'line-width': 1, 'line-dasharray': [2, 3] } })
+      map.addSource('people', { type: 'geojson', data: citizensGeo(current.citizens) })
+      map.addLayer({ id: 'people-dot', type: 'circle', source: 'people', paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 0.8, 11, 1.2, 14, 2.3, 17, 3.2],
+        'circle-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#8c99a5'],
+        'circle-opacity': ['case', ['get', 'reference'], 0.12, 0.95],
+        'circle-stroke-width': 0.85,
+        'circle-stroke-color': ['match', ['get', 'status'], ...Object.entries(STATUS_COLOR).flat(), '#8c99a5'],
+        'circle-stroke-opacity': 0.8,
+      } })
+      map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
+      map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
+      patchLayers(map, current.layers, current.selectedId)
+
+      map.on('click', (event) => {
+        const { x, y } = event.point
+        const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
+        const people = map.queryRenderedFeatures(box, { layers: ['people-dot'] })
+        if (people.length) {
+          const nearest = people.reduce((best, feature) => {
+            const point = map.project((feature.geometry as Point).coordinates as [number, number])
+            const previous = map.project((best.geometry as Point).coordinates as [number, number])
+            return Math.hypot(point.x - x, point.y - y) < Math.hypot(previous.x - x, previous.y - y) ? feature : best
+          })
+          popup.remove()
+          onSelectRef.current(String(nearest.properties?.id))
+          return
+        }
+        const thermal = map.queryRenderedFeatures(box, { layers: ['thermal-core', 'thermal-satellite'] })[0]
+        if (thermal) {
+          const props = thermal.properties ?? {}
+          const content = document.createElement('div')
+          const title = document.createElement('strong')
+          title.textContent = props.source === 'firms' ? 'Detección térmica · NASA FIRMS' : 'Foco térmico · simulación'
+          const detail = document.createElement('p')
+          detail.textContent = `${Number(props.frp).toFixed(1)} MW · ${props.acquiredAt}${props.source === 'firms' ? ' UTC' : ''}`
+          const note = document.createElement('small')
+          note.textContent = 'Una detección no determina el perímetro ni confirma fuego activo en este instante.'
+          content.append(title, detail, note)
+          popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map)
+          return
+        }
+        const cell = map.queryRenderedFeatures(event.point, { layers: ['fire-cells-fill'] })[0]
+        if (cell) {
+          const content = document.createElement('div')
+          const title = document.createElement('strong')
+          title.textContent = 'Huella térmica · escenario simulado'
+          const detail = document.createElement('p')
+          detail.textContent = `Celdas ilustrativas de ${FIRE_CELL_SIZE_M} m · no son observaciones NASA`
+          const note = document.createElement('small')
+          note.textContent = 'El color representa el escenario de demostración, no un perímetro quemado confirmado ni una probabilidad de propagación.'
+          content.append(title, detail, note)
+          popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map)
+          return
+        }
+        onSelectRef.current(null)
       })
-      map.on('click', 'fires-glow', (event) => {
-        const feature = event.features?.[0]
-        if (!feature || !popupRef.current) return
-        const props = feature.properties ?? {}
-        popupRef.current
-          .setLngLat(event.lngLat)
-          .setHTML(
-            `<strong>Foco ${props.source === 'firms' ? 'NASA FIRMS' : 'operativo'}</strong>
-             <div>FRP ${Number(props.frp).toFixed(1)} MW · ${props.confidence}</div>
-             <div>${props.acquiredAt ?? ''}</div>`,
-          )
-          .addTo(map)
+      map.on('mousemove', (event) => {
+        const { x, y } = event.point
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill'] })
+        map.getCanvas().style.cursor = features.length ? 'pointer' : ''
       })
-      map.on('mouseenter', 'citizens-dot', () => {
-        map.getCanvas().style.cursor = 'pointer'
-      })
-      map.on('mouseleave', 'citizens-dot', () => {
-        map.getCanvas().style.cursor = ''
-      })
+      setLoaded(true)
     }
-
     map.on('load', onLoad)
-
     const resize = new ResizeObserver(() => map.resize())
     resize.observe(rootRef.current)
-
     return () => {
       resize.disconnect()
+      popup.remove()
       map.remove()
       mapRef.current = null
     }
@@ -416,39 +257,35 @@ export function CommandMap({
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map?.isStyleLoaded()) return
-    source(map, 'fires')?.setData(firesGeo(fires))
-    source(map, 'satellite')?.setData(firesGeo(satelliteFires))
-    source(map, 'citizens')?.setData(citizensGeo(citizens))
-    source(map, 'zones')?.setData(zonesGeo(zones))
-    applyFireScale(map, fireScale)
-    if (map.getLayer('citizens-dot')) {
-      map.setPaintProperty('citizens-dot', 'circle-radius', [
-        'case',
-        ['==', ['get', 'id'], selectedId ?? ''],
-        6.2,
-        ['get', 'vulnerable'],
-        5,
-        4,
-      ])
-      map.setPaintProperty('citizens-dot', 'circle-stroke-width', [
-        'case',
-        ['==', ['get', 'id'], selectedId ?? ''],
-        2.4,
-        ['get', 'vulnerable'],
-        1.6,
-        1,
-      ])
-      map.setPaintProperty('citizens-dot', 'circle-stroke-color', [
-        'case',
-        ['==', ['get', 'id'], selectedId ?? ''],
-        '#ffffff',
-        ['get', 'vulnerable'],
-        '#ffd36a',
-        '#0b0f14',
-      ])
-    }
-  }, [citizens, fires, satelliteFires, zones, selectedId, fireScale])
+    if (!map?.getSource('people')) return
+    source(map, 'thermal')?.setData(firesGeo(fires))
+    source(map, 'people')?.setData(citizensGeo(citizens))
+    source(map, 'accuracy')?.setData(accuracyGeo(citizens.find((citizen) => citizen.id === selectedId)))
+    patchLayers(map, layers, selectedId)
+  }, [citizens, fires, selectedId, layers])
 
-  return <div ref={rootRef} className="map-root" />
+  useEffect(() => {
+    const map = mapRef.current
+    if (loaded && map?.getLayer('satellite-base')) map.setLayoutProperty('satellite-base', 'visibility', satellite ? 'visible' : 'none')
+  }, [satellite, loaded])
+
+  const locate = () => {
+    const selected = citizens.find((citizen) => citizen.id === selectedId)
+    if (selected) mapRef.current?.flyTo({ center: [selected.lng, selected.lat], zoom: 14, duration: 850 })
+  }
+
+  return (
+    <>
+      <div ref={rootRef} className="map-root" aria-label="Mapa de situación de Gredos" />
+      <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
+        <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
+        <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
+        <span className="toolbar-divider" />
+        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.18, 40.19], [-5.055, 40.298]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Encuadrar</button>
+        {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
+      </div>
+      {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
+      {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" onClick={() => setMapError('')}>Cerrar aviso</button></div>}
+    </>
+  )
 }
