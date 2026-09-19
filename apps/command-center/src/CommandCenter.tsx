@@ -5,6 +5,7 @@ import { INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS } fro
 import { advanceProtocol, DEMO_TIME_SCALE, groupSize, zoneUsage } from './simulation'
 import { createFireChecker } from './geo'
 import { createRoutePlanner } from './routing'
+import { applyWaveStatus, buildWavePeople, fetchWaveStatus, pickWaveCitizens, startWave } from './bridge'
 import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
 const STATUS_LABEL: Record<Citizen['status'], string> = {
@@ -168,6 +169,37 @@ export function CommandCenter({ token }: { token: string }) {
     const text = `${citizen.name} ${citizen.phone} ${citizen.id} ${citizen.locality} ${STATUS_LABEL[citizen.status]}`.toLowerCase()
     return text.includes(query.toLowerCase()) && (filter === 'all' || (filter === 'outside' ? citizen.resident === false : filter === 'assistance' ? citizen.status === 'assistance' : citizen.status === 'no_answer'))
   })
+  // Primera pulsación de Play: envía una ola de 4 grupos a la centralita real.
+  const startHrWave = () => {
+    if (citizensRef.current.some((citizen) => citizen.hrCall)) return
+    const selected = pickWaveCitizens(citizensRef.current)
+    if (!selected.length) return
+    const people = buildWavePeople(citizensRef.current, selected)
+    const ids = new Set(selected.map((citizen) => citizen.id))
+    updatePopulation((current) => current.map((citizen) => ids.has(citizen.id) ? { ...citizen, hrCall: { state: 'queued' as const, transcript: [] } } : citizen))
+    startWave(people).catch(() => {
+      setRouteNotice('Puente HappyRobot no disponible; esos grupos siguen la simulación de demo.')
+      updatePopulation((current) => current.map((citizen) => ids.has(citizen.id) ? { ...citizen, hrCall: undefined } : citizen))
+    })
+  }
+  const toggleProtocol = () => {
+    if (!protocolOn && elapsedRef.current === 0) startHrWave()
+    setProtocolOn((active) => !active)
+  }
+  const hrActive = citizens.some((citizen) => citizen.hrCall && citizen.hrCall.state !== 'done' && citizen.hrCall.state !== 'failed')
+  useEffect(() => {
+    const poll = async () => {
+      if (!citizensRef.current.some((citizen) => citizen.hrCall && citizen.hrCall.state !== 'done' && citizen.hrCall.state !== 'failed')) return
+      try {
+        const status = await fetchWaveStatus()
+        updatePopulation((current) => applyWaveStatus(current, status.calls))
+      } catch {
+        // puente local; si no responde, se reintenta en el siguiente ciclo
+      }
+    }
+    const id = window.setInterval(() => void poll(), 2000)
+    return () => window.clearInterval(id)
+  }, [updatePopulation])
   const selectCitizen = (id: string | null) => {
     setSelectedId(id)
     setSelectedZoneId(null)
@@ -212,14 +244,14 @@ export function CommandCenter({ token }: { token: string }) {
               <label className="search-label"><span className="sr-only">Buscar persona o localidad</span><input autoFocus className="search" placeholder="Nombre, localidad o ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
               <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todos'], ['assistance', 'Necesitan ayuda'], ['no_answer', 'Sin respuesta']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
               <div className="list-summary"><span>{filtered.length} contactos / grupos</span><span>{counts.located} ubicaciones compartidas</span></div>
-              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.status} ${citizen.locationSource === 'reference' ? 'reference-dot' : ''}`} /><span className="person-row-copy"><strong>{citizen.name}{citizen.call && citizen.group ? ` · ${groupSize(citizen)} pers.` : ''}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
+              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.status} ${citizen.locationSource === 'reference' ? 'reference-dot' : ''}`} /><span className="person-row-copy"><strong>{citizen.name}{citizen.call && citizen.group ? ` · ${groupSize(citizen)} pers.` : ''}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small>{citizen.hrCall && <small>HR</small>}<span>{citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
               {!filtered.length && <div className="empty-state"><strong>No hay coincidencias</strong><button type="button" onClick={() => { setFilter('all'); setQuery('') }}>Limpiar filtros</button></div>}
             </>
           )}
         </div>
       </aside>}
       <div className="simulation-dock">
-        <button type="button" onClick={() => setProtocolOn((active) => !active)} aria-label={protocolOn ? 'Pausar simulación' : elapsed ? 'Continuar simulación' : 'Iniciar simulación'}><Icon name={protocolOn ? 'pause' : 'play'} /><span>{protocolOn ? 'Pausar' : elapsed ? 'Continuar' : 'Simular llamadas'}</span></button>
+        <button type="button" onClick={toggleProtocol} aria-label={protocolOn ? 'Pausar simulación' : elapsed ? 'Continuar simulación' : 'Iniciar simulación'}><Icon name={protocolOn ? 'pause' : 'play'} /><span>{protocolOn ? 'Pausar' : hrActive ? 'Llamando…' : elapsed ? 'Continuar' : 'Simular llamadas'}</span></button>
         <span className="dock-divider" /><span className="dock-count"><strong>{counts.answered}</strong>/{counts.total}<small>respondidas</small></span>
         <span className="dock-progress"><strong>{counts.movingPeople}</strong> en camino <span>·</span> <strong>{counts.arrivedPeople}</strong> llegadas</span>
         <span className="simulation-speed">×{DEMO_TIME_SCALE} demo</span>
@@ -260,6 +292,11 @@ function PersonDetail({ citizen, events, now, elapsed, onClose, onZoneSelect }: 
         {citizen.call?.needs.map((need) => <p className="need-note" key={need}>{need}</p>)}
         <dl className="detail-fields"><div><dt>Agente</dt><dd>{citizen.call?.agent ?? 'No asignado'}</dd></div><div><dt>Respuesta</dt><dd>{citizen.call ? formatClock(new Date(citizen.call.answeredAt)) : 'Sin información'}</dd></div><div><dt>Comparte ubicación</dt><dd>{citizen.call ? citizen.call.consent === 'granted' ? 'Sí · demo' : 'No · demo' : 'No registrado'}</dd></div></dl>
       </section>
+      {citizen.hrCall && <section className="detail-section"><h3>Conversación HappyRobot</h3>
+        <p className="fine">Estado: {{ queued: 'En cola', talking: 'En curso', done: 'Terminada', failed: 'Fallida' }[citizen.hrCall.state]}{citizen.hrCall.endReason ? ` · ${citizen.hrCall.endReason}` : ''}</p>
+        {citizen.hrCall.transcript.length ? <ol className="feed hr-transcript">{citizen.hrCall.transcript.map((line, index) => <li key={index}><time>{formatClock(new Date(line.ts))}</time><div><p><strong>{line.speaker === 'A' ? 'VIGÍA' : 'VECINO'}</strong> · {line.text}</p></div></li>)}</ol> : <p className="fine">Sin mensajes todavía.</p>}
+        {citizen.hrCall.runUrl && <a className="source-link" href={citizen.hrCall.runUrl} target="_blank" rel="noreferrer">Ver run ↗</a>}
+      </section>}
       <section className="detail-section"><h3>Familiares y acompañantes</h3>
         {citizen.household?.length ? citizen.household.map((member) => <div className="family-member" key={member.name}><strong>{member.name}</strong><p>{member.situation}</p><small>{member.source}</small></div>) : <p className="fine">Sin información aportada.</p>}
       </section>

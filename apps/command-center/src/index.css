@@ -138,6 +138,8 @@ input[type="checkbox"] { accent-color: #a2b8c5; width: 13px; height: 13px; flex-
 .feed time { color: #8a9ea9; font: 9px ui-monospace, monospace; padding-top: 3px; flex-shrink: 0; }
 .feed p { font-size: 10px; color: #b1bdc5; margin: 4px 0; }
 .feed small { color: #8397a4; font-size: 8px; }
+.hr-transcript { max-height: 200px; overflow-y: auto; }
+.hr-transcript li { padding: 8px 0; }
 .empty-state { display: grid; justify-items: center; gap: 12px; text-align: center; color: #9aacb7; padding: 28px 18px; }
 .empty-state strong { font-size: 12px; font-weight: 500; }
 .empty-state button { color: var(--move); background: transparent; border: 1px solid #496375; padding: 5px 10px; border-radius: 3px; }

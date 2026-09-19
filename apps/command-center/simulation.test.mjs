@@ -91,6 +91,18 @@ test('recogida, negativa, falta de ruta y falta de consentimiento nunca mueven a
   }
 })
 
+test('un grupo con conversación HappyRobot en curso no avanza por la máquina simulada', () => {
+  const hr = { ...INITIAL_CITIZENS[0], callDelaySec: 0, outcome: 'tracking', hrCall: { state: 'talking', transcript: [] } }
+  const still = tick([hr], 600).citizens[0]
+  assert.equal(still.status, 'pending')
+  assert.equal(still.call, undefined)
+  assert.deepEqual([still.lng, still.lat], [hr.lng, hr.lat])
+  const queued = tick([{ ...hr, hrCall: { state: 'queued', transcript: [] } }], 600).citizens[0]
+  assert.equal(queued.status, 'pending')
+  const done = tick([{ ...hr, hrCall: { state: 'done', transcript: [] } }], 600).citizens[0]
+  assert.equal(done.status, 'ringing')
+})
+
 test('un GPS real no se mueve ni ocupa aforo de la demo', () => {
   const assigned = tick([confirmed()], 0).citizens[0]
   for (const live of [{ ...assigned, live: true }, { ...assigned, locationSource: 'gps' }]) {

@@ -31,6 +31,9 @@ export function advanceProtocol(
   }
   const next = citizens.map((citizen, index): Citizen => {
     if (citizen.live || citizen.locationSource === 'gps') return citizen
+    // Un grupo con conversación real de HappyRobot en curso espera su resultado;
+    // no lo mueve la máquina simulada. Al terminar (done/failed) vuelve al flujo.
+    if (citizen.hrCall && citizen.hrCall.state !== 'done' && citizen.hrCall.state !== 'failed') return citizen
     if (['safe', 'refused', 'no_answer', 'informed', 'assistance'].includes(citizen.status)) return citizen
     if (['routing', 'preparing', 'evacuating'].includes(citizen.status) && (citizen.call?.consent !== 'granted' || citizen.locationSource !== 'simulation')) return citizen
 

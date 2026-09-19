@@ -69,6 +69,13 @@ export type Citizen = {
     consent: 'granted' | 'declined' | 'not_requested'
     needs: string[]
   }
+  hrCall?: {
+    state: 'queued' | 'talking' | 'done' | 'failed'
+    transcript: { ts: string; speaker: string; text: string }[]
+    runUrl?: string
+    endReason?: string
+    outcomeApplied?: boolean
+  }
 }
 
 export type MapLayers = {
