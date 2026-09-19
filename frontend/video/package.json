@@ -1,0 +1,26 @@
+{
+  "name": "evacuation-video",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vídeo del pitch (Remotion): el flujo entero del sistema, alimentado con el dataset real de backend/data.",
+  "scripts": {
+    "data": "node scripts/build-data.mjs",
+    "dev": "npm run data && remotion studio",
+    "render": "npm run data && remotion render Master out/video.mp4",
+    "render:scene": "remotion render",
+    "still": "remotion still Master out/frame.png --frame=600",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.526",
+    "@remotion/google-fonts": "4.0.526",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.526"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.6.3"
+  }
+}

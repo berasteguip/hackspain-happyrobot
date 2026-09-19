@@ -22,7 +22,7 @@ BACKEND     := backend
 FRONTEND    := frontend
 PY_PKGS     := api engine data sim
 
-.PHONY: help check env install api engine dashboard gps cecop data sim test demo stop clean
+.PHONY: help check env install api engine dashboard gps cecop video video-studio data sim test demo stop clean
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -67,6 +67,12 @@ gps: ## Sirve la pagina de ubicacion (puerto 8081)
 
 cecop: ## Arranca el CECOP (Vite + React + Mapbox); pide token de Mapbox al abrir
 	cd $(FRONTEND)/command-center && npm install && npm run dev
+
+video: ## Renderiza el video del pitch (Remotion) en frontend/video/out/video.mp4
+	cd $(FRONTEND)/video && npm install && npm run render
+
+video-studio: ## Abre Remotion Studio para iterar el video escena a escena
+	cd $(FRONTEND)/video && npm install && npm run dev
 
 data: ## Regenera el dataset sintetico y lo valida
 	cd $(BACKEND)/data && .venv/bin/python generate.py --scenario $(SCENARIO) --seed $(SEED) --houses $(HOUSES) --out scenarios/$(SCENARIO).json
