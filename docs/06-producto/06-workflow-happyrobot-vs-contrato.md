@@ -52,9 +52,12 @@ Tres consecuencias:
 3. **El extract no sale a ningún sitio.** No hay nodo `Webhook` que empuje el
    resultado a `api/`.
 
-**Bug, además:** el `Initial Message` del agente tiene las variables sin interpolar.
-Sale por voz *«le llama el asistente automático de ␣ por el incendio en ␣.»*, con los
-huecos vacíos. Hay que arreglarlo antes de cualquier demo.
+> **Corrección (2026-09-19).** Una versión anterior de este documento decía que el
+> `Initial Message` del agente tenía las variables sin interpolar. **Es falso.** Los chips
+> de variable están en su sitio y la llamada suena bien; lo comprobamos escuchándola y
+> leyendo el Plate JSON del nodo. El error vino de leer la vista en markdown que devuelve
+> el MCP, que **elimina los chips de variable** y deja huecos que parecen texto roto. Para
+> auditar un prompt hay que pedir `include_plate_json=true`.
 
 ## 3. El conflicto de fondo: confinar vs. mover
 
