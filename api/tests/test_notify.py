@@ -149,3 +149,51 @@ def test_sin_webhook_configurado_falla_pero_no_explota(state, cliente_espia, mon
     assert "HR_WORKFLOW_WEBHOOK" in resultado.detail
     # y el fallo también se registra: el mando tiene que ver que no se pudo avisar
     assert "FALLÓ" in state.decision_log[-1].reason
+
+
+# --------------------------------------------------------------------------------------
+# Las dos claves van en direcciones contrarias y no se cruzan
+# --------------------------------------------------------------------------------------
+
+
+def test_el_secreto_de_nuestra_api_no_sale_hacia_happyrobot(monkeypatch):
+    """`HR_SHARED_SECRET` es la llave de NUESTRA puerta.
+
+    Si viaja en un POST saliente queda escrita en los logs de run de un tercero, y con ella
+    cualquiera con acceso a ese workspace entra en nuestra API. Ya pasó una vez: apareció
+    literal en el output del nodo del webhook.
+    """
+    monkeypatch.setattr(settings, "hr_api_key", "")
+    monkeypatch.setattr(settings, "hr_shared_secret", "la-llave-de-nuestra-puerta")
+
+    cabeceras = notify._webhook_headers()
+
+    assert "x-api-key" not in cabeceras
+    assert "Authorization" not in cabeceras
+    assert "la-llave-de-nuestra-puerta" not in str(cabeceras)
+
+
+def test_una_clave_con_enes_se_manda_en_latin1_y_no_revienta(monkeypatch):
+    """`httpx` codifica las cabeceras como ASCII y una eñe lo tumba con un error críptico."""
+    monkeypatch.setattr(settings, "hr_api_key", "clave-con-eñe")
+
+    cabeceras = notify._webhook_headers()
+
+    assert cabeceras["x-api-key"] == "clave-con-eñe".encode("latin-1")
+
+
+def test_una_clave_de_plataforma_va_tambien_como_bearer(monkeypatch):
+    monkeypatch.setattr(settings, "hr_api_key", "sk_live_abc123")
+
+    cabeceras = notify._webhook_headers()
+
+    assert cabeceras["Authorization"] == "Bearer sk_live_abc123"
+    assert cabeceras["x-api-key"] == "sk_live_abc123"
+
+
+def test_sin_clave_de_happyrobot_no_se_manda_cabecera_de_auth(monkeypatch):
+    """El `incoming_hook` de ahora no tiene auth configurada: entra sin cabecera."""
+    monkeypatch.setattr(settings, "hr_api_key", "")
+    monkeypatch.setattr(settings, "hr_shared_secret", "")
+
+    assert notify._webhook_headers() == {"Content-Type": "application/json"}

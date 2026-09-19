@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+from settings import settings
+
 
 # Perímetro que ha avanzado al norte: el borde norte pasa de 41.62 a 41.645, o sea a ~600 m de las
 # casas del Camino del Horno (41.650-41.652). Es el evento que invalida el plan anterior.
@@ -305,3 +307,39 @@ def test_la_prioridad_aerea_explica_por_que_un_sector_va_primero(client):
     assert primero["air_priority_rank"] == 1
     assert "personas" in (primero["air_priority_reason"] or "")
     assert primero["people_inside"] >= 1
+
+
+# --------------------------------------------------------------------------------------
+# La puerta: una clave con acentos no puede valer según el cliente que la mande
+# --------------------------------------------------------------------------------------
+
+
+def test_la_clave_vale_llegue_en_latin1_o_en_utf8(monkeypatch):
+    """Nos costó una hora de ensayo: la misma clave entraba por el navegador y daba 401 por curl.
+
+    Una cabecera HTTP es latin-1 (RFC 9110) y así la decodifica Starlette, pero `curl` manda la
+    `ñ` en UTF-8. Las dos lecturas tienen que valer o la auth depende del cliente.
+    """
+    from main import _api_key_ok
+
+    clave = "secreto-con-eñe"
+    monkeypatch.setattr(settings, "hr_shared_secret", clave)
+
+    # Lo que ve Starlette cuando el cliente manda latin-1 (navegador) y cuando manda UTF-8 (curl).
+    como_latin1 = clave
+    como_utf8 = clave.encode("utf-8").decode("latin-1")
+
+    assert como_utf8 != como_latin1, "si no, el test no prueba nada"
+    assert _api_key_ok(como_latin1) is True
+    assert _api_key_ok(como_utf8) is True
+    assert _api_key_ok("otra-cosa") is False
+    assert _api_key_ok(None) is False
+
+
+def test_sin_secreto_configurado_la_clave_no_valida_nada(monkeypatch):
+    """Con `HR_SHARED_SECRET` vacío la puerta queda abierta en el middleware, pero el
+    comprobador nunca debe decir «sí» a una clave cualquiera."""
+    from main import _api_key_ok
+
+    monkeypatch.setattr(settings, "hr_shared_secret", "")
+    assert _api_key_ok("lo-que-sea") is False

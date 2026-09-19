@@ -1,0 +1,243 @@
+"""Rodear un círculo → N llamadas independientes.
+
+Lo que se prueba aquí no es "sale una petición HTTP": eso ya lo cubre `test_notify.py`. Lo que
+se prueba es lo que el operador ve cuando suelta el círculo, que es lo que el jurado va a mirar:
+que se selecciona **lo que está dentro y solo lo que está dentro**, que cada punto se lleva su
+propio intento con su propio estado, y que un punto que no suena dice POR QUÉ no ha sonado.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+import dispatcher
+import notify
+from models import CallDispatch, CallState, Person
+from settings import reload_settings, settings
+
+# Facultad de Informática y Ciencias Matemáticas de la Complutense, a ~400 m una de la otra.
+INFORMATICA = (40.45290, -3.72680)
+MATEMATICAS = (40.44940, -3.72700)
+# Talavera: fuera de cualquier círculo razonable sobre Ciudad Universitaria.
+LEJOS = (39.9553, -4.8151)
+
+
+def _poblar(state) -> None:
+    state.people.clear()
+    state.calls.clear()
+    for pid, nombre, tel, (lat, lon) in [
+        ("p-001", "Pablo", "+34600990001", INFORMATICA),
+        ("p-002", "Mateo", "+34600990002", MATEMATICAS),
+        ("p-003", "Vecino sintético", "+34600999005", MATEMATICAS),
+        ("p-004", "Lejano", "+34600999006", LEJOS),
+        ("p-005", "Sin teléfono", None, INFORMATICA),
+    ]:
+        state.people[pid] = Person(id=pid, name=nombre, phone=tel, lat=lat, lon=lon)
+
+
+@pytest.fixture()
+def poblado(state):
+    _poblar(state)
+    return state
+
+
+# --------------------------------------------------------------------------- selección
+
+
+def test_el_circulo_coge_lo_de_dentro_y_deja_fuera_lo_de_fuera(poblado):
+    dentro = dispatcher.people_in_circle(poblado, 40.4511, -3.7269, 1000)
+    ids = {p.id for p in dentro}
+
+    assert ids == {"p-001", "p-002", "p-003", "p-005"}
+    assert "p-004" not in ids, "Talavera no puede caer en un círculo de 1 km sobre la Complutense"
+
+
+def test_un_radio_absurdo_se_rechaza(poblado):
+    peticion = CallDispatch(lat=40.4511, lon=-3.7269, radius_m=settings.call_max_radius_m + 1)
+    with pytest.raises(dispatcher.DispatchError, match="por encima del máximo"):
+        dispatcher.resolve_targets(poblado, peticion)
+
+
+def test_sin_circulo_ni_lista_no_se_adivina_a_quien_llamar(poblado):
+    with pytest.raises(dispatcher.DispatchError, match="person_ids"):
+        dispatcher.resolve_targets(poblado, CallDispatch())
+
+
+# --------------------------------------------------------------------------- ejecución
+
+
+def test_cada_punto_del_circulo_se_lleva_su_propio_intento(poblado):
+    _, intentos, descartados, _ = dispatcher.dispatch(
+        poblado, CallDispatch(lat=40.4511, lon=-3.7269, radius_m=1000)
+    )
+
+    assert {c.person_id for c in intentos} == {"p-001", "p-002", "p-003"}
+    assert len({c.id for c in intentos}) == 3, "tres llamadas independientes, no una campaña"
+    assert len({c.batch_id for c in intentos}) == 1, "misma ráfaga: el mando hizo un solo gesto"
+    # El de la ficha sin teléfono no se pierde en silencio: se explica.
+    assert [d["person_id"] for d in descartados] == ["p-005"]
+    assert "sin teléfono" in descartados[0]["reason"]
+
+
+def test_con_el_interruptor_apagado_los_intentos_quedan_simulados(poblado):
+    assert settings.allow_real_calls is False
+    _, intentos, _, _ = dispatcher.dispatch(
+        poblado, CallDispatch(person_ids=["p-001", "p-002"])
+    )
+
+    assert {c.state for c in intentos} == {CallState.simulated}
+    assert all(c.detail and "SIMULADO" in c.detail for c in intentos)
+
+
+def test_no_se_llama_dos_veces_a_la_vez_a_la_misma_persona(poblado):
+    """Rodear dos círculos solapados no puede duplicar la llamada de quien está en los dos."""
+    dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+    # El primer intento quedó `simulated`, que es terminal; se fuerza uno vivo para el caso real.
+    vivo = next(iter(poblado.calls.values()))
+    poblado.set_call_state(vivo.id, CallState.ringing)
+
+    _, intentos, descartados, _ = dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+
+    assert intentos == []
+    assert "en curso" in descartados[0]["reason"]
+
+
+def test_force_vuelve_a_llamar_a_quien_ya_tiene_un_intento_vivo(poblado):
+    dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+    vivo = next(iter(poblado.calls.values()))
+    poblado.set_call_state(vivo.id, CallState.ringing)
+
+    _, intentos, _, _ = dispatcher.dispatch(
+        poblado, CallDispatch(person_ids=["p-001"], force=True)
+    )
+
+    assert len(intentos) == 1
+
+
+def test_el_tope_por_rafaga_corta_y_lo_dice(poblado, monkeypatch):
+    monkeypatch.setattr(settings, "call_max_batch", 2)
+    _, intentos, descartados, _ = dispatcher.dispatch(
+        poblado, CallDispatch(person_ids=["p-001", "p-002", "p-003"])
+    )
+
+    assert len(intentos) == 2
+    assert "tope de 2 llamadas" in descartados[0]["reason"]
+
+
+# --------------------------------------------------------------------------- lista blanca
+
+
+def test_la_lista_blanca_para_a_quien_no_este_en_ella(poblado, monkeypatch):
+    """El cerrojo que protege los ensayos: escenario con móviles reales y vecinos sintéticos."""
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "call_allowlist", {"+34600990001"})
+
+    _, intentos, _, _ = dispatcher.dispatch(
+        poblado, CallDispatch(person_ids=["p-001", "p-003"])
+    )
+    por_persona = {c.person_id: c for c in intentos}
+
+    assert por_persona["p-003"].state == CallState.blocked
+    assert "CALL_ALLOWLIST" in (por_persona["p-003"].detail or "")
+    # El que sí está en la lista intenta marcar de verdad; sin webhook configurado, falla.
+    assert por_persona["p-001"].state == CallState.failed
+    assert "HR_WORKFLOW_WEBHOOK" in (por_persona["p-001"].detail or "")
+
+
+def test_la_lista_blanca_normaliza_el_formato_del_telefono():
+    """`+34 600 99 00 01` y `+34600990001` son el mismo móvil; el cerrojo no puede dudar."""
+    assert notify.normalize_phone("+34 600-99 00 01") == "+34600990001"
+
+
+def test_con_la_lista_vacia_no_filtra_nada(monkeypatch):
+    monkeypatch.setattr(settings, "call_allowlist", set())
+    assert notify.phone_allowed("+34600990001") is True
+
+
+# --------------------------------------------------------------------------- contexto del agente
+
+
+def test_el_payload_lleva_los_parametros_que_el_workflow_declara(poblado):
+    """Si estas claves no viajan, el agente saluda con huecos: «el asistente de   por el de  »."""
+    payload = notify.trigger_payload(poblado.people["p-001"], reason="prueba")
+
+    for clave in (
+        "NUMERO_TELEFONO",
+        "PERSONA_ID",
+        "PERSONA_NOMBRE",
+        "CAMPANA_ORGANISMO",
+        "CAMPANA_ZONA",
+        "PRIOR_ZONA",
+        "PRIOR_NIVEL",
+        "ORDEN_AUTORIDAD",
+    ):
+        assert clave in payload, f"el trigger del workflow espera {clave}"
+    assert payload["NUMERO_TELEFONO"] == "+34600990001"
+    assert payload["PERSONA_NOMBRE"] == "Pablo"
+    assert payload["CAMPANA_ORGANISMO"], "un organismo vacío se oye como un hueco en la llamada"
+
+
+@pytest.mark.parametrize(
+    "minutos,esperado",
+    [(5, "rojo"), (30, "naranja"), (90, "amarillo"), (400, "verde"), (None, "amarillo")],
+)
+def test_el_nivel_previo_sale_de_los_minutos_al_frente(minutos, esperado):
+    persona = Person(id="p-x", phone="+34600990001", minutes_to_front=minutos)
+    assert notify.trigger_payload(persona)["PRIOR_NIVEL"] == esperado
+
+
+# --------------------------------------------------------------------------- HTTP
+
+
+def test_dispatch_por_http_devuelve_el_tablero_de_la_rafaga(client):
+    respuesta = client.post(
+        "/calls/dispatch",
+        json={"person_ids": ["p-001"], "reason": "ensayo", "operator": "Pablo"},
+    )
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["dispatched"] == 1
+    assert cuerpo["batch_id"].startswith("b-")
+    assert cuerpo["calls"][0]["person_id"] == "p-001"
+
+    tablero = client.get("/calls", params={"batch_id": cuerpo["batch_id"]}).json()
+    assert len(tablero) == 1
+
+
+def test_dispatch_con_una_persona_desconocida_es_un_400(client):
+    respuesta = client.post("/calls/dispatch", json={"person_ids": ["p-inexistente"]})
+    assert respuesta.status_code == 400
+    assert "desconocida" in respuesta.json()["detail"]
+
+
+def test_el_roster_no_publica_los_telefonos(client):
+    filas = client.get("/api/roster").json()
+
+    assert filas, "el roster es lo que Vigía rodea: vacío no sirve de nada"
+    for fila in filas:
+        assert fila["phone"] is None or fila["phone"].startswith("···"), (
+            "el roster es público: no puede devolver el móvil entero de nadie"
+        )
+        assert "lng" in fila and "lat" in fila
+
+
+def test_el_outcome_cierra_el_intento_que_lo_origino(client):
+    lanzada = client.post("/calls/dispatch", json={"person_ids": ["p-002"]}).json()
+    call_id = lanzada["calls"][0]["id"]
+
+    client.post("/calls/outcome", json={"person_id": "p-002", "answered": True})
+
+    tablero = {c["id"]: c for c in client.get("/calls").json()}
+    assert tablero[call_id]["state"] == "answered"
+    assert tablero[call_id]["answered"] is True
+
+
+def test_settings_lee_la_lista_blanca_del_entorno(monkeypatch):
+    monkeypatch.setenv("CALL_ALLOWLIST", "+34 600 99 00 01, +34600990002")
+    nuevos = reload_settings()
+    try:
+        assert nuevos.call_allowlist == {"+34600990001", "+34600990002"}
+    finally:
+        monkeypatch.delenv("CALL_ALLOWLIST", raising=False)
+        reload_settings()

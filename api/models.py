@@ -434,6 +434,106 @@ class CallStarted(Base):
     direction: str | None = None  # inbound | outbound
 
 
+# --------------------------------------------------------------------------------------
+# Reparto de llamadas: rodear un círculo en Vigía → N llamadas independientes
+# --------------------------------------------------------------------------------------
+
+
+class CallState(str, Enum):
+    """Estado del INTENTO de llamada, que no es el estado de la persona.
+
+    `Person.status` cuenta qué le pasa a alguien (contactado, moviéndose, en riesgo);
+    esto cuenta qué le pasa al teléfono. Son cosas distintas y el tablero de Vigía necesita
+    las dos: alguien puede estar `contacted` de una llamada de hace diez minutos mientras su
+    nuevo intento está `ringing`.
+    """
+
+    queued = "queued"  # seleccionado, todavía no se ha lanzado el run
+    dialing = "dialing"  # petición enviada a HappyRobot, sin confirmación de run
+    ringing = "ringing"  # HappyRobot confirmó el run / la llamada está sonando
+    answered = "answered"  # contestó (llega por /calls/outcome)
+    no_answer = "no_answer"  # no contestó (llega por /calls/outcome)
+    failed = "failed"  # ni siquiera se pudo marcar (sin teléfono, 4xx, red)
+    blocked = "blocked"  # el cerrojo lo paró: fuera de CALL_ALLOWLIST
+    simulated = "simulated"  # ALLOW_REAL_CALLS=false: nadie ha recibido nada
+
+
+TERMINAL_CALL_STATES = {
+    CallState.answered,
+    CallState.no_answer,
+    CallState.failed,
+    CallState.blocked,
+    CallState.simulated,
+}
+
+
+class CallRun(Base):
+    """Un intento de llamada a una persona. Vive en `state.calls`, no en `Person`."""
+
+    id: str
+    person_id: str
+    name: str | None = None
+    phone: str | None = None
+    state: CallState = CallState.queued
+    run_id: str | None = None  # el id que devuelve HappyRobot
+    batch_id: str | None = None  # la ráfaga (un círculo) a la que pertenece
+    reason: str | None = None
+    detail: str | None = None  # por qué falló o por qué se bloqueó
+    simulated: bool = False
+    started_at: str = Field(default_factory=utcnow_iso)
+    updated_at: str = Field(default_factory=utcnow_iso)
+    answered: bool | None = None
+
+
+class CallDispatch(Base):
+    """Lo que manda Vigía al soltar el círculo.
+
+    O una lista explícita de personas, o un círculo (centro + radio) que la API resuelve
+    ella misma. Lo segundo es lo que hace el mapa; lo primero es lo que hace `curl`.
+    """
+
+    person_ids: list[str] = Field(default_factory=list)
+    lat: float | None = None
+    lon: float | None = None
+    radius_m: float | None = None
+    reason: str | None = None
+    operator: str | None = None
+    # Vuelve a llamar a quien ya tiene un intento vivo o ya contestó. Por defecto no.
+    force: bool = False
+
+
+class CallDispatchResponse(Base):
+    ok: bool = True
+    state_version: int
+    batch_id: str
+    requested: int = 0
+    dispatched: int = 0
+    skipped: int = 0
+    calls: list[CallRun] = Field(default_factory=list)
+    skipped_detail: list[dict[str, Any]] = Field(default_factory=list)
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RosterEntry(Base):
+    """Lo mínimo que Vigía necesita para pintar a alguien y poder rodearlo.
+
+    Es un subconjunto de `Person` con los nombres que ya usa el mapa (`lng`, no `lon`).
+    """
+
+    id: str
+    name: str | None = None
+    phone: str | None = None
+    lng: float | None = None
+    lat: float | None = None
+    locality: str | None = None
+    address: str | None = None
+    vulnerable: bool = False
+    dialable: bool = False  # ¿lo dejaría marcar el cerrojo tal y como está configurado?
+    status: PersonStatus = PersonStatus.unknown
+    call_state: CallState | None = None
+    location_source: PositionSource | None = None
+
+
 class HumanOverride(Base):
     subject_type: str  # person | house | safe_zone | convoy | patrol | sector | fire
     subject_id: str | None = None

@@ -44,7 +44,7 @@ rúbrica, así que no es opcional.
 | IDs | prefijo + guion + número: `p-001` persona, `h-001` casa, `x-a` salida, `s-1` sector, `c-1` convoy, `pt-1` patrulla, `ev-000001` evento. |
 | Distancias | metros (`_m`). Velocidades: km/h (`_kmh`) para viento/coches, m/h (`_mh`) para avance del fuego. |
 | Tiempos calculados | minutos en float (`minutes_to_front`), segundos en int para rutas (`duration_s`). |
-| Teléfonos | E.164, siempre con prefijo país (`+34600990012`). **Todo teléfono del repo va en el rango reservado `+3460099xxxx`**, incluidos ejemplos, fixtures de test y datos de arranque. Nunca un prefijo geográfico real como `+34980` (Zamora): con `ALLOW_REAL_CALLS=true` eso marca a una persona. |
+| Teléfonos | E.164, siempre con prefijo país (`+34600990012`). **Todo teléfono del repo va en el rango reservado `+3460099xxxx`**, incluidos ejemplos, fixtures de test y datos de arranque. Nunca un prefijo geográfico real como `+34980` (Zamora): con `ALLOW_REAL_CALLS=true` eso marca a una persona. **Sin excepciones, tampoco para ensayar con teléfonos reales**: esos se inyectan al arrancar con `PHONE_OVERRIDES=p-001:+34...` desde `.env`, que no se comitea. Este repo es público y un móvil en un fichero versionado se queda en el historial de git para siempre — y normalmente no es tuyo el móvil que publicas. |
 | Nulos | Un campo no calculado todavía es `null`, nunca `0`. `0` significa cero de verdad. |
 | Versión de estado | `state_version` entero que sube en cada mutación. El dashboard hace long-poll con él. |
 
@@ -281,6 +281,9 @@ compartido con HappyRobot. Sin auth no se puede aceptar webhooks de la plataform
 | GET | `/people/{id}` | una persona |
 | GET | `/instructions/{person_id}` | **tool del agente de voz**: `{instruction, exit_name, route_summary, convoy, urgency, minutes_to_front, say_this}`. `say_this` es la frase literal, ya redactada, para que el TTS no improvise en algo que puede matar a alguien. |
 | GET | `/health` | `{ok: true, state_version, people_count, uptime_s}` |
+| GET | `/calls?batch_id=&active=` | tablero de llamadas: un `CallRun` por intento (`{id, person_id, phone, state, run_id, batch_id, detail, started_at, updated_at}`) |
+| GET | `/api/roster` | **público, sin `x-api-key`**: el censo que Vigía pinta y rodea (`{id, name, phone, lng, lat, locality, vulnerable, dialable, status, call_state}`). El teléfono va **enmascarado** (`··· 011`): lo lee el navegador del operador, que no tiene clave. |
+| GET | `/api/locations` | **público**: solo quien está compartiendo posición. Puente para Vigía. |
 
 ### Escritura
 
@@ -293,10 +296,38 @@ compartido con HappyRobot. Sin auth no se puede aceptar webhooks de la plataform
 | POST | `/positions` | `{person_id, lat, lon, accuracy_m, t}` | página GPS (cada 5 s) |
 | POST | `/calls/outcome` | ver abajo | workflow de HappyRobot (AI Extract) |
 | POST | `/calls/started` | `{person_id, run_id, direction}` | HappyRobot |
+| POST | `/calls/dispatch` | `{person_ids[] \| lat+lon+radius_m, reason, operator, force}` | **Vigía, al soltar el círculo.** Lanza una llamada independiente por persona, en paralelo, y devuelve el tablero de la ráfaga con el motivo de cada descarte. |
 | POST | `/human/override` | `{subject_type, subject_id, field, value, reason, operator}` | dashboard |
 | POST | `/human/approve` | `{decision_id, approved, operator, reason}` | dashboard |
 | POST | `/sim/run` | `{variants, horizon_min}` | dashboard (botón "simular") |
 | POST | `/reset` | `{scenario: "sierra-culebra"}` | motor de escenario al arrancar |
+
+#### `POST /calls/dispatch` — el círculo del mando se convierte en N llamadas
+
+Es la ejecución real que pide la rúbrica: un gesto en el mapa mueve teléfonos fuera del sistema.
+Se manda el **círculo**, no la lista de ids que calculó el navegador: la API resuelve con su propio
+estado, que puede haber cambiado hace dos segundos por un GPS entrante. Si las dos listas no
+coinciden, manda la del backend, que es quien marca.
+
+```json
+{"batch_id": "b-841c1d48", "requested": 18, "dispatched": 4, "skipped": 14,
+ "calls": [{"id": "call-…", "person_id": "p-001", "state": "ringing", "run_id": "…"}],
+ "skipped_detail": [{"person_id": "p-009", "reason": "ya tiene una llamada en curso (ringing)"}]}
+```
+
+`CallState` (**no** es `Person.status`: uno cuenta qué le pasa al teléfono, el otro qué le pasa a la
+persona, y el tablero necesita los dos):
+`queued` → `dialing` → `ringing` → `answered` | `no_answer`, más tres finales que no llegan a sonar:
+`failed` (no se pudo marcar), `blocked` (fuera de `CALL_ALLOWLIST`) y `simulated`
+(`ALLOW_REAL_CALLS=false`). **Un punto que no suena nunca se esconde**: aparece en el tablero con su
+motivo, porque un círculo del que solo suenan 4 de 18 teléfonos tiene que poder explicarse en la
+demo sin abrir un log.
+
+Dos cerrojos, y los dos tienen que estar abiertos para que suene algo:
+`ALLOW_REAL_CALLS=true` (§6.3) y `CALL_ALLOWLIST` (lista blanca de teléfonos; vacía = sin filtro).
+El segundo existe porque en los ensayos el escenario mezcla móviles reales del equipo con vecinos
+sintéticos: ver `data/scenarios/ucm-madrid.json` y
+[`docs/02-happyrobot/06-trigger-desde-fuera.md`](../02-happyrobot/06-trigger-desde-fuera.md).
 
 `POST /calls/outcome` — el payload que HappyRobot manda tras cada llamada:
 

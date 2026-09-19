@@ -250,6 +250,16 @@ select:focus-visible, textarea:focus-visible { outline: 2px solid var(--move); o
 .campaign-dock .fine { margin: 0; font-size: 9px; line-height: 1.5; }
 .campaign-stats { display: flex; flex-wrap: wrap; gap: 5px 14px; font-size: 9px; color: #b7c8d3; }
 .campaign-stats strong { color: #4de3a6; }
+/* Modo "llamadas reales": el dock crece porque ya no cabe solo un botón. */
+.campaign-dock:has(.live-toggle input:checked) { max-height: min(420px, 60dvh); }
+.live-toggle { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #d5e4ee; }
+.live-toggle input { accent-color: #e8794a; }
+.campaign-dock .search-label .search { font-size: 10px; padding: 7px 9px; }
+.campaign-dock code { font-size: 9px; background: #1b2c38; padding: 1px 4px; border-radius: 3px; }
+.call-board { display: grid; gap: 7px; border-top: 1px solid var(--line); padding-top: 9px; }
+.call-board .people { max-height: 190px; overflow: auto; }
+.call-board .person-row-meta span { font-size: 9px; color: #cfe0ea; }
+.call-board .dot.no_answer { background: #efc280; }
 .map-app:has(.campaign-dock) .floating-panel { max-height: calc(100dvh - 355px); }
 @media (max-width: 1100px) { .map-toolbar { bottom: 124px; } }
 @media (max-width: 900px) {
