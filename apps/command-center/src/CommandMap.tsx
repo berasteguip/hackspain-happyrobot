@@ -30,6 +30,10 @@ type Props = {
   selectedId: string | null
   layers: MapLayers
   onSelect: (id: string | null) => void
+  /** Centro real del incidente, del perímetro que da `GET /state`. Sin él manda `INCIDENT`. */
+  center?: [number, number] | null
+  /** Perímetro del incendio servido por la API. Sustituye a la huella sintética del escenario. */
+  livePerimeter?: RiskArea | null
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
@@ -94,7 +98,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, center, livePerimeter }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const onSelectRef = useRef(onSelect)
@@ -104,6 +108,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
   dataRef.current = { citizens, fires, zones, selectedId, layers }
+  const centeredRef = useRef(false)
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -139,6 +144,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': '#bb8a47', 'fill-opacity': 0.07 } })
       map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.6 } })
       map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#c2a16c', 'line-width': 1, 'line-opacity': 0.65, 'line-dasharray': [4, 4] } })
+
+      // Perímetro real del incendio (GET /state). Arranca vacío y se rellena en cuanto la API
+      // responde; mientras tanto se ve la huella sintética del escenario local.
+      map.addSource('fire-live', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({ id: 'fire-live-fill', type: 'fill', source: 'fire-live', paint: { 'fill-color': '#ff2d2d', 'fill-opacity': 0.34 } })
+      map.addLayer({ id: 'fire-live-edge', type: 'line', source: 'fire-live', paint: { 'line-color': '#ff6a4d', 'line-width': 2 } })
 
       map.addSource('fire-cells', { type: 'geojson', data: SCENARIO_FIRE_CELLS, buffer: 0, tolerance: 0 })
       map.addLayer({
@@ -273,6 +284,40 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
 
   useEffect(() => {
     const map = mapRef.current
+    if (!map?.getSource('fire-live')) return
+    const ring = livePerimeter?.coordinates ?? []
+    source(map, 'fire-live')?.setData(
+      ring.length
+        ? { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } }] }
+        : { type: 'FeatureCollection', features: [] },
+    )
+    // Con perímetro real se esconde la huella sintética: enseñar las dos a la vez sería
+    // enseñar dos incendios distintos en el mismo mapa.
+    if (map.getLayer('fire-cells-fill')) {
+      map.setLayoutProperty('fire-cells-fill', 'visibility', ring.length ? 'none' : 'visible')
+    }
+    source(map, 'zones-area')?.setData({
+      type: 'FeatureCollection',
+      features: zones.map((zone) => ({
+        type: 'Feature', properties: { name: zone.name },
+        geometry: { type: 'Polygon', coordinates: [circle(zone.lng, zone.lat, zone.radiusM)] },
+      })),
+    } as FeatureCollection<Polygon>)
+    source(map, 'zones')?.setData({
+      type: 'FeatureCollection',
+      features: zones.map((zone) => ({
+        type: 'Feature', properties: { name: zone.name.split(' · ')[1] ?? zone.name },
+        geometry: { type: 'Point', coordinates: [zone.lng, zone.lat] },
+      })),
+    } as FeatureCollection<Point>)
+    if (center && !centeredRef.current) {
+      centeredRef.current = true
+      map.jumpTo({ center, zoom: 11 })
+    }
+  }, [livePerimeter, zones, center, loaded])
+
+  useEffect(() => {
+    const map = mapRef.current
     if (loaded && map?.getLayer('satellite-base')) map.setLayoutProperty('satellite-base', 'visibility', satellite ? 'visible' : 'none')
   }, [satellite, loaded])
 
@@ -288,7 +333,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
         <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
         <span className="toolbar-divider" />
-        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.164, 40.191], [-5.06, 40.279]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Encuadrar</button>
+        <button type="button" onClick={() => {
+          const puntos = [...citizens.map((c) => [c.lng, c.lat] as [number, number]), ...(livePerimeter?.coordinates ?? [])]
+          if (!puntos.length) return
+          const lngs = puntos.map((p) => p[0]); const lats = puntos.map((p) => p[1])
+          mapRef.current?.fitBounds([[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })
+        }}>Encuadrar</button>
         {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}

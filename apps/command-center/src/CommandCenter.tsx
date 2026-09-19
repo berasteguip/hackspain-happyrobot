@@ -5,7 +5,8 @@ import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES } fr
 import { loadCorridorRoutes, resolveGroupZones } from './routing'
 import type { RouteIndex } from './routing'
 import { advanceProtocol, moveEvacuees } from './simulation'
-import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers } from './types'
+import { fetchSnapshot } from './api'
+import type { CallEvent, Citizen, FireSpot, LocationPing, MapLayers, RiskArea, SafeZone } from './types'
 
 const STATUS_LABEL: Record<Citizen['status'], string> = {
   pending: 'Sin contactar', ringing: 'En llamada', no_answer: 'Sin respuesta',
@@ -38,6 +39,13 @@ function locationAge(ts: number | undefined, now: number) {
 export function CommandCenter({ token }: { token: string }) {
   const [now, setNow] = useState(() => new Date())
   const [citizens, setCitizens] = useState<Citizen[]>(INITIAL_CITIZENS)
+  // Zonas y perímetro dejan de venir de `scenario.ts` en cuanto `api/` responde: la geografía
+  // sale del dataset, no del frontend (decisión 003).
+  const [zones, setZones] = useState<SafeZone[]>(SAFE_ZONES)
+  const [perimeter, setPerimeter] = useState<RiskArea | null>(null)
+  const [center, setCenter] = useState<[number, number] | null>(null)
+  const [live, setLive] = useState(false)
+  const [liveNote, setLiveNote] = useState('Escenario local · sin conexión con la API')
   const [events, setEvents] = useState<CallEvent[]>([])
   const [protocolOn, setProtocolOn] = useState(false)
   const [elapsed, setElapsed] = useState(0)
@@ -104,7 +112,9 @@ export function CommandCenter({ token }: { token: string }) {
     return () => controller.abort()
   }, [token])
   useEffect(() => {
-    if (!protocolOn) return
+    // La simulación local es el plan B. Con la API conectada, mover gente por nuestra cuenta
+    // pintaría evacuaciones que no están ocurriendo.
+    if (!protocolOn || live) return
     const started = performance.now()
     const baseline = elapsedRef.current
     let previousElapsed = baseline
@@ -114,15 +124,50 @@ export function CommandCenter({ token }: { token: string }) {
       previousElapsed = nextElapsed
       elapsedRef.current = nextElapsed
       const advanced = advanceProtocol(citizensRef.current, nextElapsed, [])
-      const moved = moveEvacuees(advanced.citizens, routesRef.current, SAFE_ZONES, dt)
+      const moved = moveEvacuees(advanced.citizens, routesRef.current, zones, dt)
       citizensRef.current = moved
       setCitizens(moved)
       setElapsed(nextElapsed)
       if (advanced.events.length) setEvents((previous) => [...advanced.events.reverse(), ...previous].slice(0, 700))
     }, 100)
     return () => window.clearInterval(timer)
-  }, [protocolOn])
+  }, [protocolOn, live, zones])
+  // Estado real de la crisis. Es la vía por la que aparecen en el mapa las personas que
+  // comparten ubicación desde el enlace del SMS: su posición entra por `POST /positions` y se
+  // escribe sobre la propia persona, así que `GET /state` ya las trae con su trayectoria.
   useEffect(() => {
+    let cancelled = false
+    const control = new AbortController()
+    const poll = async () => {
+      try {
+        const snapshot = await fetchSnapshot(control.signal)
+        if (cancelled) return
+        setCitizens(snapshot.citizens)
+        if (snapshot.zones.length) setZones(snapshot.zones)
+        if (snapshot.perimeter) setPerimeter(snapshot.perimeter)
+        if (snapshot.center) setCenter(snapshot.center)
+        setLive(true)
+        const localizadas = snapshot.citizens.filter((citizen) => citizen.live).length
+        setLiveNote(`API conectada · ${snapshot.citizens.length} personas, ${localizadas} compartiendo ubicación`)
+      } catch (error) {
+        if (cancelled || control.signal.aborted) return
+        setLive(false)
+        setLiveNote(
+          error instanceof Error && error.message.includes('401')
+            ? 'API conectada pero sin clave: añade ?key= a la URL'
+            : 'Escenario local · la API no responde',
+        )
+      }
+    }
+    void poll()
+    const id = window.setInterval(() => void poll(), 2000)
+    return () => { cancelled = true; control.abort(); window.clearInterval(id) }
+  }, [])
+
+  useEffect(() => {
+    // Con la API conectada las posiciones llegan en `GET /state`; este endpoint solo existía en
+    // el servidor de desarrollo de Vite y no sobrevive a `vite build`.
+    if (live) return
     let cancelled = false
     const poll = async () => {
       try {
@@ -138,7 +183,7 @@ export function CommandCenter({ token }: { token: string }) {
     const id = window.setInterval(() => void poll(), 1500)
     void poll()
     return () => { cancelled = true; window.clearInterval(id) }
-  }, [])
+  }, [live])
 
   const fires = useMemo(() => showFirms ? [...SCENARIO_FIRES, ...firms] : SCENARIO_FIRES, [showFirms, firms])
   const counts = useMemo(() => ({
@@ -168,10 +213,10 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className="map-app">
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} />
+        <CommandMap token={token} citizens={citizens} fires={fires} zones={zones} center={center} livePerimeter={perimeter} selectedId={selectedId} layers={layers} onSelect={selectCitizen} />
       </main>
       <header className="floating-brand">
-        <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">Sierra de Gredos</span><span className="demo-badge">DEMO</span>
+        <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">Sierra de Gredos</span><span className="demo-badge">{live ? 'EN VIVO' : 'DEMO'}</span><span className="place-name" title={liveNote}>{liveNote}</span>
       </header>
       <nav className="floating-actions" aria-label="Herramientas del mapa">
         <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
@@ -199,7 +244,7 @@ export function CommandCenter({ token }: { token: string }) {
         </div>
       </aside>}
       <div className="simulation-dock">
-        <button type="button" onClick={() => setProtocolOn((active) => !active)} aria-label={protocolOn ? 'Pausar simulación' : elapsed ? 'Continuar simulación' : 'Iniciar simulación'}><Icon name={protocolOn ? 'pause' : 'play'} /><span>{protocolOn ? 'Pausar' : elapsed ? 'Continuar' : 'Simular llamadas'}</span></button>
+        <button type="button" disabled={live} title={live ? "Con la API conectada los datos son reales" : undefined} onClick={() => setProtocolOn((active) => !active)} aria-label={protocolOn ? 'Pausar simulación' : elapsed ? 'Continuar simulación' : 'Iniciar simulación'}><Icon name={protocolOn ? 'pause' : 'play'} /><span>{protocolOn ? 'Pausar' : elapsed ? 'Continuar' : 'Simular llamadas'}</span></button>
         <span className="dock-divider" /><span className="dock-count"><strong>{counts.answered}</strong>/{counts.total}<small>respondidas</small></span>
         {counts.silent > 0 && <span className="dock-silent">{counts.silent} sin respuesta</span>}
       </div>
