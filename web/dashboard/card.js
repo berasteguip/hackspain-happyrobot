@@ -8,7 +8,7 @@
    ============================================================ */
 
 import { getState, list, postOverride, CONFIG } from "./state.js";
-import { askReason, clock, esc, fieldLabel, n0, n1, n2, shortValue, toast } from "./ui.js";
+import { askReason, clock, es, esc, fieldLabel, n0, n1, n2, shortValue, toast } from "./ui.js";
 
 let current = null;       // { kind, id }
 let bound = false;
@@ -55,17 +55,6 @@ function kv(pairs) {
   return `<dl class="kv">${rows}</dl>`;
 }
 
-const STATUS_ES = {
-  unknown: "sin localizar", no_answer: "no contesta", unreachable: "ilocalizable",
-  contacted: "contactada", moving: "en ruta", safe: "a salvo",
-  refusing: "se niega a salir", at_risk: "EN RIESGO",
-  pending: "pendiente", calling: "llamando", answered: "ha contestado",
-  cleared_by_patrol: "comprobada por patrulla", empty: "vacía",
-  occupants_refuse: "se niegan a salir",
-  open: "abierta", filling: "llenándose", threatened: "AMENAZADA", closed: "cerrada",
-  forming: "formándose", moving_convoy: "en marcha", arrived: "ha llegado", broken: "ROTO",
-  en_route: "en ruta",
-};
 const SOURCE_ES = {
   gps: "GPS (borde continuo)",
   declared: "declarada por teléfono (borde discontinuo)",
@@ -74,7 +63,7 @@ const SOURCE_ES = {
 const MOBILITY_ES = {
   car: "coche", walking: "a pie", reduced: "movilidad reducida", immobile: "no puede salir sola",
 };
-const es = (v) => (v == null ? "—" : STATUS_ES[v] || v);
+/* es() y STATUS_ES viven en ui.js (los comparten fichas y paneles). */
 
 function personBody(p) {
   const rt = p.assigned_route || null;

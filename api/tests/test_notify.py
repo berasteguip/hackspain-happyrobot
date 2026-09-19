@@ -116,6 +116,25 @@ def test_con_la_variable_encendida_si_sale_la_peticion(state, cliente_espia, mon
     assert resultado.payload["action"] == "call"
 
 
+def test_una_clave_de_happyrobot_va_como_bearer(state, cliente_espia, monkeypatch):
+    """HappyRobot autentica con `Authorization: Bearer sk_live_...`; `x-api-key` es el esquema de
+    NUESTRA API. Cruzarlos da un 401 silencioso en medio de la demo, así que la clave se manda por
+    la vía que le corresponde a su forma."""
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
+    monkeypatch.setattr(settings, "hr_api_key", "sk_live_falsa")
+
+    persona = _persona()
+    state.people[persona.id] = persona
+    notify.place_call(persona, "prueba real", state, client=cliente)
+
+    cabeceras = enviadas[0].headers
+    assert cabeceras["authorization"] == "Bearer sk_live_falsa"
+    # y se sigue mandando x-api-key porque el webhook puede ser un receptor propio de pruebas
+    assert cabeceras["x-api-key"] == "sk_live_falsa"
+
+
 def test_sin_webhook_configurado_falla_pero_no_explota(state, cliente_espia, monkeypatch):
     cliente, enviadas = cliente_espia
     monkeypatch.setattr(settings, "allow_real_calls", True)

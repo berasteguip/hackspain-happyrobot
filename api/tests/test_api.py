@@ -167,9 +167,11 @@ def test_ciclo_completo_llamada_posicion_fuego_y_replan(client):
     decisiones = fuego.json()["decisions"]
     assert decisiones, "mover el fuego tiene que replanificar"
     assert any("frente" in d["reason"].lower() or "fuego" in d["reason"].lower() for d in decisiones)
-    # causa → consecuencia: las decisiones cuelgan del evento que las provocó
-    disparadores = {d.get("trigger_event_id") for d in decisiones}
-    assert len(disparadores - {None}) == 1
+    # causa → consecuencia: el perímetro nuevo es la raíz (sin disparador) y lo que salga detrás
+    # cuelga de él. Ver `test_el_evento_raiz_no_cuelga_del_evento_anterior`.
+    raiz = decisiones[0]
+    assert raiz["type"] == "fire_updated" and raiz["trigger_event_id"] is None
+    assert all(d["trigger_event_id"] == raiz["id"] for d in decisiones[1:])
 
     # 5. todo el mundo está más cerca del frente que antes
     despues = client.get("/state").json()
@@ -199,6 +201,25 @@ def test_ciclo_completo_llamada_posicion_fuego_y_replan(client):
     assert diff["since_version"] == v_antes_del_fuego
     assert diff["state_version"] > v_antes_del_fuego
     assert v_antes_del_fuego > v0
+
+
+def test_el_evento_raiz_no_cuelga_del_evento_anterior(client):
+    """El timeline del dashboard se lee como causa → consecuencia. Si el evento raíz heredara
+    `last_event_id`, el incendio colgaría de la posición GPS que llegó justo antes y el mando leería
+    una cadena causal falsa."""
+    client.post("/reset")
+    # una posición GPS justo antes: es el evento que el raíz heredaría por error
+    client.post("/positions", json={"person_id": "p-001", "lat": 41.655, "lon": -6.004})
+    decisiones = client.post(
+        "/events/exit-threatened", json={"exit_id": "x-a", "reason": "fuego en la vía"}
+    ).json()["decisions"]
+
+    raiz = decisiones[0]
+    assert raiz["type"] == "plan_discarded"
+    assert raiz["trigger_event_id"] is None, "la salida amenazada ES la causa, no tiene disparador"
+    # y todo lo que vino detrás cuelga de esa raíz, no de la posición anterior
+    consecuencias = decisiones[1:]
+    assert consecuencias and all(d["trigger_event_id"] == raiz["id"] for d in consecuencias)
 
 
 def test_el_operador_puede_cambiar_el_plan_a_mano(client):

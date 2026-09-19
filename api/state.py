@@ -237,6 +237,7 @@ class CrisisState:
         log_decision: bool = True,
         force: bool = False,
         remove: bool = False,
+        root_event: bool = False,
     ) -> DecisionLogEntry | None:
         """Aplica un cambio al estado y lo justifica.
 
@@ -246,6 +247,10 @@ class CrisisState:
           `priority_score`, `priority_rank`...). Sube `state_version` para que el dashboard lo vea
           en el diff, pero no ensucia el timeline: no es una decisión, es la consecuencia
           aritmética de un evento que ya tiene su propia entrada.
+        - `root_event=True`: esta entrada **es** la causa (el perímetro nuevo, la llamada que entra,
+          la orden del mando), no la consecuencia de otra. Sin esto heredaría `last_event_id`, que
+          todavía apunta al evento ANTERIOR, y el timeline colgaría el incendio de la posición GPS
+          que llegó antes. Un evento raíz no tiene disparador: `trigger_event_id` queda en `None`.
         - devuelve la entrada creada, o `None` si no hubo cambio real (idempotencia) o si
           `log_decision=False`.
         """
@@ -274,6 +279,7 @@ class CrisisState:
                     trigger_event_id=trigger_event_id,
                     approved_by=approved_by,
                     notified=notified,
+                    root_event=root_event,
                 ) if log_decision else None
 
             if entity is not None:
@@ -329,6 +335,7 @@ class CrisisState:
                 trigger_event_id=trigger_event_id,
                 approved_by=approved_by,
                 notified=notified,
+                root_event=root_event,
             )
 
     def _append_entry(
@@ -344,6 +351,7 @@ class CrisisState:
         trigger_event_id: str | None,
         approved_by: str | None,
         notified: Iterable[Notified] | None,
+        root_event: bool = False,
     ) -> DecisionLogEntry:
         entry = DecisionLogEntry(
             id=self.next_event_id(),
@@ -354,7 +362,7 @@ class CrisisState:
             before=before,
             after=after,
             reason=reason,
-            trigger_event_id=trigger_event_id or self.last_event_id,
+            trigger_event_id=trigger_event_id or (None if root_event else self.last_event_id),
             actor=actor,
             approved_by=approved_by,
             notified=list(notified or []),

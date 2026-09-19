@@ -168,7 +168,13 @@ def house_reason(house: House) -> str:
         if house.minutes_to_front is not None
         else "frente sin estimar"
     )
-    eta = f"patrulla a {house.patrol_eta_min:.0f} min" if house.patrol_eta_min is not None else "sin patrulla asignada"
+    if house.patrol_eta_min is None:
+        eta = "sin patrulla asignada"
+    elif house.patrol_eta_min < 1:
+        # "patrulla a 0 min" se lee como "ya está allí"; si está a 300 m hay que decirlo así.
+        eta = "patrulla a menos de 1 min"
+    else:
+        eta = f"patrulla a {house.patrol_eta_min:.0f} min"
     vuln = " · vulnerable" if house.vulnerable else ""
     if margin is None:
         return f"{frente}, {eta}{vuln}"

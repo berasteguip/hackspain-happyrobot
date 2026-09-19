@@ -96,6 +96,7 @@ def post_fire(event: FireEvent) -> WriteResponse:
         type=DecisionType.fire_updated,
         subject_type="fire",
         entity=fuego,
+        root_event=True,
     )
     state.last_event_id = primera.id if primera else None
     # Un perímetro nuevo puede invalidar rutas: se revisan TODAS, pero solo se recalculan las que
@@ -127,6 +128,7 @@ def post_road_closure(event: RoadClosureEvent) -> WriteResponse:
         subject_type="road_closure",
         subject_id=closure.id,
         entity=closure,
+        root_event=True,
     )
     state.last_event_id = primera.id if primera else None
     state.dirty_all_routes = True
@@ -154,6 +156,7 @@ def post_exit_threatened(event: ExitThreatenedEvent) -> WriteResponse:
         subject_id=zone.id,
         changes={"status": SafeZoneStatus.threatened},
         force=True,
+        root_event=True,
     )
     state.last_event_id = primera.id if primera else None
     # La amenaza la reporta alguien de fuera (patrulla, CECOPI) y el planner no la puede deducir
@@ -218,6 +221,7 @@ def post_position(event: PositionEvent) -> WriteResponse:
         subject_id=person.id,
         changes=cambios,
         log_decision=significativo,
+        root_event=True,
     )
     state.last_event_id = primera.id if primera else state.last_event_id
     decisiones = [primera] if primera else []
@@ -317,6 +321,7 @@ def post_reset(body: ResetRequest | None = None) -> WriteResponse:
         type=DecisionType.fire_updated,
         subject_type="fire",
         entity=state.fire,
+        root_event=True,
     ) if state.fire else None
     state.last_event_id = primera.id if primera else None
     decisiones = ([primera] if primera else []) + planner.run_planner(

@@ -57,6 +57,7 @@ class SimConfig:
     fire_t0_min: float = 0.0
     walk_speed_kmh: float = WALK_SPEED_KMH
     capacity_scale: float = 1.0
+    reaction_jitter_min: float = 1.5  # ruido de reacción por agente (0 = determinista, para tests)
     record_every_min: float = 1.0
     record_positions: bool = False
 
@@ -101,6 +102,8 @@ class VariantResult:
     stuck: int
     clearance_p50_min: float
     clearance_p95_min: float
+    clearance_max_min: float
+    intercepted_by_state: dict  # dónde estaba la gente alcanzada: en casa, en la cola o en marcha
     max_queue: int
     exit_load: dict
     intercepted_by_village: dict
@@ -185,7 +188,7 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
     # Números aleatorios comunes: el MISMO seed da los mismos sorteos de población en todas
     # las variantes, así que las diferencias entre planes son del plan, no del ruido.
     rng = np.random.default_rng(seed)
-    jitter = rng.normal(0.0, 1.5, size=n)  # ruido de reacción, igual para todas las variantes
+    jitter = rng.normal(0.0, cfg.reaction_jitter_min, size=n) if cfg.reaction_jitter_min > 0 else np.zeros(n)
 
     t_notice = _order_times(world, plan, np.random.default_rng(seed + 977))
     depart = t_notice + pop.ready_delay_min + jitter
@@ -193,6 +196,7 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
 
     target = _initial_targets(world, plan)
     state = np.where(pop.never_leaves, NEVER_LEAVES, AT_HOME).astype(np.int8)
+    hit_state = np.full(n, -1, dtype=np.int8)  # estado en el momento de ser alcanzado
     pos_x = pop.x.copy()
     pos_y = pop.y.copy()
     cur_edge = np.full(n, -1, dtype=np.int32)
@@ -259,6 +263,8 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
         if live.size:
             burned = world.fire.contains(t + cfg.fire_t0_min, pos_x[live], pos_y[live])
             if burned.any():
+                for i in live[burned]:
+                    hit_state[i] = state[i]
                 state[live[burned]] = INTERCEPTED
 
         # --- salidas de casa ---
@@ -379,6 +385,17 @@ def run_variant(world: SimWorld, plan, seed: int) -> VariantResult:
         stuck=int(w[state == STUCK].sum()),
         clearance_p50_min=float(np.percentile(safe_times, 50)) if safe_times.size else float("inf"),
         clearance_p95_min=float(np.percentile(safe_times, 95)) if safe_times.size else float("inf"),
+        clearance_max_min=float(safe_times.max()) if safe_times.size else float("inf"),
+        intercepted_by_state={
+            name: int(w[(state == INTERCEPTED) & (hit_state == code)].sum())
+            for name, code in (
+                ("en_casa", AT_HOME),
+                ("en_cola", QUEUED),
+                ("en_marcha", ON_EDGE),
+                ("se_niega", NEVER_LEAVES),
+                ("sin_ruta", STUCK),
+            )
+        },
         max_queue=int(max_queue),
         exit_load={world.exit_ids[i]: int(c) for i, c in enumerate(exit_count)},
         intercepted_by_village=by_village,

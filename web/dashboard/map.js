@@ -46,23 +46,48 @@ export function initMap() {
     zoom: 12,
   });
 
-  // Tiles oscuros. Si no hay wifi no cargan y se ve el fondo oscuro con la geometría encima:
-  // la demo sigue siendo legible sin mapa base.
-  const tiles = L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    {
-      subdomains: "abcd",
-      maxZoom: 19,
-      attribution: "© OpenStreetMap · © CARTO · datos sintéticos",
-      crossOrigin: true,
-    }
-  );
-  let tileErrors = 0;
-  tiles.on("tileerror", () => {
-    tileErrors++;
-    if (tileErrors === 8) console.info("[map] sin tiles (offline): se sigue con la geometría sobre fondo oscuro");
+  /* Fondo del mapa: rejilla dibujada EN LOCAL, cero red.
+     Por qué no hay mapa base de tiles: el wifi de una hackathon se cae y, además,
+     el basemap oscuro de CARTO ya exige API key (pinta "API KEY REQUIRED" encima
+     del mapa: se vio en pantalla). Sin tiles el mapa sigue siendo legible porque
+     lo que importa —fuego, personas, rutas, sectores— lo pintamos nosotros, y la
+     rejilla + la escala dan referencia de distancia.
+     Si alguien quiere el basemap online para una foto bonita: ?basemap=1 */
+  const GridBack = L.GridLayer.extend({
+    createTile(coords) {
+      const t = document.createElement("canvas");
+      const size = this.getTileSize();
+      t.width = size.x; t.height = size.y;
+      const c = t.getContext("2d");
+      c.fillStyle = "#0e1216";
+      c.fillRect(0, 0, size.x, size.y);
+      c.strokeStyle = "rgba(108,123,137,.22)";
+      c.lineWidth = 1;
+      const step = size.x / 4;
+      for (let i = 0; i <= 4; i++) {
+        const p = Math.round(i * step) + 0.5;
+        c.beginPath(); c.moveTo(p, 0); c.lineTo(p, size.y); c.stroke();
+        c.beginPath(); c.moveTo(0, p); c.lineTo(size.x, p); c.stroke();
+      }
+      // Coordenadas de la esquina: orientan sin necesidad de callejero.
+      const nw = this._map.unproject(coords.scaleBy(size), coords.z);
+      c.fillStyle = "rgba(108,123,137,.55)";
+      c.font = "600 11px system-ui, sans-serif";
+      c.fillText(`${nw.lat.toFixed(2)}, ${nw.lng.toFixed(2)}`, 6, 14);
+      return t;
+    },
   });
-  tiles.addTo(map);
+  new GridBack({ attribution: "rejilla local · sin mapa base · DATOS SINTÉTICOS" }).addTo(map);
+
+  if (new URLSearchParams(location.search).get("basemap") === "1") {
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      subdomains: "abcd", maxZoom: 19, crossOrigin: true,
+      attribution: "© OpenStreetMap · © CARTO · datos sintéticos",
+    }).addTo(map);
+  }
+
+  // Escala: sin callejero, es la única forma de leer distancias en el proyector.
+  L.control.scale({ imperial: false, position: "bottomleft", maxWidth: 160 }).addTo(map);
 
   // Orden de pintado (panes): fuego debajo, personas arriba.
   map.createPane("p-history"); map.getPane("p-history").style.zIndex = 380;
@@ -355,6 +380,13 @@ function decodePolyline(str, precision) {
 /* ---------------------- Personas ---------------------- */
 const DOT_SIZE = { small: 16, normal: 20, big: 26 };
 
+/* Nombres en el mapa: SOLO los que importan (cabeza de la cola, en riesgo, quien
+   se niega a salir). Con 120 vecinos, etiquetar a todos tapaba el fuego, los
+   sectores y los nombres entre sí: el mapa dejaba de leerse desde lejos.
+   Al resto se le ve el punto, y su nombre sale al pulsarlo (ficha). */
+let labelIds = new Set();
+const isLabelled = (p) => labelIds.has(p.id) || p.status === "at_risk" || p.status === "refusing";
+
 function personIcon(p) {
   const size = p.status === "at_risk" || p.mobility === "immobile" ? DOT_SIZE.big : DOT_SIZE.normal;
   const cls = [
@@ -363,12 +395,12 @@ function personIcon(p) {
     `src-${p.position_source || "declared"}`,
     p.mobility === "immobile" || p.mobility === "reduced" ? "vuln" : "",
   ].join(" ");
-  const label = p.name ? p.name.split(" ")[0] : p.id;
+  const label = isLabelled(p) ? (p.name ? p.name.split(" ")[0] : p.id) : "";
   return L.divIcon({
     className: "",
     html: `<div style="position:relative;width:${size}px;height:${size}px">
              <div class="${cls}" style="position:absolute;inset:0"></div>
-             <span class="person-label">${label}</span>
+             ${label ? `<span class="person-label">${label}</span>` : ""}
            </div>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],
@@ -380,7 +412,7 @@ function renderPeople(people) {
   for (const p of people) {
     if (p.lat == null || p.lon == null) continue;
     seen.add(p.id);
-    const key = `${p.status}|${p.position_source}|${p.mobility}|${p.name}`;
+    const key = `${p.status}|${p.position_source}|${p.mobility}|${p.name}|${isLabelled(p) ? 1 : 0}`;
     let m = personMarkers.get(p.id);
     if (!m) {
       m = L.marker([p.lat, p.lon], { icon: personIcon(p), zIndexOffset: p.status === "at_risk" ? 500 : 0 });
@@ -492,6 +524,8 @@ function renderPatrols(patrols) {
 export function renderMap() {
   if (!map) return;
   const s = getState();
+  // Quién lleva nombre puesto en el mapa: los 8 primeros de la cola de atención.
+  labelIds = new Set(list(s.queue).slice(0, 8).map((q) => q.person_id || q.id).filter(Boolean));
   renderFire(s.fire);
   renderSectors(list(s.sectors));
   renderZones(list(s.safeZones));

@@ -15,7 +15,7 @@ import { initMap, renderMap, fitAll, focusOn } from "./map.js";
 import { CONFIG, getState, humanType, list, postApprove, start, subscribe } from "./state.js";
 import { doOverride, openCard, refreshCard } from "./card.js";
 import {
-  askReason, clock, copyText, esc, fieldLabel, minutesBetween,
+  askReason, clock, copyText, es, esc, fieldLabel, minutesBetween,
   n0, n1, n2, sevOf, shortValue, toast,
 } from "./ui.js";
 
@@ -278,7 +278,7 @@ function renderQueue(s) {
          <span class="main" style="flex:1;min-width:0">
            <div class="name">${esc(p.name || pid)}${p.mobility === "immobile" || p.mobility === "reduced" ? ' <span class="pill vuln">movilidad</span>' : ""}${
              (item.status || p.status) === "at_risk" ? ' <span class="pill risk">EN RIESGO</span>' : ""}</div>
-           <div class="meta">${esc(item.status || p.status || "—")}${mins != null ? ` · ${n0(mins)}′ al frente` : ""}${
+           <div class="meta">${esc(es(item.status || p.status))}${mins != null ? ` · ${n0(mins)}′ al frente` : ""}${
              p.household_size ? ` · ${p.household_size} en casa` : ""}</div>
          </span>
          <span class="q-score">${score == null ? "—" : n2(score)}</span>

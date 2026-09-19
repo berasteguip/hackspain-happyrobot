@@ -1053,8 +1053,12 @@ def recompute_air_priority(state, trigger_event_id: str | None = None) -> Decisi
     )
     for rank, (sector_id, m) in enumerate(orden, start=1):
         sector = state.sectors[sector_id]
+        # `people_unknown` cuenta CASAS sin contactar, no personas (el nombre del campo es del
+        # contrato y no se toca). Decir "75 personas dentro, 77 sin localizar" hace que un jefe de
+        # sector lea una contradicción, así que el texto nombra la unidad de verdad de cada cifra.
         razon = (
-            f"{m['people_inside']} personas dentro, {m['people_unknown']} sin localizar, "
+            f"{m['people_inside']} personas localizadas dentro, "
+            f"{m['people_unknown']} casas sin contactar, "
             f"{m['vulnerable_inside']} vulnerable(s)"
             + (
                 f", frente a {m['minutes_to_front']:.0f} min"

@@ -96,6 +96,7 @@ def post_override(body: HumanOverride) -> WriteResponse:
         actor=Actor.human,
         approved_by=operador,
         force=True,
+        root_event=True,  # una orden del mando es causa, no consecuencia
     )
     # Sticky: el planner consulta `is_overridden` antes de recalcular este campo.
     state.set_override(body.subject_type, body.subject_id, body.field, valor, operador)
@@ -141,6 +142,7 @@ def _reopen_road(body: HumanOverride, operador: str, motivo: str) -> WriteRespon
         actor=Actor.human,
         approved_by=operador,
         remove=True,
+        root_event=True,
     )
     if entrada:
         state.last_event_id = entrada.id
@@ -189,6 +191,7 @@ def post_approve(body: HumanApproval) -> WriteResponse:
             actor=Actor.human,
             approved_by=operador,
             force=True,
+            root_event=True,
         )
         decisiones = [entrada] if entrada else []
         return write_response(decisiones, event="approve(rechazado)")
@@ -236,6 +239,7 @@ def _do_assign_patrol(pending, operador: str, motivo: str) -> list:
         actor=Actor.human,
         approved_by=operador,
         force=True,
+        root_event=True,
     )
     if entrada:
         decisiones.append(entrada)

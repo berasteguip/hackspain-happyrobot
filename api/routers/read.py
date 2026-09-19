@@ -76,7 +76,16 @@ def get_queue(limit: int = Query(100, ge=1, le=1000), include_safe: bool = False
             }
         )
     filas.sort(key=lambda r: r["priority_score"], reverse=True)
-    return {"state_version": state.state_version, "count": len(filas), "queue": filas[:limit]}
+    recortadas = filas[:limit]
+    # `count` es el total en cola y `returned` lo que va en esta respuesta: con 120 personas y el
+    # `limit` por defecto en 100 no son lo mismo, y un dashboard que pinte `count` filas sobre una
+    # lista de 100 se queda corto sin avisar.
+    return {
+        "state_version": state.state_version,
+        "count": len(filas),
+        "returned": len(recortadas),
+        "queue": recortadas,
+    }
 
 
 @router.get("/houses/no-answer")

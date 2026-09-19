@@ -155,6 +155,7 @@ def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
         changes=cambios,
         actor=Actor.agent,
         force=True,  # la llamada se registra aunque no cambie ningún campo
+        root_event=True,  # la llamada ES la causa: lo que venga detrás cuelga de ella
     )
     if entrada:
         decisiones.append(entrada)
@@ -187,6 +188,7 @@ def _no_answer(person: Person, house: House | None, outcome: CallOutcome) -> lis
         changes={"call_attempts": intentos, "status": PersonStatus.no_answer},
         actor=Actor.agent,
         force=True,
+        root_event=True,
     )
     if entrada:
         decisiones.append(entrada)
@@ -389,6 +391,7 @@ def post_call_started(body: CallStarted) -> WriteResponse:
         changes={},
         actor=Actor.agent,
         force=True,
+        root_event=True,
     )
     decisiones = [entrada] if entrada else []
     casa = state.houses.get(person.house_id or "")

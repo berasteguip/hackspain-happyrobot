@@ -43,12 +43,35 @@ export function n0(v) { return v == null ? "—" : Math.round(v); }
 export function n1(v) { return v == null ? "—" : (Math.round(v * 10) / 10).toFixed(1); }
 export function n2(v) { return v == null ? "—" : (Math.round(v * 100) / 100).toFixed(2); }
 
+/* Estados del contrato en español. Vive aquí (no en card.js) porque lo necesitan
+   las fichas Y los paneles: en la cola se veía "unknown" a pantalla completa. */
+export const STATUS_ES = {
+  unknown: "sin localizar", no_answer: "no contesta", unreachable: "ilocalizable",
+  contacted: "contactada", moving: "en ruta", safe: "a salvo",
+  refusing: "se niega a salir", at_risk: "EN RIESGO",
+  pending: "pendiente", calling: "llamando", answered: "ha contestado",
+  cleared_by_patrol: "comprobada por patrulla", empty: "vacía",
+  occupants_refuse: "se niegan a salir",
+  open: "abierta", filling: "llenándose", threatened: "AMENAZADA", closed: "cerrada",
+  forming: "formándose", moving_convoy: "en marcha", arrived: "ha llegado", broken: "ROTO",
+  en_route: "en ruta",
+};
+/** Traduce un estado del contrato; si no lo conoce, lo deja tal cual (no inventa). */
+export const es = (v) => (v == null ? "—" : STATUS_ES[v] || v);
+
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
 /** Valor corto y legible para los diffs del timeline y las fichas. */
 export function shortValue(v) {
   if (v == null) return "—";
   if (typeof v === "boolean") return v ? "sí" : "no";
   if (typeof v === "number") return String(Math.round(v * 100) / 100);
-  if (typeof v === "string") return v.length > 60 ? v.slice(0, 57) + "…" : v;
+  if (typeof v === "string") {
+    // Las marcas de tiempo ISO ocupaban media línea del diff: solo la hora.
+    if (ISO_RE.test(v)) return clock(v);
+    if (STATUS_ES[v]) return STATUS_ES[v];
+    return v.length > 60 ? v.slice(0, 57) + "…" : v;
+  }
   if (Array.isArray(v)) return v.length <= 4 ? v.map(shortValue).join(", ") : `${v.length} elementos`;
   if (typeof v === "object") {
     const parts = [];
