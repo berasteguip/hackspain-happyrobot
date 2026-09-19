@@ -1,25 +1,29 @@
 # hackspain-happyrobot · equipo router123
 
-Sistema agéntico de **guiado individual de evacuación en incendios forestales**, para el track de
-HappyRobot de HackSpain 2026. Luis (luismols / 34lumo) y Pablo (berasteguip).
+Repo del equipo **router123** en **HackSpain 2026**, track **HappyRobot**. Luis (luismols / 34lumo),
+Pablo (berasteguip), Mateo y Allan.
+
+Sistema agéntico de **guiado individual de evacuación en incendios forestales** para Protección Civil.
 
 > Sabemos dónde está cada persona y dónde está el fuego, y guiamos a cada una hasta que sale viva.
 
 El CECOPI hoy ve el fuego pero no ve a la gente. La llamada masiva es el *onboarding*: saca a la
-persona de casa y nos da su posición. El producto es el mapa de personas sobre el mapa del fuego, y
-las tres cosas que salen de ahí y hoy no existen: la lista viva de casas sin contestar que recibe la
-patrulla, los convoyes con coche guía, y la prioridad de medios aéreos decidida por dónde está la
-gente y no solo por dónde está el fuego.
+persona de casa y nos da su posición. El producto es el mapa de personas sobre el mapa del fuego y
+lo que sale de ahí: rutas individuales que se recalculan, convoyes con coche guía, la lista viva de
+casas sin contestar que recibe la patrulla, y la prioridad de medios aéreos decidida por dónde está
+la gente. El motor de la demo son **300 vecinos simulados con personalidad propia** que conversan
+con el agente de HappyRobot, más unas pocas llamadas de voz reales.
 
-## Por dónde empezar a leer
+## Empieza aquí
 
-| Documento | Qué es |
-|---|---|
-| `docs/reto-happyrobot.md` | El enunciado oficial. Fuente de verdad, se lee primero. |
-| `docs/escenario-incendio.md` | La idea con el alcance cerrado, el guion de la demo y el backlog. |
-| `docs/contrato-de-datos.md` | **Vinculante para todo el código**: entidades, API, fórmula de prioridad. |
-| `docs/plataforma-happyrobot.md` | Qué expone la plataforma de verdad, con marcas de verificado. |
-| `docs/research/` | Investigación de respaldo del pitch (datos reales, legal, modelos, competencia). |
+| Si eres… | Lee |
+| --- | --- |
+| Persona nueva en el equipo | [`docs/README.md`](docs/README.md) (índice) y [`docs/reto-happyrobot.md`](docs/reto-happyrobot.md) (enunciado oficial) |
+| Un agente de IA | [`AGENTS.md`](AGENTS.md) (reglas) y [`CLAUDE.md`](CLAUDE.md) (estado del proyecto) |
+| Quien decide el producto | [`docs/escenario-incendio.md`](docs/escenario-incendio.md) y [`docs/06-producto/01-vigia.md`](docs/06-producto/01-vigia.md) |
+| Quien escribe código | [`docs/contrato-de-datos.md`](docs/contrato-de-datos.md) (**vinculante**: entidades, API, prioridad) |
+| Quien construye el agente de HappyRobot | [`docs/brief-equipo-agente.md`](docs/brief-equipo-agente.md) |
+| Quien toca la plataforma | [`docs/plataforma-happyrobot.md`](docs/plataforma-happyrobot.md) (qué expone de verdad, verificado) |
 
 ## Componentes
 
@@ -29,16 +33,21 @@ engine/  motor de escenario: el incendio avanza y la situación cambia en runtim
   ▼
 api/     estado de crisis: única fuente de verdad. Decide prioridad, rutas, convoyes,
   │      patrullas y prioridad aérea. Cada cambio deja una entrada con motivo en el decision_log.
-  ├──────► web/dashboard/  puesto de mando: mapa, timeline de cambios, botones de intervención
-  ├──────► web/gps/        la página del enlace que comparte la ubicación del vecino
-  ├──────► sim/            simula la evacuación completa y elige el plan que pierde a menos gente
-  └──◄──── HappyRobot      llamadas, SMS, Slack; el agente de voz consulta /instructions
-data/    dataset sintético de 3 pueblos de Zamora (~120 casas), reproducible por semilla
+  ├──────► web/dashboard/       puesto de mando (MapLibre + OSM): mapa, timeline, intervención
+  ├──────► apps/command-center/ CECOP (Vite + React + Mapbox), frontend de Vigía
+  ├──────► web/gps/             la página del enlace que comparte la ubicación del vecino
+  ├──────► sim/                 simula la evacuación completa y elige el plan que pierde a menos gente
+  └──◄──── HappyRobot           conversaciones con los 300 vecinos, llamadas, SMS, Slack
+data/    dataset sintético de ~120 casas / 300 personas, reproducible por semilla
+docs/    base de conocimiento (ver docs/README.md); docs/_inbox/ es material crudo
 ```
+
+Hay dos frontends (`web/dashboard` y `apps/command-center`). Unificarlos es una decisión pendiente
+del equipo; hasta entonces ambos consumen la misma `api/`.
 
 ## Arranque
 
-Requiere **Python 3.12+** (el `python3` del sistema en un Mac es 3.9 y no sirve) y `uv`:
+Backend y dashboard MapLibre requieren **Python 3.12+** (el `python3` del sistema en un Mac es 3.9) y `uv`:
 
 ```bash
 brew install uv && uv python install 3.12
@@ -58,11 +67,21 @@ make engine         #        empieza a moverse el escenario
 
 `make help` lista todo. `make demo` recuerda la secuencia del día del pitch.
 
-## Dos reglas que no se saltan
+CECOP (Mapbox):
+
+```bash
+cd apps/command-center
+npm install
+npm run dev
+```
+
+Hace falta un token público de Mapbox. La app lo pide al abrir si no está en `.env`.
+
+## Reglas que no se saltan
 
 1. **Los datos son sintéticos y se declaran como tales.** Todos los teléfonos están en el rango
-   reservado `+3460099xxxx` y el dashboard lleva una etiqueta visible. En una demo de emergencias
-   esto no es opcional.
+   reservado `+3460099xxxx` y el dashboard lleva una etiqueta visible.
 2. **`ALLOW_REAL_CALLS=false` por defecto.** El sistema simula el envío de llamadas y SMS y lo
-   registra. La bandera se activa solo en el momento de la demo. Un bucle que llame de verdad a 120
-   teléfonos arruina el proyecto y algo más.
+   registra. La bandera se activa solo en el momento de la demo, con allowlist explícita de teléfonos.
+3. **Todo lo que aprendamos se escribe en `docs/`, con fuente y fecha.** Lo que solo está en el
+   chat, no existe.

@@ -1,0 +1,31 @@
+---
+description: Cómo escribir y mantener los documentos de docs/
+globs:
+  - "docs/**/*.md"
+---
+
+# Escritura en la base de conocimiento
+
+## Plantilla de documento
+
+```markdown
+# <Título>
+
+> **Actualizado:** YYYY-MM-DD · **Estado:** borrador | estable | obsoleto
+> **En una frase:** <el resumen que se lee si no se lee nada más>
+
+## <secciones>
+
+## Fuentes
+- <título> — <URL> (consultado YYYY-MM-DD)
+```
+
+## Reglas
+
+- Empieza por la conclusión. Estos docs se leen a las 4 de la mañana.
+- Cifras **siempre con fecha y fuente**. Sin fuente → `[SIN VERIFICAR]`.
+- Opiniones del equipo marcadas con `> HIPÓTESIS:`.
+- Preguntas abiertas al final, en una sección `## Preguntas abiertas` con checkboxes.
+- Enlaza entre documentos con rutas relativas en vez de duplicar contenido.
+- No inventes nombres de clientes, cifras, features de plataforma ni artículos legales.
+  Si no lo has verificado, dilo.

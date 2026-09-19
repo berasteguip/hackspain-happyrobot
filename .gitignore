@@ -1,12 +1,19 @@
+# Secretos
+.env
+.env.*
+!.env.example
+**/config.js
+!**/config.example.js
+
 # Playwright output (may contain credentials)
 .playwright-cli/
 .playwright/
 .playwright-mcp/
 
-# Secretos
-.env
-**/config.js
-!**/config.example.js
+# Node
+node_modules/
+dist/
+*.local
 
 # Python
 .venv/
@@ -15,9 +22,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+*.egg-info/
 
 # Artefactos de ejecucion
 api/state.jsonl
+api/tests/.state-test.jsonl
 **/build.log
 sim/out/
 sim/cache/
@@ -26,6 +35,14 @@ engine/logs/
 # macOS
 .DS_Store
 
-# Artefactos de tests y empaquetado
-api/tests/.state-test.jsonl
-*.egg-info/
+# Config local de agentes (no se comparte)
+.devin/config.local.json
+.devin/mcp_config.local.json
+
+# Mirror de la documentación oficial de HappyRobot.
+# Es material del proveedor, que en público está tras un access code: no se
+# publica en este repo (que es público). Se distribuye por privado al equipo.
+# Regenerar: HR_DOCS_CODE=<access-code> python3 scripts/scrape_docs.py
+docs/_inbox/*happyrobot-docs-oficiales/
+docs/_inbox/*happyrobot-docs*.zip
+happyrobot-docs*.zip

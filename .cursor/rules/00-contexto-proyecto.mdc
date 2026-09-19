@@ -1,0 +1,22 @@
+---
+description: Contexto base del proyecto router123 para HackSpain 2026 (track HappyRobot)
+alwaysApply: true
+---
+
+# Contexto del proyecto
+
+Equipo `router123` en **HackSpain 2026** (Madrid, 18–20 sept 2026), **track HappyRobot**.
+Explorando llevar los AI workers de HappyRobot al **sector público y la gestión de crisis**.
+
+**Estado:** hay un primer frontend del CECOP (`apps/command-center`) y una tesis de
+producto (Vigía). Sigue aplicando la disciplina de `docs/`. No inventes otro stack
+salvo que se pida.
+
+## Reglas obligatorias
+
+1. Lee `AGENTS.md` y `docs/README.md` antes de actuar. `AGENTS.md` manda sobre esta regla.
+2. Todo hallazgo nuevo se escribe en `docs/`, con fuente citada y fecha.
+3. Distingue hecho (`con fuente`) de opinión (`> HIPÓTESIS:`).
+4. Material crudo sin procesar va a `docs/_inbox/` como `YYYY-MM-DD-origen-tema.ext`.
+5. Prosa en español, términos técnicos en inglés.
+6. No borres conocimiento: márcalo obsoleto con fecha.
