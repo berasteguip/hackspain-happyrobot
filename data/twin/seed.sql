@@ -1,9 +1,3 @@
--- ============================================================
--- GENERADO por data/twin_seed.py — no editar a mano.
--- Escenario: sierra-culebra (semilla 42)
--- DATOS SINTÉTICOS. Ningún teléfono, nombre ni dirección corresponde a una persona real.
--- ============================================================
-
 delete from support_need;
 delete from person;
 delete from house;

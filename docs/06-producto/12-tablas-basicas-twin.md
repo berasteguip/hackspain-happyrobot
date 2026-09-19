@@ -174,6 +174,29 @@ Dos asimetrías deliberadas entre las dos copias:
 `GET /calls/log` filtra por `topic`, `road`, `locality_id`, `person_id`, `only_open` (la cola de lo
 que hay que volver a preguntar) y `vigentes`.
 
+### La lectura que hace el agente
+
+Ensancha en vez de devolver vacío, que es lo que hace un humano: primero su núcleo, luego su
+municipio, luego la carretera por la que va. Solo es posible porque el padrón tiene la jerarquía.
+
+```sql
+select l.name as zona, c.question, c.answer, s.label as fuente,
+       extract(epoch from (now() - c.created_at)) / 60 as hace_min
+from call_log c
+join source s on s.id = c.source_id
+left join locality l on l.id = c.locality_id
+where c.answer is not null
+  and (c.valid_until is null or c.valid_until > now())
+  and (c.locality_id = $1 or c.road = $2)
+order by s.rank, c.created_at desc
+limit 5;
+```
+
+`order by s.rank` es lo que resuelve las contradicciones: si un vecino y los bomberos dicen lo
+contrario de la misma carretera, gana el de mejor rank. Y `hace_min` va en la consulta porque el
+agente está **obligado** a citar fuente y antigüedad — «hace veinte minutos los bomberos nos
+dijeron que…» — no a afirmar por su cuenta.
+
 ## 7. Lo que esto destapó del dataset
 
 Cuatro cosas que estaban en `data/scenarios/sierra-culebra.json` y que no se veían hasta cruzarlas:
@@ -197,9 +220,22 @@ Cuatro cosas que estaban en `data/scenarios/sierra-culebra.json` y que no se ve�
 python data/twin_seed.py          # data/scenarios/*.json -> data/twin/seed.sql (determinista)
 ```
 
-Y luego `data/twin/schema.sql` + `data/twin/seed.sql` contra Twin (nodo `Query Twin with SQL`, o
-`execute_sql` del MCP). El `seed.sql` empieza borrando las seis tablas en orden inverso de
-dependencia, así que recargarlo dos veces no duplica nada.
+Y luego, contra Twin (nodo `Query Twin with SQL`, o `execute_sql` del MCP), en este orden:
+
+| Fichero | Qué es | A mano o generado |
+| --- | --- | --- |
+| `data/twin/schema.sql` | Las 8 tablas y las 3 vistas | a mano |
+| `data/twin/reference.sql` | El vocabulario de `source` y el 112 | a mano |
+| `data/twin/seed.sql` | El padrón del escenario | **generado**, no editar |
+| `data/twin/call_log.sql` | El log de llamadas | a mano |
+
+Los cuatro son **SQL puro, sin un solo comentario, a propósito**: son ficheros para pegar en un
+nodo de la plataforma, y el porqué de cada columna vive en este documento, no ahí. Si al leer el
+SQL no se entiende una decisión, el arreglo es escribirla aquí — no comentar el `.sql`.
+
+`seed.sql` empieza borrando las seis tablas del padrón en orden inverso de dependencia, así que
+recargarlo dos veces no duplica nada. **Su contenido es sintético en su totalidad**: ningún
+teléfono, nombre ni dirección corresponde a una persona real (`meta.notice` del escenario).
 
 `sector` es la única excepción consciente a la regla del §3: los sectores se dibujan **para** un
 incidente, no existen antes. Llevan columna `incident` y se reescriben enteros al cargar escenario.
@@ -289,6 +325,14 @@ una contraparte simulada, y `name` es el organismo — nunca el móvil de una pe
 `municipality.ine_code` sigue vacío a propósito y es el puente natural con esa base: casi cualquier
 dataset oficial español viene con código INE, y así el join no depende de comparar nombres con
 tildes.
+
+> **[SIN VERIFICAR]** El valor `agente_forestal` de `source` está puesto porque en Castilla y León
+> quien dirige la extinción de un incendio forestal son los **agentes medioambientales**, no unos
+> bomberos municipales — pero eso no está documentado en `docs/03-dominio-crisis/` con fuente.
+> Confirmarlo antes de apoyarse en su `rank` para resolver contradicciones.
+
+Y el vocabulario de `source` es una **propuesta de partida**: si la base de contactos descargada
+trae otros tipos de organismo, se insertan filas nuevas. Es aditivo y no rompe nada.
 
 ## Fuentes
 

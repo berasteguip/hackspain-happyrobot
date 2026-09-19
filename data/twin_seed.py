@@ -101,11 +101,8 @@ def build(scenario: dict) -> tuple[str, dict]:
     stats: dict[str, int] = {}
     incident = scenario["meta"]["name"]
 
-    out.append("-- ============================================================")
-    out.append("-- GENERADO por data/twin_seed.py — no editar a mano.")
-    out.append(f"-- Escenario: {incident} (semilla {scenario['meta']['seed']})")
-    out.append(f"-- {scenario['meta']['notice']}")
-    out.append("-- ============================================================\n")
+    # El fichero sale sin comentarios a propósito: es SQL para pegar en un nodo, y el porqué
+    # de cada tabla vive en docs/06-producto/12-tablas-basicas-twin.md.
     out.append("delete from support_need;")
     out.append("delete from person;")
     out.append("delete from house;")
