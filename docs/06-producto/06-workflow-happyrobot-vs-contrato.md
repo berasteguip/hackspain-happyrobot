@@ -88,6 +88,54 @@ Cómo levantar `/track` y compartirlo con un móvil real está en
 con el filtro DNS de la wifi de la UPM documentado: aplica a cualquier túnel, también
 al de `web/gps`.
 
+## Propuesta de demo con llamadas reales al equipo — 2026-09-19
+
+> HIPÓTESIS de producto, pendiente de cerrar con el equipo: el coordinador debe poder
+> abrir la conversación de una persona para comprobar qué declaró y por qué cambió
+> su plan. La ficha debería priorizar la instrucción vigente y los datos confirmados,
+> conservando conversación e historial de llamadas por `person_id` y `run_id`.
+
+La petición del equipo plantea una llamada de HappyRobot a un participante que hace
+de afectado, movimiento simulado después de colgar, un cambio de viento que exponga
+al norte y una solicitud posterior de refuerzos. La secuencia propuesta es:
+
+1. Una llamada real de prueba recoge respuesta, disposición a evacuar, movilidad y
+   consentimiento. Su resultado estructurado actualiza al contacto correspondiente.
+2. Solo un resultado compatible inicia el movimiento de su avatar de demo; colgar
+   por sí solo no demuestra aceptación ni evacuación. La ubicación del avatar no se
+   presenta como GPS real del participante.
+3. Un evento de escenario modifica el viento y la versión del plan. El backend
+   determina nuevas exposiciones y rutas afectadas; el agente consulta el contexto
+   actualizado y comunica solo a quienes necesitan una instrucción nueva.
+4. Un rol separado prepara una solicitud de apoyo con sector, necesidad y estado de
+   evacuación, revisable por el mando. Un compañero representa al centro receptor y
+   confirma disponibilidad/ETA. No se llama a servicios públicos reales en la demo.
+
+> HIPÓTESIS: conviene demostrar primero una llamada completa → callback → estado →
+> movimiento, después el cambio de situación y finalmente la coordinación de recursos.
+> Los roles pueden ser nodos/workflows con guiones distintos sobre el mismo estado;
+> no requieren agentes autónomos negociando entre sí ni varias fuentes de verdad.
+
+**Transcripción en vivo pendiente de verificación para el canal elegido.** Las notas
+locales de SDK documentan sesiones/runs y escucha WebRTC, pero eso no demuestra un
+stream de texto para llamadas telefónicas outbound. En esta revisión no se pudo leer
+el mirror privado por sus restricciones de acceso. Como alternativa de demo se puede
+plantear conversación/resumen al finalizar, confirmando antes cómo entrega esos datos
+el workflow. No se debe presentar un texto simulado como transcript de una llamada real.
+
+**Revisión necesaria del guion existente:** `prompts/07-guion-demo.md` §2.2 contiene
+«esto no es una prueba». Para llamadas de demostración al equipo la presentación debe
+identificar el simulacro. Tampoco deben darse por ejecutadas las capacidades descritas
+en ese guion solo porque estén escritas: cada evento debe corresponder a una acción
+observada. Llamar de verdad requiere destinos de prueba autorizados; no basta con
+tratar el interruptor global `ALLOW_REAL_CALLS` como si fuera una lista de destinos.
+
+Fuentes de esta revisión: solicitud del equipo del 2026-09-19;
+[`../02-happyrobot/04-api-y-sdk.md`](../02-happyrobot/04-api-y-sdk.md) §§8–9;
+[`03-contrato-de-datos.md`](03-contrato-de-datos.md) §3;
+[`../../api/notify.py`](../../api/notify.py) y
+[`../../prompts/07-guion-demo.md`](../../prompts/07-guion-demo.md) (revisados 2026-09-19).
+
 ## Preguntas abiertas
 
 - [ ] ¿El agente ordena moverse o solo informa la ruta? (§3 — bloquea el resto)

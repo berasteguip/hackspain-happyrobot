@@ -3,21 +3,141 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import type { GeoJSONSource } from 'mapbox-gl'
 import type { FeatureCollection, Polygon, Point, LineString } from 'geojson'
-import { FIRE_CELL_SIZE_M, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
+import { FIRE_CELL_SIZE_M } from './scenario'
+import type { Incident } from './scenario'
 import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL } from './fire-model'
 import type { Exposure } from './fire-model'
-import { CENTER_SYMBOL, RESPONSE_CENTERS } from './response'
+import { CENTER_COLOR } from './response'
+import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
+import { UNIT_COLOR, UNIT_LABEL, UNIT_STATUS_LABEL } from './units'
+import type { DispatchUnit } from './units'
 import { WindOverlay } from './WindOverlay'
 
 const PERSON_COLOR = '#459eff'
 
-function overviewBounds() {
-  const bounds = new mapboxgl.LngLatBounds([-5.164, 40.191], [-5.06, 40.279])
-  RESPONSE_CENTERS.forEach(center => bounds.extend([center.lng, center.lat]))
-  return new mapboxgl.LngLatBounds([bounds.getWest() - 0.01, bounds.getSouth() - 0.01], [bounds.getEast() + 0.01, bounds.getNorth() + 0.01])
+function vehicleMarker(color: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 72
+  canvas.height = 36
+  const context = canvas.getContext('2d')!
+  context.fillStyle = color
+  context.strokeStyle = '#0a1117'
+  context.lineWidth = 2
+  context.beginPath()
+  context.roundRect(6, 10, 60, 16, 5)
+  context.fill()
+  context.stroke()
+  context.fillStyle = '#101820'
+  context.beginPath()
+  context.roundRect(42, 13, 18, 10, 3)
+  context.fill()
+  return context.getImageData(0, 0, 72, 36)
+}
+
+function badge(color: string, background: string, paint: (context: CanvasRenderingContext2D) => void) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 64
+  canvas.height = 64
+  const context = canvas.getContext('2d')!
+  context.fillStyle = background
+  context.strokeStyle = color
+  context.lineWidth = 3
+  context.beginPath()
+  context.arc(32, 32, 28, 0, Math.PI * 2)
+  context.fill()
+  context.stroke()
+  paint(context)
+  return context.getImageData(0, 0, 64, 64)
+}
+
+function hospitalMarker(color: string) {
+  return badge(color, '#14232de6', context => {
+    context.fillStyle = color
+    context.fillRect(29, 16, 6, 32)
+    context.fillRect(16, 29, 32, 6)
+  })
+}
+
+function healthMarker(color: string) {
+  return badge(color, '#e7f1f5', context => {
+    context.strokeStyle = color
+    context.lineWidth = 4
+    context.beginPath()
+    context.arc(32, 32, 9, 0, Math.PI * 2)
+    context.stroke()
+  })
+}
+
+function fireMarker(color: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 64
+  canvas.height = 64
+  const context = canvas.getContext('2d')!
+  context.fillStyle = '#14232de6'
+  context.strokeStyle = color
+  context.lineWidth = 3
+  context.beginPath()
+  context.moveTo(32, 6)
+  context.lineTo(58, 32)
+  context.lineTo(32, 58)
+  context.lineTo(6, 32)
+  context.closePath()
+  context.fill()
+  context.stroke()
+  context.fillStyle = color
+  context.beginPath()
+  context.moveTo(32, 20)
+  context.lineTo(44, 32)
+  context.lineTo(32, 44)
+  context.lineTo(20, 32)
+  context.closePath()
+  context.fill()
+  return context.getImageData(0, 0, 64, 64)
+}
+
+function meetingMarker(color: string) {
+  return badge(color, '#14232de6', context => {
+    context.fillStyle = color
+    context.beginPath()
+    context.moveTo(32, 15)
+    context.lineTo(49, 29)
+    context.lineTo(15, 29)
+    context.closePath()
+    context.fill()
+    context.fillRect(20, 29, 24, 16)
+  })
+}
+
+const CENTER_MARKER = { hospital: hospitalMarker, health: healthMarker, fire: fireMarker } as const
+
+function overviewBounds(cells: FeatureCollection<Polygon>, centers: ResponseCenter[], zones: SafeZone[], fires: FireSpot[]) {
+  const bounds = new mapboxgl.LngLatBounds()
+  for (const feature of cells.features) {
+    for (const ring of feature.geometry.coordinates) {
+      for (const [lng, lat] of ring) bounds.extend([lng, lat])
+    }
+  }
+  for (const center of centers) bounds.extend([center.lng, center.lat])
+  for (const zone of zones) bounds.extend([zone.lng, zone.lat])
+  for (const fire of fires) bounds.extend([fire.lng, fire.lat])
+  if (!cells.features.length && !centers.length && !zones.length && !fires.length) {
+    return new mapboxgl.LngLatBounds([-3.74, 40.42], [-3.70, 40.47])
+  }
+  return new mapboxgl.LngLatBounds([bounds.getWest() - 0.008, bounds.getSouth() - 0.008], [bounds.getEast() + 0.008, bounds.getNorth() + 0.008])
+}
+
+function centersGeo(centers: ResponseCenter[]): FeatureCollection<Point> {
+  return {
+    type: 'FeatureCollection',
+    features: centers.map(center => ({
+      type: 'Feature',
+      properties: { id: center.id, kind: center.kind, name: center.kind === 'hospital' ? 'Hospital' : center.kind === 'fire' ? 'Bomberos' : center.name, locationSource: center.locationSource },
+      geometry: { type: 'Point', coordinates: [center.lng, center.lat] },
+    })),
+  }
 }
 
 function overviewPadding(width: number) {
@@ -25,7 +145,7 @@ function overviewPadding(width: number) {
 }
 
 const LAYER_IDS: Record<keyof MapLayers, string[]> = {
-  perimeter: ['fire-cells-fill'],
+  perimeter: ['fire-heat-glow', 'fire-cells-fill'],
   spread: ['spread-fill', 'spread-hatch', 'spread-edge'],
   thermal: ['thermal-core', 'thermal-satellite'],
   citizens: ['people-glow', 'people-dot', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
@@ -35,6 +155,8 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   healthCenters: ['center-health', 'center-health-label'],
   fireStations: ['center-fire', 'center-fire-label'],
   routes: ['refuge-route-casing', 'refuge-route-line'],
+  callArea: ['call-area-fill', 'call-area-edge'],
+  units: ['unit-point', 'unit-label'],
 }
 
 type Props = {
@@ -50,7 +172,7 @@ type Props = {
   horizon: number
   marginM: number
   route: RefugeRoute | null
-  focusTarget: { lng: number; lat: number; zoom?: number } | null
+  focusTarget: { lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]] } | null
   onCenterSelect: (id: string) => void
   showWind: boolean
   windDirection: number
@@ -60,6 +182,34 @@ type Props = {
   drawingArea: boolean
   onAreaChange: (area: CallArea | null) => void
   onAreaComplete: (area: CallArea) => void
+  units: DispatchUnit[]
+  onUnitSelect: (id: string) => void
+  fireCells: FeatureCollection<Polygon>
+  centers: ResponseCenter[]
+  incident: Incident
+}
+
+function sampleHeat(feature: FeatureCollection<Polygon>['features'][number], heat: number, count = 1): FeatureCollection<Point>['features'] {
+  const ring = feature.geometry.coordinates[0]
+  const west = ring[0][0]
+  const east = ring[1][0]
+  const lat = (ring[0][1] + ring[2][1]) / 2
+  const steps = Math.max(1, count)
+  return Array.from({ length: steps }, (_, index) => ({
+    type: 'Feature',
+    properties: { heat },
+    geometry: { type: 'Point', coordinates: [west + (east - west) * (index + 0.5) / steps, lat] },
+  }))
+}
+
+function fireHeatPoints(cells: FeatureCollection<Polygon>, growth: FeatureCollection<Polygon> = { type: 'FeatureCollection', features: [] }): FeatureCollection<Point> {
+  return {
+    type: 'FeatureCollection',
+    features: [
+      ...cells.features.flatMap(feature => sampleHeat(feature, Number(feature.properties?.heat ?? 0.55), Number(feature.properties?.cellCount) || 1)),
+      ...growth.features.flatMap(feature => sampleHeat(feature, 0.7)),
+    ],
+  }
 }
 
 function firesGeo(fires: FireSpot[]): FeatureCollection<Point> {
@@ -104,6 +254,17 @@ function routeGeo(route: RefugeRoute | null): FeatureCollection<LineString> {
   return { type: 'FeatureCollection', features: route ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: route.coordinates } }] : [] }
 }
 
+function unitsGeo(units: DispatchUnit[]): FeatureCollection<Point> {
+  return {
+    type: 'FeatureCollection',
+    features: units.map(unit => ({
+      type: 'Feature',
+      properties: { id: unit.id, kind: unit.kind, name: UNIT_LABEL[unit.kind], status: UNIT_STATUS_LABEL[unit.status] },
+      geometry: { type: 'Point', coordinates: [unit.lng, unit.lat] },
+    })),
+  }
+}
+
 function callAreaGeo(area: CallArea | null): FeatureCollection<Polygon> {
   return { type: 'FeatureCollection', features: area && area.radiusM > 0 ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circle(area.lng, area.lat, area.radiusM)] } }] : [] }
 }
@@ -140,22 +301,24 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, units, onUnitSelect, fireCells, centers, incident }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
   const onSelectRef = useRef(onSelect)
   const onCenterSelectRef = useRef(onCenterSelect)
+  const onUnitSelectRef = useRef(onUnitSelect)
   const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
   const suppressClickRef = useRef(false)
   useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds })
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds, units })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
   onCenterSelectRef.current = onCenterSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds }
+  onUnitSelectRef.current = onUnitSelect
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, zoneExposure, horizon, marginM, route, callArea, areaIds, units }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -163,7 +326,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       container: rootRef.current,
       accessToken: token,
       style: 'mapbox://styles/mapbox/dark-v11',
-      bounds: overviewBounds(), fitBoundsOptions: { padding: overviewPadding(rootRef.current.clientWidth), maxZoom: INCIDENT.zoom, duration: 0 }, pitch: 0, bearing: 0,
+      bounds: overviewBounds(fireCells, centers, zones, fires), fitBoundsOptions: { padding: overviewPadding(rootRef.current.clientWidth), maxZoom: incident.zoom, duration: 0 }, pitch: 0, bearing: 0,
       attributionControl: false,
     })
     mapRef.current = map
@@ -189,14 +352,39 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       }
       map.addImage('spread-pattern', { width: 8, height: 8, data: hatch })
       map.addSource('spread', { type: 'geojson', data: current.projection, buffer: 0 })
-      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': ['match', ['get', 'band'], 30, '#f6a84f', 60, '#eec66d', '#dfd6a3'], 'fill-opacity': 0.25 } })
-      map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.6 } })
-      map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#c2a16c', 'line-width': 1, 'line-opacity': 0.65, 'line-dasharray': [4, 4] } })
+      map.addLayer({ id: 'spread-fill', type: 'fill', source: 'spread', paint: { 'fill-color': ['match', ['get', 'band'], 30, '#c41c10', 60, '#f24a0d', '#ff8a14'], 'fill-opacity': 0.22 } })
+      map.addLayer({ id: 'spread-hatch', type: 'fill', source: 'spread', paint: { 'fill-pattern': 'spread-pattern', 'fill-opacity': 0.12 } })
+      map.addLayer({ id: 'spread-edge', type: 'line', source: 'spread', paint: { 'line-color': '#ff7a18', 'line-width': 1, 'line-opacity': 0.28, 'line-dasharray': [3, 3] } })
 
-      map.addSource('fire-cells', { type: 'geojson', data: SCENARIO_FIRE_CELLS, buffer: 0, tolerance: 0 })
+      map.addSource('fire-cells', { type: 'geojson', data: fireCells, buffer: 0, tolerance: 0 })
       map.addLayer({
         id: 'fire-cells-fill', type: 'fill', source: 'fire-cells',
-        paint: { 'fill-color': '#ff0000', 'fill-opacity': 1, 'fill-antialias': false },
+        paint: {
+          'fill-color': ['interpolate', ['linear'], ['get', 'heat'], 0.08, '#3a0a0c', 0.45, '#c41c10', 0.8, '#ff7a14', 1, '#ffd56a'],
+          'fill-opacity': ['interpolate', ['linear'], ['get', 'heat'], 0.08, 0.12, 1, 0.28],
+          'fill-antialias': true,
+        },
+      }, firstLabel)
+      map.addSource('fire-heat', { type: 'geojson', data: fireHeatPoints(fireCells, current.projection) })
+      map.addLayer({
+        id: 'fire-heat-glow', type: 'heatmap', source: 'fire-heat',
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'heat'], 0, 0.18, 1, 0.75],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 11, 0.55, 15, 0.95],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 11, 16, 13, 28, 15, 42, 16, 52],
+          'heatmap-opacity': 0.88,
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.08, 'rgba(70,10,8,0)',
+            0.18, 'rgba(110,16,10,0.22)',
+            0.32, 'rgba(196,28,12,0.4)',
+            0.48, 'rgba(242,80,14,0.58)',
+            0.66, 'rgba(255,150,30,0.72)',
+            0.84, 'rgba(255,214,90,0.82)',
+            1, 'rgba(255,246,200,0.9)',
+          ],
+        },
       }, firstLabel)
 
       map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea) })
@@ -207,33 +395,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.8 } })
       map.addSource('zones', { type: 'geojson', data: zonesGeo(current.zones, current.zoneExposure) })
       for (const [level, color] of Object.entries(EXPOSURE_COLOR)) {
-        const canvas = document.createElement('canvas')
-        canvas.width = 64
-        canvas.height = 64
-        const context = canvas.getContext('2d')!
-        context.fillStyle = '#14232d'
-        context.strokeStyle = color
-        context.lineWidth = 4
-        context.beginPath()
-        context.roundRect(5, 5, 54, 54, 12)
-        context.fill()
-        context.stroke()
-        context.lineWidth = 3
-        context.lineJoin = 'round'
-        context.beginPath()
-        context.moveTo(17, 30)
-        context.lineTo(32, 18)
-        context.lineTo(47, 30)
-        context.moveTo(21, 29)
-        context.lineTo(21, 45)
-        context.lineTo(43, 45)
-        context.lineTo(43, 29)
-        context.moveTo(29, 45)
-        context.lineTo(29, 35)
-        context.lineTo(35, 35)
-        context.lineTo(35, 45)
-        context.stroke()
-        map.addImage(`meeting-point-${level}`, context.getImageData(0, 0, 64, 64), { pixelRatio: 2 })
+        map.addImage(`meeting-point-${level}`, meetingMarker(color), { pixelRatio: 2 })
       }
       map.addLayer({ id: 'zone-point', type: 'symbol', source: 'zones', layout: { 'icon-image': ['concat', 'meeting-point-', ['get', 'level']], 'icon-size': 0.9, 'icon-allow-overlap': true } })
       map.addLayer({ id: 'zone-label', type: 'symbol', source: 'zones', layout: {
@@ -246,16 +408,18 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'refuge-route-line', type: 'line', source: 'refuge-route', paint: { 'line-color': '#8bddff', 'line-width': 3, 'line-dasharray': [3, 1] } }, 'zone-point')
       map.addSource('response-centers', {
         type: 'geojson', attribution: 'Centros: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
-        data: { type: 'FeatureCollection', features: RESPONSE_CENTERS.map(center => ({ type: 'Feature', properties: { id: center.id, kind: center.kind, name: center.locationSource === 'demo' ? `${center.kind === 'hospital' ? 'Hospital' : 'Bomberos'} · DEMO` : center.name, symbol: CENTER_SYMBOL[center.kind], locationSource: center.locationSource }, geometry: { type: 'Point', coordinates: [center.lng, center.lat] } })) },
+        data: centersGeo(centers),
       })
-      for (const [kind, color] of [['hospital', '#bda7ed'], ['health', '#a6d1e9'], ['fire', '#eea26a']]) {
-        map.addLayer({ id: `center-${kind}`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'symbol'], 'text-size': 23, 'text-allow-overlap': true }, paint: { 'text-color': color, 'text-halo-color': '#14232d', 'text-halo-width': 3 } })
-        map.addLayer({ id: `center-${kind}-label`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-max-width': 16 }, paint: { 'text-color': color, 'text-halo-color': '#14232d', 'text-halo-width': 2 } })
+      for (const kind of ['hospital', 'health', 'fire'] as const) {
+        map.addImage(`center-marker-${kind}`, CENTER_MARKER[kind](CENTER_COLOR[kind]), { pixelRatio: 2 })
+        map.addLayer({ id: `center-${kind}`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'icon-image': `center-marker-${kind}`, 'icon-size': 0.9, 'icon-allow-overlap': true } })
+        map.addLayer({ id: `center-${kind}-label`, type: 'symbol', source: 'response-centers', filter: ['==', ['get', 'kind'], kind], layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.8], 'text-anchor': 'top', 'text-max-width': 16 }, paint: { 'text-color': CENTER_COLOR[kind], 'text-halo-color': '#14232d', 'text-halo-width': 2 } })
       }
       map.addSource('thermal', { type: 'geojson', data: firesGeo(current.fires) })
       map.addLayer({ id: 'thermal-core', type: 'circle', source: 'thermal', filter: ['==', ['get', 'source'], 'scenario'], paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, 1.5, 13, 2.5, 16, 4],
-        'circle-color': '#f7b481', 'circle-opacity': 0.95, 'circle-stroke-color': '#8b3a28', 'circle-stroke-width': 1,
+        'circle-radius': ['interpolate', ['linear'], ['get', 'frp'], 15, 2.2, 50, 3.4, 100, 5],
+        'circle-color': ['interpolate', ['linear'], ['get', 'frp'], 15, '#8a1c0c', 40, '#e23a10', 70, '#ff8a18', 110, '#fff0b0'],
+        'circle-opacity': 0.95, 'circle-stroke-color': '#3a0c08', 'circle-stroke-width': 0.8,
       } })
       map.addLayer({ id: 'thermal-satellite', type: 'circle', source: 'thermal', filter: ['==', ['get', 'source'], 'firms'], paint: {
         'circle-radius': 3.5, 'circle-color': '#e7aa68', 'circle-opacity': 0.15,
@@ -283,6 +447,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'people-area-highlight', type: 'circle', source: 'people', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.3, 11, 3, 14, 4.4, 17, 5.6], 'circle-opacity': 0, 'circle-stroke-color': '#d3f0ff', 'circle-stroke-width': 1, 'circle-stroke-opacity': 0.5 } }, 'people-dot')
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
+      map.addSource('units', { type: 'geojson', data: unitsGeo(current.units) })
+      for (const kind of ['ambulance', 'police', 'fire'] as const) {
+        map.addImage(`unit-marker-${kind}`, vehicleMarker(UNIT_COLOR[kind]), { pixelRatio: 2 })
+      }
+      map.addLayer({ id: 'unit-point', type: 'symbol', source: 'units', layout: { 'icon-image': ['concat', 'unit-marker-', ['get', 'kind']], 'icon-size': 1, 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+      map.addLayer({ id: 'unit-label', type: 'symbol', source: 'units', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': [0, 1.9], 'text-anchor': 'top', 'text-allow-overlap': true }, paint: { 'text-color': '#e8f1f6', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       patchLayers(map, current.layers, current.selectedId, current.areaIds)
 
       map.on('click', (event) => {
@@ -305,11 +475,11 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           const exposure = dataRef.current.zoneExposure[zone.id]
           const risk = document.createElement('p')
           risk.style.color = EXPOSURE_COLOR[exposure?.level ?? 'unknown']
-          risk.textContent = `${EXPOSURE_LABEL[exposure?.level ?? 'unknown']} · horizonte +${dataRef.current.horizon} min · margen ${dataRef.current.marginM} m${exposure && Number.isFinite(exposure.minute) ? ` · alcance simulado del margen a +${Math.ceil(exposure.minute)} min` : ''}`
+          risk.textContent = `${EXPOSURE_LABEL[exposure?.level ?? 'unknown']} · +${dataRef.current.horizon} min${exposure && Number.isFinite(exposure.minute) ? ` · +${Math.ceil(exposure.minute)} min` : ''}`
           const description = document.createElement('p')
           description.textContent = zone.description
           const services = document.createElement('p')
-          services.textContent = `Servicios de demo: ${zone.services.join(' · ')}. Aforo ficticio: ${zone.capacity} personas.`
+          services.textContent = `${zone.services.join(' · ')} · ${zone.capacity} personas`
           const note = document.createElement('small')
           note.textContent = 'No es un refugio oficial. Seguridad, disponibilidad y accesibilidad no verificadas.'
           const link = document.createElement('a')
@@ -319,6 +489,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           link.textContent = 'Fuente municipal'
           content.append(title, risk, description, services, note, document.createElement('br'), link)
           popup.setLngLat([zone.lng, zone.lat]).setDOMContent(content).addTo(map)
+          return
+        }
+        const unitHit = map.queryRenderedFeatures(box, { layers: ['unit-point', 'unit-label'] })[0]
+        if (unitHit?.properties?.id) {
+          popup.remove()
+          onUnitSelectRef.current(String(unitHit.properties.id))
           return
         }
         const people = map.queryRenderedFeatures(box, { layers: ['people-dot'] })
@@ -337,7 +513,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           const props = thermal.properties ?? {}
           const content = document.createElement('div')
           const title = document.createElement('strong')
-          title.textContent = props.source === 'firms' ? 'Detección térmica · NASA FIRMS' : 'Foco térmico · simulación'
+          title.textContent = props.source === 'firms' ? 'Detección térmica · NASA FIRMS' : 'Foco térmico'
           const detail = document.createElement('p')
           detail.textContent = `${Number(props.frp).toFixed(1)} MW · ${props.acquiredAt}${props.source === 'firms' ? ' UTC' : ''}`
           const note = document.createElement('small')
@@ -346,15 +522,16 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map)
           return
         }
-        const cell = map.queryRenderedFeatures(event.point, { layers: ['fire-cells-fill'] })[0]
+        const cell = map.queryRenderedFeatures(event.point, { layers: ['fire-cells-fill', 'fire-heat-glow'] })[0]
         if (cell) {
           const content = document.createElement('div')
           const title = document.createElement('strong')
-          title.textContent = 'Huella térmica · escenario simulado'
+          title.textContent = 'Huella térmica'
           const detail = document.createElement('p')
-          detail.textContent = `Celdas ilustrativas de ${FIRE_CELL_SIZE_M} m · no son observaciones NASA`
+          const heat = Number(cell.properties?.heat)
+          detail.textContent = Number.isFinite(heat) ? `Celdas de ${FIRE_CELL_SIZE_M} m · intensidad ${Math.round(heat * 100)}` : `Celdas de ${FIRE_CELL_SIZE_M} m`
           const note = document.createElement('small')
-          note.textContent = 'El color representa el escenario de demostración, no un perímetro quemado confirmado ni una probabilidad de propagación.'
+          note.textContent = 'No es un perímetro confirmado.'
           content.append(title, detail, note)
           popup.setLngLat(event.lngLat).setDOMContent(content).addTo(map)
           return
@@ -363,7 +540,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-cells-fill', 'fire-heat-glow', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
         map.getCanvas().style.cursor = interactionRef.current.drawingArea ? 'crosshair' : features.length ? 'pointer' : ''
       })
       setLoaded(true)
@@ -386,17 +563,19 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     if (!map?.getSource('people')) return
     source(map, 'thermal')?.setData(firesGeo(fires))
     source(map, 'people')?.setData(citizensGeo(citizens))
+    source(map, 'units')?.setData(unitsGeo(units))
     source(map, 'accuracy')?.setData(accuracyGeo(citizens.find((citizen) => citizen.id === selectedId)))
     patchLayers(map, layers, selectedId, areaIds)
-  }, [citizens, fires, selectedId, layers, loaded, areaIds])
+  }, [citizens, fires, selectedId, layers, loaded, areaIds, units])
 
   useEffect(() => {
     const map = mapRef.current
     if (!loaded || !map) return
     source(map, 'spread')?.setData(projection)
+    source(map, 'fire-heat')?.setData(fireHeatPoints(fireCells, projection))
     source(map, 'zones')?.setData(zonesGeo(zones, zoneExposure))
     source(map, 'zones-area')?.setData(zoneAreas(zones, zoneExposure))
-  }, [loaded, projection, zones, zoneExposure])
+  }, [loaded, projection, fireCells, zones, zoneExposure])
 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'refuge-route')?.setData(routeGeo(route))
@@ -473,7 +652,14 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
 
   useEffect(() => {
-    if (loaded && focusTarget) mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: focusTarget.zoom ?? 14, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 850 })
+    if (!loaded || !focusTarget) return
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (focusTarget.bounds) {
+      const bounds = new mapboxgl.LngLatBounds(focusTarget.bounds[0], focusTarget.bounds[1])
+      mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 180, left: 80, right: 380 } : 70, duration: reduced ? 0 : 900, maxZoom: 12 })
+      return
+    }
+    mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: focusTarget.zoom ?? 14, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: reduced ? 0 : 850 })
   }, [loaded, focusTarget])
 
   useEffect(() => {
@@ -488,16 +674,16 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
 
   return (
     <>
-      <div ref={rootRef} className="map-root" aria-label="Mapa de situación de Gredos" />
+      <div ref={rootRef} className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
       <WindOverlay mapRef={mapRef} enabled={showWind && loaded} directionDeg={windDirection} windKmh={windKmh} />
       <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
         <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
         <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
         <span className="toolbar-divider" />
-        <button type="button" onClick={() => mapRef.current?.fitBounds([[-5.164, 40.191], [-5.06, 40.279]], { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800 })}>Centrar incendio</button>
+        <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
         {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
         {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
-        <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
+        <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
       {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" onClick={() => setMapError('')}>Cerrar aviso</button></div>}

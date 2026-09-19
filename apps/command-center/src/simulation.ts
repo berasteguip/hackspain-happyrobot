@@ -62,7 +62,7 @@ export function advanceProtocol(
     ) {
       const detail =
         citizen.outcome === 'tracking'
-          ? 'contestada · comparte ubicación en la demo'
+          ? 'contestada · comparte ubicación'
           : citizen.outcome === 'informed'
             ? 'contestada · informado, no comparte ubicación'
             : citizen.outcome === 'no_answer'
@@ -87,16 +87,16 @@ export function advanceProtocol(
           answeredAt: Date.now(),
           agent: AGENTS[index % AGENTS.length],
           summary: citizen.outcome === 'tracking'
-            ? 'En el guion de demostración, la persona recibe el aviso y comparte su ubicación. Solo se simula la salida con consentimiento y un recorrido a un refugio fuera de la zona expuesta. No es un desplazamiento real.'
+            ? 'Recibe el aviso y comparte ubicación.'
             : citizen.outcome === 'informed'
-              ? 'En el guion de demostración, la persona recibe el aviso. No se obtiene una nueva ubicación.'
-              : 'En el guion de demostración, la persona rechaza compartir su ubicación. Se conserva únicamente la referencia inicial.',
+              ? 'Recibe el aviso. Sin ubicación nueva.'
+              : 'Rechaza compartir ubicación.',
           consent: citizen.outcome === 'tracking' ? 'granted' : 'declined',
           needs: citizen.vulnerable ? ['Necesidad de apoyo pendiente de valoración humana'] : [],
         } : undefined,
         household: answered && citizen.id === 'c-01' ? [
-          { name: 'Familiar A · dato ficticio', situation: 'La interlocutora indica que está con ella', source: 'Guion de llamada · sin confirmación independiente' },
-          { name: 'Familiar B · dato ficticio', situation: 'Ubicación desconocida', source: 'Guion de llamada · pendiente de contacto' },
+          { name: 'Familiar A', situation: 'Está con ella', source: 'Llamada' },
+          { name: 'Familiar B', situation: 'Ubicación desconocida', source: 'Llamada' },
         ] : citizen.household,
       }
     }
@@ -112,7 +112,7 @@ export function advanceProtocol(
         agent: AGENTS[index % AGENTS.length],
         citizenId: citizen.id,
         name: citizen.name,
-        detail: 'sale hacia el punto de encuentro · simulación',
+        detail: 'sale hacia el punto de encuentro',
       })
       return { ...citizen, status: 'evacuating' as const }
     }
