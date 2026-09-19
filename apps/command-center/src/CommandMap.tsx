@@ -673,10 +673,15 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         <button type="button" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
         <button type="button" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
         <span className="toolbar-divider" />
-        <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
-        {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
-        {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
-        <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
+        <details className="view-options" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
+          <summary>Encuadre</summary>
+          <div onClick={event => { if ((event.target as HTMLElement).closest('button')) { const details = event.currentTarget.closest('details'); if (details) { details.open = false; details.querySelector('summary')?.focus() } } }}>
+            <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
+            {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
+            {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
+            <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
+          </div>
+        </details>
       </div>
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
       {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" onClick={() => setMapError('')}>Cerrar aviso</button></div>}

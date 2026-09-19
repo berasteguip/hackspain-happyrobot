@@ -10,7 +10,7 @@ import type { ResponseCenter } from './response'
 import type { DemoNotice } from './response'
 import { ALERT_ACTION_LABEL, SEVERITY_LABEL } from './alerts'
 import type { AlertAction, CommandAlert } from './alerts'
-import { UNIT_EMOJI, UNIT_LABEL, UNIT_STATUS_LABEL, unitEta } from './units'
+import { UNIT_LABEL, UNIT_STATUS_LABEL, unitEta } from './units'
 import type { DispatchUnit, UnitKind } from './units'
 import type { Citizen, SafeZone } from './types'
 
@@ -18,14 +18,14 @@ export function FireSimBar({ settings, horizon, playing, windShifted, showWind, 
   settings: FireSettings; horizon: number; playing: boolean; windShifted: boolean; showWind: boolean
   onPlay: () => void; onShiftWind: () => void; onReset: () => void; onWind: () => void
 }) {
-  const status = horizon <= 0 ? 'foco' : `+${Math.round(horizon)} min`
+  const status = horizon <= 0 ? 'Foco inicial' : `+${Math.round(horizon)} min`
   return <div className="sim-bar">
-    <p className="sim-readout"><strong>{windCardinal(settings.windTowardDeg)} · {settings.windKmh}</strong><span role="status">{status}</span></p>
+    <p className="sim-readout"><span><strong>{settings.windKmh} km/h</strong><small>Viento hacia {windCardinal(settings.windTowardDeg)} · demo</small></span><span role="status">{status}</span></p>
     <div className="sim-actions">
-      <button type="button" className={playing ? 'is-on' : undefined} onClick={onPlay} disabled={!playing && horizon >= 120}>{playing ? 'Pausa' : 'Avanzar'}</button>
-      <button type="button" className={windShifted ? 'is-on' : undefined} onClick={onShiftWind} disabled={windShifted}>NE</button>
-      {(horizon > 0 || windShifted) && <button type="button" onClick={onReset}>Inicial</button>}
-      <button type="button" className="sim-wind" role="switch" aria-checked={showWind} aria-label="Mostrar viento en el mapa" onClick={onWind}>Viento</button>
+      <button type="button" className={playing ? 'is-on' : undefined} onClick={onPlay} disabled={!playing && horizon >= 120} aria-label={playing ? 'Pausar propagación' : 'Avanzar propagación'}>{playing ? 'Pausar' : 'Avanzar'}</button>
+      <button type="button" className={windShifted ? 'is-on' : undefined} onClick={onShiftWind} disabled={windShifted} aria-label="Girar viento hacia el nordeste">Girar a NE</button>
+      {(horizon > 0 || windShifted) && <button type="button" onClick={onReset}>Reiniciar</button>}
+      <button type="button" className="sim-wind" role="switch" aria-checked={showWind} aria-label="Mostrar viento en el mapa" onClick={onWind}>Ver viento</button>
     </div>
   </div>
 }
@@ -72,7 +72,7 @@ export function RefugeRoutesPanel({ citizen, token, forecast, horizon, marginM, 
   return <section className="cop-content route-planner">
     <h3>Rutas a puntos de encuentro</h3>
     <p className="fine">Desde la posición de {citizen.name}.</p>
-    <label className="control-label">Modo de traslado<select value={profile} onChange={e => { setProfile(e.target.value as typeof profile); setResult(null); setRequest(null); setState('') }}><option value="driving">Vehículo</option><option value="walking">A pie</option></select></label>
+    <div className="segmented-control" role="group" aria-label="Modo de traslado">{(['driving', 'walking'] as const).map(mode => <button type="button" key={mode} aria-pressed={profile === mode} onClick={() => { setProfile(mode); setResult(null); setRequest(null); setState('') }}>{mode === 'driving' ? 'Vehículo' : 'A pie'}</button>)}</div>
     <button type="button" className="cop-primary" onClick={() => { setResult(null); setChosen(''); setState('Consultando Mapbox…'); setRequest({ origin: [citizen.lng, citizen.lat], profile }) }}>Comparar rutas · Mapbox</button>
     <p className="fine">Mapbox Directions. Acceso máximo 100 m.</p>
     <p role="status" className="fine">{stale ? 'La posición o el modo ha cambiado. Vuelve a calcular.' : state}</p>
@@ -100,7 +100,7 @@ export function ResponsePanel({ selectedId, onSelect, scenario, notices, onNotic
     ? `Solicitud de apoyo en el sector ${sector}. Confirmar disponibilidad y acceso.`
     : 'Preaviso de posible llegada de personas afectadas. Número, gravedad y ETA pendientes.')
   return <div className="cop-content">
-    <label className="control-label">Tipo<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">Todos</option>{Object.entries(CENTER_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+    <div className="segmented-control" role="group" aria-label="Tipo de centro">{[['all', 'Todos'], ...Object.entries(CENTER_LABEL)].map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
     <div className="cop-list">{centers.filter(item => filter === 'all' || item.kind === filter).map(item => <button type="button" key={item.id} aria-pressed={selectedId === item.id} onClick={() => onSelect(item.id)}><span className={`center-mark ${item.kind}`} aria-hidden="true" /><span><strong>{item.name}</strong><small>{CENTER_LABEL[item.kind]}</small></span></button>)}</div>
     {center && <section className="center-detail">
       <h3>{center.name}</h3><p className="fine">{center.address}</p><p className="fine">{center.note}</p>
@@ -124,8 +124,13 @@ function windCardinal(deg: number) {
   return ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][Math.round((((deg % 360) + 360) % 360) / 45) % 8]
 }
 
+function UnitMark({ kind }: { kind: UnitKind }) {
+  const symbol = kind === 'ambulance' ? 'M8 7v6m-3-3h6' : kind === 'police' ? 'm8 6 4 2v3l-4 3-4-3V8Z' : 'M8 5c3 3 4 5 4 6a4 4 0 0 1-8 0c0-2 2-3 4-6Z'
+  return <svg className="unit-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M2 3h13v14H2Zm13 5h4l3 5v4h-7M6 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm15 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" /><path d={symbol} /></svg>
+}
+
 export function DispatchActions({ kinds, disabled, onDispatch }: { kinds: UnitKind[]; disabled?: boolean; onDispatch: (kind: UnitKind) => void }) {
-  return <div className="dispatch-actions">{kinds.map(kind => <button type="button" key={kind} className="dispatch-action" disabled={disabled} onClick={() => onDispatch(kind)}><span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI[kind]}</span><span>{UNIT_LABEL[kind]}</span></button>)}</div>
+  return <div className="dispatch-actions">{kinds.map(kind => <button type="button" key={kind} className="dispatch-action" disabled={disabled} onClick={() => onDispatch(kind)}><UnitMark kind={kind} /><span>{UNIT_LABEL[kind]}</span></button>)}</div>
 }
 
 export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFocusUnit }: {
@@ -158,7 +163,7 @@ export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFo
     <div className="cop-list">{units.map(unit => {
       const eta = unitEta(unit)
       return <button type="button" key={unit.id} onClick={() => onFocusUnit(unit.id)}>
-        <span className="unit-emoji" aria-hidden="true">{UNIT_EMOJI[unit.kind]}</span>
+        <UnitMark kind={unit.kind} />
         <span><strong>{UNIT_LABEL[unit.kind]} · {unit.target.label}</strong><small>{UNIT_STATUS_LABEL[unit.status]}{eta ? ` · ${eta}` : ''}</small></span>
       </button>
     })}</div>

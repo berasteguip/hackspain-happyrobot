@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { createServer } from 'vite'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
 after(() => server.close())
@@ -18,6 +20,19 @@ const footprint = { type: 'FeatureCollection', features: [{ type: 'Feature', pro
 const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
 const forecast = buildFireForecast(footprint, settings)
 const at = (x, y) => [forecast.origin[0] + (x + 0.5) * forecast.cellSizeM / forecast.lngScale, forecast.origin[1] + (y + 0.5) * forecast.cellSizeM / 111320]
+
+test('el mapa abre despejado y conserva accesos a escenario, campaña y todas las herramientas', async () => {
+  const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
+  const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test' }))
+  for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Avisos', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
+  assert.ok(html.includes('Simulación local'))
+  assert.ok(html.includes('campaign-dock'))
+  assert.ok(!html.includes('class="forecast-summary"'))
+  assert.ok(!html.includes('class="minimal-legend"'))
+  assert.ok(!html.includes('class="incident-list"'))
+  assert.ok(!html.includes('type="password"'))
+  assert.ok(!html.includes('class="floating-panel"'))
+})
 
 test('el viento visual escala suavemente con el zoom y limita velocidad, longitud y densidad', async () => {
   const { windVisualStyle } = await server.ssrLoadModule('/src/wind.ts')

@@ -111,3 +111,20 @@ Verificación: `npm test && npm run lint && npm run build` en `apps/command-cent
 externos controlados: animación, movimiento reducido, giro/zoom/inclinación, resize móvil y
 encendido/apagado correctos; sin llamadas. Fuente: petición de Mateo y pruebas locales del
 2026-09-19, sobre main `2c7788a`.
+
+## 8. Interfaz mínima sobre main — 2026-09-19
+
+Petición de Mateo: interfaz sencilla y profesional, sin quitar operaciones. Base de esta
+iteración: main `303237b`. Mantener carbón y gris azulado, iconos SVG consistentes, selector
+compacto de escenario y barra de campaña de unos 72 px. Escenarios, propagación/viento,
+centros, avisos/medios, personas, capas/leyenda y campaña viven en un único panel bajo demanda.
+Encuadre agrupa centrar incendio/persona, ver ruta y ver todo. No volver a cajas permanentes
+superpuestas ni al formulario de clave abierto por defecto. Mantener foco visible, Escape,
+contraste de llamadas reales, el tablero de resultados y los bloqueados por la API.
+
+No cambiar `api/`, `crisisApi.ts`, escenarios, dispatch ni Railway para este rediseño.
+El envío de un medio desde una ficha cierra esa selección para mostrar Avisos y medios.
+Verificación: 41 tests, lint y build; comprobación de navegador en 1440, 1024, 390 y 320 px,
+con proveedores controlados, incluyendo envío simulado a `/calls/dispatch`, tablero, exclusiones,
+capas, rutas, medios, avisos, viento, cambio de escenario y foco de teclado. No se ejecutaron
+llamadas reales. El script temporal de comprobación es `/tmp/vigia-minimal-ui.mjs` en este equipo.
