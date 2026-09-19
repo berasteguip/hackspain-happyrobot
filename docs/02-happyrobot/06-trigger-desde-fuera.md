@@ -1,7 +1,7 @@
 # Arrancar llamadas desde nuestro repo — cómo funciona y qué nos costó
 
 > Escrito el 19 sep 2026 contra el workspace `hackspainteam11`. **Funciona y está probado en
-> vivo**: cuatro llamadas reales simultáneas a los móviles del equipo desde un círculo dibujado
+> vivo**: llamadas reales simultáneas a los móviles del equipo desde un círculo dibujado
 > en Vigía. Todo lo de aquí sale de una llamada al MCP oficial o de un run real, no de la
 > documentación.
 
@@ -46,7 +46,7 @@ CAMPANA_ZONA=Ciudad Universitaria
 ```
 
 Ensayo: `make vigia && make ensayo`, y `make reset` entre tandas. Círculo que coge exactamente
-al equipo: centro **40.45304 / -3.72698**, radio **150 m**.
+al equipo (cinco personas): centro **40.45298 / -3.72695**, radio **150 m**.
 
 ---
 

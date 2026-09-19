@@ -66,9 +66,9 @@ vigia: ## Compila Vigia (la API lo sirve en / cuando existe apps/command-center/
 	cd apps/command-center && npm ci && npm run build
 
 ensayo: ## Arranca la API con el banco de pruebas de la Complutense (telefonos REALES del equipo)
-	@echo "Escenario ucm-madrid: p-001..p-004 son moviles REALES del equipo."
+	@echo "Escenario ucm-madrid: p-001..p-005 son el equipo (moviles reales via PHONE_OVERRIDES)."
 	@echo "Los dos cerrojos siguen mandando: ALLOW_REAL_CALLS y CALL_ALLOWLIST."
-	@echo "Circulo que coge exactamente a los cuatro: centro 40.45304 / -3.72698, radio 150 m."
+	@echo "Circulo que coge exactamente al equipo: centro 40.45298 / -3.72695, radio 150 m."
 	@echo ""
 	cd api && SCENARIO=ucm-madrid .venv/bin/python -m uvicorn main:app --reload --port $(API_PORT)
 
