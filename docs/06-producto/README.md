@@ -13,6 +13,7 @@ refugios con capacidad, lista viva de casas sin respuesta.
 | [`03-contrato-de-datos.md`](03-contrato-de-datos.md) | **Vinculante**: entidades, API, prioridad. Ningún componente inventa campos | Quien escribe código |
 | [`04-brief-equipo-agente.md`](04-brief-equipo-agente.md) | Qué construye el equipo del agente de HappyRobot y qué le da la API | Equipo del agente |
 | [`05-routing-zonas-evitar.md`](05-routing-zonas-evitar.md) | Qué proveedor de rutas evita polígonos (Google no); base de `api/` y `sim/` | Quien toca rutas |
+| [`06-workflow-happyrobot-vs-contrato.md`](06-workflow-happyrobot-vs-contrato.md) | Qué hay **desplegado hoy** en la plataforma y en qué se desvía del 03 | Equipo del agente |
 
 Guiones del agente y de la demo: [`../../prompts/`](../../prompts/README.md)
 (onboarding, rerruta urgente, patrulla y mando, extracción, workflows, guion de demo).
