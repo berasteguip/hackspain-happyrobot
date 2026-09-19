@@ -1,3 +1,4 @@
+import type { FeatureCollection, Polygon } from 'geojson'
 import type { Citizen, FireSpot, RiskArea, SafeZone } from './types'
 
 export const INCIDENT = {
@@ -6,8 +7,8 @@ export const INCIDENT = {
   area: 'Valle del Tiétar · Ávila',
   cecop: 'CECOP Ávila · INFOCAL',
   declaredAt: '2026-09-19T01:12:00+02:00',
-  center: [-5.12, 40.21] as [number, number],
-  zoom: 11.35,
+  center: [-5.121, 40.241] as [number, number],
+  zoom: 12.1,
 }
 
 export const SAFE_ZONES: SafeZone[] = [
@@ -67,36 +68,200 @@ export const SCENARIO_FIRES: FireSpot[] = [
   { id: 'f12', lng: -5.141, lat: 40.232, frp: 48.4, confidence: 'nominal', source: 'scenario', acquiredAt: '01:24' },
 ]
 
-function c(
-  partial: Omit<Citizen, 'status'>,
-): Citizen {
-  return { ...partial, status: 'pending' }
+export const FIRE_CELL_SIZE_M = 25
+
+export const SCENARIO_FIRE_CELLS: FeatureCollection<Polygon> = (() => {
+  const west = -5.185
+  const south = 40.217
+  const metersPerLng = 111_320 * Math.cos(40.24 * Math.PI / 180)
+  const dx = FIRE_CELL_SIZE_M / metersPerLng
+  const dy = FIRE_CELL_SIZE_M / 111_320
+  const columns = Math.ceil(9100 / FIRE_CELL_SIZE_M)
+  const rows = Math.ceil(6200 / FIRE_CELL_SIZE_M)
+  const footprints: [number, number][][] = [
+    [[2, 7], [7, 6], [9, 9], [12, 8], [15, 5], [20, 6], [23, 9], [28, 8], [29, 12], [35, 11], [37, 14], [42, 15], [45, 19], [42, 22], [38, 22], [38, 26], [33, 25], [30, 28], [26, 26], [23, 28], [18, 26], [14, 27], [12, 23], [9, 23], [9, 30], [6, 30], [5, 25], [6, 22], [3, 20], [4, 16], [1, 14]],
+    [[38, 19], [44, 20], [48, 24], [52, 23], [55, 25], [60, 24], [63, 27], [66, 27], [67, 31], [72, 29], [75, 32], [80, 31], [81, 35], [77, 36], [77, 40], [73, 39], [72, 42], [68, 41], [65, 37], [62, 37], [60, 34], [55, 35], [52, 32], [48, 33], [46, 30], [42, 29], [41, 25], [37, 24]],
+    [[62, 34], [61, 39], [64, 40], [63, 43], [60, 45], [62, 48], [65, 47], [66, 49], [63, 51], [59, 50], [59, 54], [62, 55], [62, 57], [68, 56], [70, 58], [74, 56], [78, 56], [78, 52], [76, 51], [76, 47], [72, 46], [75, 44], [73, 41], [69, 42], [68, 38], [66, 35]],
+    [[76, 34], [80, 35], [82, 38], [81, 42], [84, 43], [84, 48], [87, 48], [88, 52], [91, 51], [91, 55], [94, 55], [95, 58], [98, 57], [98, 60], [94, 61], [92, 59], [89, 60], [87, 57], [86, 54], [83, 54], [83, 50], [80, 49], [80, 44], [77, 44], [78, 39], [75, 37]],
+    [[64, 18], [68, 18], [69, 16], [73, 17], [75, 19], [78, 17], [80, 19], [80, 23], [77, 22], [74, 24], [71, 22], [68, 23], [65, 21]],
+    [[29, 39], [32, 40], [34, 39], [35, 41], [39, 42], [38, 45], [36, 44], [34, 46], [32, 44], [30, 44]],
+    [[23, 39], [26, 38], [28, 40], [27, 42], [24, 42]],
+    [[51, 44], [54, 43], [55, 45], [53, 47], [51, 46]],
+    [[85, 36], [88, 36], [89, 38], [87, 40], [85, 39]],
+    [[93, 46], [96, 45], [97, 48], [95, 49], [94, 48]],
+  ]
+  const gaps: [number, number][][] = [
+    [[9, 13], [12, 13], [12, 15], [14, 15], [14, 17], [11, 17], [11, 19], [9, 18]],
+    [[17, 10], [18, 12], [21, 12], [21, 14], [19, 14], [19, 16], [17, 15]],
+    [[24, 15], [27, 15], [27, 18], [29, 18], [28, 20], [25, 20], [25, 18], [23, 18]],
+    [[33, 18], [35, 17], [37, 19], [36, 21], [33, 20]],
+    [[57, 28], [59, 27], [61, 28], [60, 30], [58, 30]],
+    [[66, 44], [69, 44], [69, 46], [71, 46], [71, 49], [69, 49], [68, 47], [66, 47]],
+    [[69, 52], [72, 52], [72, 54], [70, 54]],
+  ]
+  const inside = (x: number, y: number, ring: [number, number][]) => {
+    let result = false
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [ax, ay] = ring[i]
+      const [bx, by] = ring[j]
+      if ((ay > y) !== (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax) result = !result
+    }
+    return result
+  }
+  const noise = (x: number, y: number) => {
+    const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
+    return value - Math.floor(value)
+  }
+  const occupied = (column: number, row: number) => {
+    const x = (column + 0.5) * FIRE_CELL_SIZE_M / 91
+    const y = (row + 0.5) * FIRE_CELL_SIZE_M / 100
+    const wx = x + 0.65 * Math.sin(y * 1.7) + 0.3 * Math.sin(x * 3.1 + y)
+    const wy = y + 0.65 * Math.sin(x * 1.35) + 0.35 * Math.cos(y * 2.7 - x)
+    const tileX = Math.floor(x / 2.1)
+    const tileY = Math.floor(y / 1.8)
+    const localX = x / 2.1 - tileX
+    const localY = y / 1.8 - tileY
+    const holeX = localX - 0.25 - 0.5 * noise(tileX + 17, tileY)
+    const holeY = localY - 0.25 - 0.5 * noise(tileX, tileY + 31)
+    const holeWidth = 0.1 + 0.2 * noise(tileX + 9, tileY + 4)
+    const holeHeight = 0.08 + 0.22 * noise(tileX + 2, tileY + 8)
+    const fragmented = noise(tileX, tileY) > 0.85
+      && Math.abs(holeX + 0.07 * Math.sin(localY * 14 + tileX)) < holeWidth
+      && Math.abs(holeY + 0.06 * Math.cos(localX * 17 + tileY)) < holeHeight
+    const covered = footprints.some((ring) => inside(wx, wy, ring))
+    if (covered) return !fragmented && !gaps.some((ring) => inside(wx, wy, ring))
+    const fringe = noise(tileX, tileY) > 0.76 && localX > 0.27 && localX < 0.74 && localY > 0.23 && localY < 0.75
+    return fringe && [[1.4, 0], [-1.4, 0], [0, 1.4], [0, -1.4]].some(([ox, oy]) => footprints.some((ring) => inside(wx + ox, wy + oy, ring)))
+  }
+  const features: FeatureCollection<Polygon>['features'] = []
+  for (let row = 0; row < rows; row += 1) {
+    let start = -1
+    for (let column = 0; column <= columns; column += 1) {
+      const filled = column < columns && occupied(column, row)
+      if (filled && start < 0) start = column
+      if (filled || start < 0) continue
+      const lng = west + start * dx
+      const endLng = west + column * dx
+      const lat = south + row * dy
+      features.push({
+        type: 'Feature',
+        id: `demo-cell-run-${start}-${row}`,
+        properties: { source: 'scenario', column: start, row, cellCount: column - start, cellSizeM: FIRE_CELL_SIZE_M },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[[lng, lat], [endLng, lat], [endLng, lat + dy], [lng, lat + dy], [lng, lat]]],
+        },
+      })
+      start = -1
+    }
+  }
+  return { type: 'FeatureCollection', features }
+})()
+
+export const FIRE_PERIMETER: RiskArea = {
+  id: 'fire-perimeter',
+  name: 'Superficie afectada · escenario',
+  coordinates: [
+    [-5.172, 40.244], [-5.166, 40.250], [-5.162, 40.251],
+    [-5.161, 40.256], [-5.155, 40.262], [-5.148, 40.261],
+    [-5.142, 40.268], [-5.132, 40.265], [-5.128, 40.267],
+    [-5.119, 40.262], [-5.113, 40.264], [-5.107, 40.258],
+    [-5.097, 40.256], [-5.101, 40.250], [-5.091, 40.245],
+    [-5.094, 40.239], [-5.103, 40.237], [-5.108, 40.231],
+    [-5.117, 40.232], [-5.120, 40.222], [-5.129, 40.225],
+    [-5.134, 40.223], [-5.139, 40.228], [-5.146, 40.227],
+    [-5.152, 40.231], [-5.155, 40.237], [-5.164, 40.236],
+    [-5.163, 40.241], [-5.172, 40.244],
+  ],
 }
 
-export const INITIAL_CITIZENS: Citizen[] = [
-  c({ id: 'c-01', name: 'Carmen López', phone: '+34 625 441 018', lng: -5.1412, lat: 40.2218, vulnerable: true, safeZoneId: 'z-arenas', speedKmh: 18, callDelaySec: 1, outcome: 'tracking' }),
-  c({ id: 'c-02', name: 'Antonio Ruiz', phone: '+34 616 902 441', lng: -5.1524, lat: 40.2294, vulnerable: true, safeZoneId: 'z-arenas', speedKmh: 12, callDelaySec: 2, outcome: 'tracking' }),
-  c({ id: 'c-03', name: 'María Fernández', phone: '+34 687 330 192', lng: -5.1098, lat: 40.2166, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 32, callDelaySec: 3, outcome: 'tracking' }),
-  c({ id: 'c-04', name: 'José Manuel Prieto', phone: '+34 609 774 255', lng: -5.1688, lat: 40.2182, vulnerable: true, safeZoneId: 'z-candeleda', speedKmh: 22, callDelaySec: 4, outcome: 'informed' }),
-  c({ id: 'c-05', name: 'Elena Navarro', phone: '+34 622 118 903', lng: -5.0914, lat: 40.2335, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 28, callDelaySec: 5, outcome: 'tracking' }),
-  c({ id: 'c-06', name: 'Pedro Sánchez Vega', phone: '+34 654 009 271', lng: -5.1762, lat: 40.2011, vulnerable: false, safeZoneId: 'z-candeleda', speedKmh: 35, callDelaySec: 6, outcome: 'tracking' }),
-  c({ id: 'c-07', name: 'Isabel Martín', phone: '+34 639 551 846', lng: -5.0844, lat: 40.2488, vulnerable: true, safeZoneId: 'z-mombeltran', speedKmh: 16, callDelaySec: 7, outcome: 'no_answer' }),
-  c({ id: 'c-08', name: 'Luis Ortega', phone: '+34 671 223 590', lng: -5.0588, lat: 40.2392, vulnerable: false, safeZoneId: 'z-mombeltran', speedKmh: 30, callDelaySec: 8, outcome: 'tracking' }),
-  c({ id: 'c-09', name: 'Rosa Jiménez', phone: '+34 612 884 017', lng: -5.2011, lat: 40.1724, vulnerable: false, safeZoneId: 'z-candeleda', speedKmh: 26, callDelaySec: 9, outcome: 'tracking' }),
-  c({ id: 'c-10', name: 'Miguel Ángel Soto', phone: '+34 645 770 332', lng: -5.1244, lat: 40.2095, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 24, callDelaySec: 10, outcome: 'refused' }),
-  c({ id: 'c-11', name: 'Pilar Gómez', phone: '+34 628 441 765', lng: -5.0432, lat: 40.2518, vulnerable: true, safeZoneId: 'z-mombeltran', speedKmh: 14, callDelaySec: 11, outcome: 'tracking' }),
-  c({ id: 'c-12', name: 'Francisco Herrera', phone: '+34 666 192 408', lng: -5.1555, lat: 40.214, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 33, callDelaySec: 12, outcome: 'tracking' }),
-  c({ id: 'c-13', name: 'Ana Belén Cruz', phone: '+34 619 330 554', lng: -5.2186, lat: 40.1648, vulnerable: false, safeZoneId: 'z-candeleda', speedKmh: 29, callDelaySec: 13, outcome: 'tracking' }),
-  c({ id: 'c-14', name: 'Javier Molina', phone: '+34 650 908 121', lng: -5.0722, lat: 40.2214, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 27, callDelaySec: 14, outcome: 'informed' }),
-  c({ id: 'c-15', name: 'Teresa Blanco', phone: '+34 623 667 890', lng: -5.1884, lat: 40.2266, vulnerable: true, safeZoneId: 'z-candeleda', speedKmh: 15, callDelaySec: 15, outcome: 'tracking' }),
-  c({ id: 'c-16', name: 'Raúl Delgado', phone: '+34 678 214 009', lng: -5.0338, lat: 40.244, vulnerable: false, safeZoneId: 'z-mombeltran', speedKmh: 36, callDelaySec: 16, outcome: 'tracking' }),
-  c({ id: 'c-17', name: 'Lucía Vargas', phone: '+34 611 452 773', lng: -5.1168, lat: 40.1984, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 31, callDelaySec: 17, outcome: 'tracking' }),
-  c({ id: 'c-18', name: 'Manuel Castro', phone: '+34 641 880 256', lng: -5.0948, lat: 40.2572, vulnerable: false, safeZoneId: 'z-mombeltran', speedKmh: 25, callDelaySec: 18, outcome: 'no_answer' }),
-  c({ id: 'c-19', name: 'Sofía Ramírez', phone: '+34 627 019 448', lng: -5.2295, lat: 40.1788, vulnerable: false, safeZoneId: 'z-candeleda', speedKmh: 28, callDelaySec: 19, outcome: 'tracking' }),
-  c({ id: 'c-20', name: 'Diego Núñez', phone: '+34 655 331 902', lng: -5.0616, lat: 40.2288, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 34, callDelaySec: 20, outcome: 'tracking' }),
-  c({ id: 'c-21', name: 'Nuria Peña', phone: '+34 618 774 610', lng: -5.1712, lat: 40.1904, vulnerable: true, safeZoneId: 'z-candeleda', speedKmh: 17, callDelaySec: 21, outcome: 'tracking' }),
-  c({ id: 'c-22', name: 'Álvaro Iglesias', phone: '+34 690 225 187', lng: -5.1026, lat: 40.2254, vulnerable: false, safeZoneId: 'z-arenas', speedKmh: 30, callDelaySec: 22, outcome: 'informed' }),
+export const FIRE_FRONT: [number, number][] = [
+  [-5.142, 40.268], [-5.132, 40.265], [-5.128, 40.267],
+  [-5.119, 40.262], [-5.113, 40.264], [-5.107, 40.258],
+  [-5.097, 40.256], [-5.101, 40.250], [-5.091, 40.245],
 ]
+
+export const SPREAD_AREA: RiskArea = {
+  id: 'spread-scenario',
+  name: 'Posible propagación · hipótesis ilustrativa',
+  coordinates: [
+    [-5.148, 40.263], [-5.145, 40.277], [-5.133, 40.287],
+    [-5.115, 40.291], [-5.103, 40.286], [-5.087, 40.278],
+    [-5.081, 40.267], [-5.069, 40.261], [-5.075, 40.250],
+    [-5.091, 40.245], [-5.101, 40.250], [-5.097, 40.256],
+    [-5.107, 40.258], [-5.113, 40.264], [-5.119, 40.262],
+    [-5.128, 40.267], [-5.132, 40.265], [-5.142, 40.268],
+    [-5.148, 40.263],
+  ],
+}
+
+export const SETTLEMENTS = [
+  { name: 'Arenas de San Pedro', lng: -5.0911, lat: 40.2089, count: 156, radiusM: 360 },
+  { name: 'Guisando', lng: -5.1395, lat: 40.2223, count: 48, radiusM: 155 },
+  { name: 'El Hornillo', lng: -5.1036, lat: 40.2497, count: 36, radiusM: 135 },
+  { name: 'El Arenal', lng: -5.0872, lat: 40.2647, count: 48, radiusM: 220 },
+]
+
+const NAMES = ['Carmen', 'Antonio', 'María', 'José', 'Elena', 'Pedro', 'Isabel', 'Luis', 'Rosa', 'Miguel', 'Pilar', 'Francisco', 'Ana', 'Javier', 'Teresa', 'Raúl', 'Lucía', 'Manuel', 'Sofía', 'Diego']
+const SURNAMES = ['López', 'Ruiz', 'Fernández', 'Prieto', 'Navarro', 'Sánchez', 'Martín', 'Ortega', 'Jiménez', 'Soto', 'Gómez', 'Herrera', 'Cruz', 'Molina', 'Blanco']
+
+function person(index: number, lng: number, lat: number, locality: string, resident: boolean): Citizen {
+  return {
+    id: `c-${String(index + 1).padStart(2, '0')}`,
+    name: `${NAMES[index % NAMES.length]} ${SURNAMES[Math.floor(index / NAMES.length) % SURNAMES.length]}`,
+    phone: `demo-${String(index + 1).padStart(3, '0')}`,
+    lng, lat, locality, resident,
+    status: resident ? 'pending' : 'tracking',
+    vulnerable: index % 17 === 0,
+    safeZoneId: '', speedKmh: 0,
+    callDelaySec: 1 + (index % 48) * 1.4,
+    outcome: index % 11 === 7 ? 'no_answer' : index % 13 === 9 ? 'refused' : index % 7 === 4 ? 'informed' : 'tracking',
+    locationSource: resident ? 'reference' : 'simulation',
+    locationUpdatedAt: resident ? undefined : Date.now(),
+    call: resident ? undefined : {
+      answeredAt: Date.now(), agent: 'HappyRobot · demo',
+      summary: 'Guion ficticio: la persona atiende la llamada desde fuera del núcleo urbano y comparte dónde se encuentra. No se le ha asignado una ruta ni un destino de evacuación.',
+      consent: 'granted', needs: [],
+    },
+  }
+}
+
+const OUTSIDE_LOCATIONS: [number, number, string][] = [
+  [-5.1502, 40.2146, 'Entorno de Guisando'],
+  [-5.1574, 40.2197, 'Entorno de Guisando'],
+  [-5.1285, 40.2158, 'Entre Guisando y Arenas'],
+  [-5.1208, 40.2125, 'Entre Guisando y Arenas'],
+  [-5.1095, 40.2253, 'Entorno de Arenas'],
+  [-5.1021, 40.2378, 'Entorno de El Hornillo'],
+  [-5.0851, 40.2346, 'Entorno de La Parra'],
+  [-5.0754, 40.2248, 'Entorno de La Parra'],
+  [-5.0736, 40.2537, 'Entorno de El Arenal'],
+  [-5.0798, 40.2752, 'Entorno de El Arenal'],
+  [-5.0964, 40.1952, 'Sur de Arenas'],
+  [-5.0658, 40.2037, 'Este de Arenas'],
+]
+
+export const INITIAL_CITIZENS: Citizen[] = (() => {
+  const residents: Citizen[] = []
+  for (const settlement of SETTLEMENTS) {
+    for (let i = 0; i < settlement.count; i += 1) {
+      const seed = residents.length + 1
+      const noise = (value: number) => { const n = Math.sin(value * 127.1 + 311.7) * 43758.5453; return n - Math.floor(n) }
+      const angle = noise(seed) * Math.PI * 2
+      const distance = settlement.radiusM * Math.sqrt(noise(seed + 4096)) * (0.8 + 0.2 * Math.sin(angle * 3))
+      const east = Math.cos(angle) * distance
+      const north = Math.sin(angle) * distance * 0.65
+      residents.push(person(
+        residents.length,
+        settlement.lng + east / (111_320 * Math.cos(settlement.lat * Math.PI / 180)),
+        settlement.lat + north / 111_320,
+        settlement.name,
+        true,
+      ))
+    }
+  }
+  return [...residents, ...OUTSIDE_LOCATIONS.map(([lng, lat, locality], index) => person(residents.length + index, lng, lat, locality, false))]
+})()
 
 export const AGENTS = [
   'HappyRobot-1',

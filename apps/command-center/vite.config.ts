@@ -1,13 +1,7 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
-type Ping = {
-  id: string
-  name: string
-  lng: number
-  lat: number
-  ts: number
-}
+import type { LocationPing as Ping } from './src/types.js'
 
 const pings = new Map<string, Ping>()
 
@@ -29,9 +23,12 @@ function locationApi(): Plugin {
             try {
               const data = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Partial<Ping>
               if (
-                typeof data.id !== 'string' ||
-                typeof data.lng !== 'number' ||
-                typeof data.lat !== 'number'
+                typeof data.id !== 'string' || !data.id.trim() || data.id.length > 100 ||
+                typeof data.lng !== 'number' || !Number.isFinite(data.lng) || Math.abs(data.lng) > 180 ||
+                typeof data.lat !== 'number' || !Number.isFinite(data.lat) || Math.abs(data.lat) > 90 ||
+                (data.name !== undefined && (typeof data.name !== 'string' || data.name.length > 150)) ||
+                (data.source !== undefined && !['gps', 'simulation', 'unknown'].includes(data.source)) ||
+                (data.accuracyM !== undefined && (typeof data.accuracyM !== 'number' || !Number.isFinite(data.accuracyM) || data.accuracyM < 0))
               ) {
                 res.statusCode = 400
                 res.end(JSON.stringify({ ok: false, error: 'id, lng, lat required' }))
@@ -43,6 +40,8 @@ function locationApi(): Plugin {
                 lng: data.lng,
                 lat: data.lat,
                 ts: Date.now(),
+                source: data.source ?? 'unknown',
+                accuracyM: data.source === 'gps' ? data.accuracyM : undefined,
               }
               pings.set(ping.id, ping)
               res.setHeader('Content-Type', 'application/json')

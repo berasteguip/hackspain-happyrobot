@@ -25,20 +25,26 @@ export function CitizenTrack({ presetId }: Props) {
     let watch: number | undefined
     let cancelled = false
 
-    const send = async (lng: number, lat: number) => {
+    const send = async (lng: number, lat: number, accuracyM?: number) => {
+      if (cancelled) return
       setPos({ lng, lat })
-      await fetch('/api/locations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, lng, lat }),
-      })
+      try {
+        const response = await fetch('/api/locations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, name, lng, lat, source: mode === 'gps' ? 'gps' : 'simulation', accuracyM }),
+        })
+        if (!response.ok) throw new Error('No se ha recibido la ubicación')
+        if (!cancelled) setStatus(mode === 'gps' ? 'Ubicación del dispositivo compartida' : 'Compartiendo ubicación de demostración')
+      } catch {
+        if (!cancelled) setStatus('No se pudo enviar la ubicación. Comprueba la conexión.')
+      }
     }
 
     if (mode === 'demo') {
       const zone = SAFE_ZONES[0]
       let lng = zone.lng - 0.028
       let lat = zone.lat + 0.018
-      setStatus('Compartiendo ubicación de demostración')
       const tick = () => {
         if (cancelled) return
         const dist = haversineMeters(lng, lat, zone.lng, zone.lat)
@@ -51,11 +57,9 @@ export function CitizenTrack({ presetId }: Props) {
       }
       tick()
     } else {
-      setStatus('Solicitando GPS…')
       watch = navigator.geolocation.watchPosition(
         (position) => {
-          setStatus('Compartiendo GPS en vivo')
-          void send(position.coords.longitude, position.coords.latitude)
+          void send(position.coords.longitude, position.coords.latitude, position.coords.accuracy)
         },
         () => setStatus('No se pudo leer el GPS'),
         { enableHighAccuracy: true, maximumAge: 2000 },
@@ -72,11 +76,12 @@ export function CitizenTrack({ presetId }: Props) {
   return (
     <div className="citizen">
       <div className="citizen-card">
-        <p className="kicker">Protección Civil · Ávila</p>
-        <h1>Aviso de incendio forestal</h1>
+        <p className="kicker">Vigía · entorno de demostración</p>
+        <h1>Compartir mi ubicación</h1>
         <p className="lede">
-          Has recibido una llamada de un agente de voz. Si consientes, el centro de
-          mando verá tu posición hasta que llegues a una zona segura.
+          Esta es una prueba, no un aviso oficial de emergencia. Si aceptas, el visor
+          local recibirá tu ubicación mientras esta página siga compartiéndola.
+          Puedes simular una posición sin utilizar tu GPS.
         </p>
 
         {!consented ? (
@@ -104,7 +109,7 @@ export function CitizenTrack({ presetId }: Props) {
                 Usar mi GPS real
               </label>
             </fieldset>
-            <button type="button" onClick={() => setConsented(true)}>
+            <button type="button" onClick={() => { setStatus(mode === 'gps' ? 'Solicitando permiso de ubicación…' : 'Iniciando simulación…'); setConsented(true) }}>
               Consiento el seguimiento
             </button>
             <p className="fine">
@@ -115,13 +120,14 @@ export function CitizenTrack({ presetId }: Props) {
         ) : (
           <>
             <p className="ok">{status}</p>
-            {nearest && pos && (
+            {mode === 'demo' && nearest && pos && (
               <div className="zone-hint">
                 <strong>{nearest.zone.name}</strong>
                 <span>{Math.round(nearest.distanceM / 10) * 10} m</span>
               </div>
             )}
-            <p className="fine">Puedes cerrar esta pestaña para dejar de enviar posición.</p>
+            <button type="button" onClick={() => { setConsented(false); setStatus('Envío detenido') }}>Dejar de compartir</button>
+            <p className="fine">Los puntos de encuentro son ficticios. Al detener el envío, la última posición permanece en el visor con su hora de actualización; no se enviarán posiciones nuevas.</p>
           </>
         )}
       </div>
