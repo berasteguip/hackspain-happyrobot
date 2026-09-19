@@ -9,7 +9,7 @@ Enunciado íntegro del reto: `docs/reto-happyrobot.md`. Léelo antes de proponer
 
 ## Estado del proyecto (leer siempre)
 
-- **Idea principal elegida:** `docs/escenario-incendio.md`. Evacuación conversacional en incendios forestales, B2G (Protección Civil / CECOPI). El agente habla con la población de la zona de evacuación, no solo con los responsables. Toda propuesta se mide contra ese doc y la rúbrica.
+- **Idea principal elegida:** `docs/escenario-incendio.md`. Guiado individual de evacuación en incendios forestales, B2G (Protección Civil / CECOPI). La llamada masiva es el onboarding (sacar a la gente de casa y obtener su posición); el producto es el mapa de personas + fuego y lo que sale de él: rutas individuales que se recalculan, convoyes con coche guía, casas sin contestar a la patrulla, y prioridad de medios aéreos por personas dentro de cada sector. Toda propuesta se mide contra ese doc y la rúbrica.
 - **Qué expone HappyRobot de verdad:** `docs/plataforma-happyrobot.md` (verificado dentro del workspace del equipo, con marcas [OK] / [?]).
 - **MCP oficial de HappyRobot** configurado en `.mcp.json` (Claude Code) y `.kiro/settings/mcp.json` (Kiro). Requiere autorizar OAuth una vez por máquina con la cuenta del equipo.
 
