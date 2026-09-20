@@ -13,7 +13,8 @@ cercana.
 | --- | --- | --- |
 | `00-meta/` | Cómo escribimos aquí | [convenciones.md](00-meta/convenciones.md) |
 | `01-evento/` | HackSpain 2026 y el **enunciado oficial del reto** | [02-reto-happyrobot.md](01-evento/02-reto-happyrobot.md) |
-| `02-happyrobot/` | La empresa, la plataforma, **qué expone de verdad**, API/SDK, preguntas para el stand | [03-workspace-y-limites-verificados.md](02-happyrobot/03-workspace-y-limites-verificados.md) |
+| `06-producto/` · variables | **Qué variable va en Railway, en `.env`, en HappyRobot y en el navegador** | [05-variables-y-claves.md](06-producto/05-variables-y-claves.md) |
+| `02-happyrobot/` | La empresa, la plataforma, **qué expone de verdad**, API/SDK, cómo arrancar un workflow desde fuera, preguntas para el stand | [03-workspace-y-limites-verificados.md](02-happyrobot/03-workspace-y-limites-verificados.md) · [06-trigger-desde-fuera.md](02-happyrobot/06-trigger-desde-fuera.md) |
 | `03-dominio-crisis/` | Emergencias en España, ES-Alert, datos de incendios, geografía de la zona, modelo de fuego, competencia | [01-sistema-emergencias-espana.md](03-dominio-crisis/01-sistema-emergencias-espana.md) |
 | `04-regulacion/` | AI Act, ENS, RGPD, LCSP, y el marco legal de llamar y geolocalizar | [01-marco-regulatorio.md](04-regulacion/01-marco-regulatorio.md) |
 | `05-investigacion/` | Notas fechadas: barridos, contactos, entrevistas | [2026-09-19-contacto-ines-galindo-csic.md](05-investigacion/2026-09-19-contacto-ines-galindo-csic.md) |

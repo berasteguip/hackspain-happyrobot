@@ -10,17 +10,19 @@ Arrancar: `uvicorn main:app --port 8000` (o `python main.py`). Requiere Python 3
 from __future__ import annotations
 
 import logging
+import secrets
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 import planner
 from loader import load_scenario
 from routers import calls, events, human, read
-from settings import settings
+from settings import REPO_ROOT, settings
 from state import state
 
 # ------------------------------------------------------------------------------------------
@@ -36,7 +38,27 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("crisis.api")
 
 # Rutas que NO piden `x-api-key`: el latido, la documentación y los preflight del navegador.
-PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/favicon.svg", "/people/register"}
+
+# Rutas que un ciudadano abre desde el enlace del SMS. No pueden exigir `x-api-key`: la página
+# corre en su móvil y cualquier secreto que le pasáramos sería legible en el código fuente. Se
+# asume: quien tenga un enlace puede escribir una posición. El arreglo real es un token por
+# persona en la URL, no un secreto compartido en el cliente.
+# `/api/roster` va aquí con la misma lógica que `/api/locations`: lo lee el navegador del
+# operador, que no tiene clave. Por eso el roster devuelve el teléfono ENMASCARADO. Lo que sí
+# marca —`POST /calls/dispatch`— queda fuera de esta lista y exige `x-api-key`.
+PUBLIC_PREFIXES = (
+    "/static",
+    "/gps",
+    "/dashboard",
+    "/assets",
+    "/positions",
+    "/instructions/",
+    "/api/locations",
+    "/api/roster",
+    "/api/anchor",
+    "/track",
+)
 
 
 @asynccontextmanager
@@ -53,6 +75,15 @@ async def lifespan(app: FastAPI):
         len(decisiones),
         state.state_version,
     )
+    if settings.secret_is_public:
+        log.error("  " + "!" * 70)
+        log.error("  HR_SHARED_SECRET es un valor de EJEMPLO del repo, y el repo es PÚBLICO.")
+        log.error("  Quien lea el repositorio puede entrar en esta API. Cámbiala ya:")
+        log.error("      openssl rand -hex 32")
+        if settings.allow_real_calls:
+            log.error("  Con ALLOW_REAL_CALLS=true eso significa que puede hacer sonar teléfonos.")
+            log.error("  /calls/dispatch se NEGARÁ a marcar hasta que la cambies.")
+        log.error("  " + "!" * 70)
     if not settings.allow_real_calls:
         log.info("  ⚠️  ALLOW_REAL_CALLS=false → llamadas y SMS SIMULADOS (nadie recibe nada)")
     else:
@@ -83,6 +114,33 @@ app.add_middleware(
 )
 
 
+def _api_key_ok(recibida: str | None) -> bool:
+    """¿Es válida la `x-api-key` que llega?
+
+    La comparación no es un `==` por un motivo tonto y muy caro: **una cabecera HTTP es una
+    secuencia de bytes latin-1** (RFC 9110), y Starlette la decodifica así. Pero un cliente que
+    manda una clave con acentos suele codificarla en UTF-8, y entonces `ñ` llega como `Ã±` y no
+    casa. El resultado es lo peor que puede pasar con una auth: **la misma clave funciona en el
+    navegador y falla en `curl` contra el mismo servidor**, y te comes una hora buscando dónde
+    está el error de dedo que no existe. Nos pasó el 19 sep 2026 en pleno ensayo.
+
+    Así que se acepta también la lectura UTF-8 de esos mismos bytes. Una clave solo-ASCII no se
+    entera de nada de esto; una con eñes deja de ser una bomba de relojería.
+    """
+    if not recibida or not settings.hr_shared_secret:
+        return False
+    # En bytes, y no solo por gusto: `compare_digest` rechaza los `str` con caracteres no ASCII
+    # (`TypeError`), que es justo el caso que este comprobador existe para tolerar.
+    esperado = settings.hr_shared_secret.encode("utf-8")
+    if secrets.compare_digest(recibida.encode("utf-8"), esperado):
+        return True
+    try:
+        reinterpretada = recibida.encode("latin-1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return False
+    return secrets.compare_digest(reinterpretada.encode("utf-8"), esperado)
+
+
 @app.middleware("http")
 async def api_key_guard(request: Request, call_next):
     """`x-api-key` == `HR_SHARED_SECRET` (contrato §3).
@@ -95,9 +153,9 @@ async def api_key_guard(request: Request, call_next):
         settings.hr_shared_secret
         and request.method != "OPTIONS"
         and ruta not in PUBLIC_PATHS
-        and not ruta.startswith("/static")
+        and not ruta.startswith(PUBLIC_PREFIXES)
     ):
-        if request.headers.get("x-api-key") != settings.hr_shared_secret:
+        if not _api_key_ok(request.headers.get("x-api-key")):
             log.warning("401 %s %s (x-api-key inválida o ausente)", request.method, ruta)
             return JSONResponse(
                 status_code=401,
@@ -110,6 +168,30 @@ app.include_router(read.router)
 app.include_router(events.router)
 app.include_router(calls.router)
 app.include_router(human.router)
+
+
+# Un solo proceso sirve la API y las dos páginas: mismo origen, así que la página llama a
+# `/positions` sin saber en qué dominio vive y no hace falta CORS ni config.js con URL absoluta.
+for _ruta, _dir in (("/gps", "gps"), ("/dashboard", "dashboard")):
+    _destino = REPO_ROOT / "web" / _dir
+    if _destino.is_dir():
+        app.mount(_ruta, StaticFiles(directory=_destino, html=True), name=_dir)
+    else:
+        log.warning("No encuentro %s; %s no se sirve.", _destino, _ruta)
+
+# Vigía en la raíz: es la cara del puesto de mando. Va el último a propósito — Starlette casa
+# las rutas en orden de registro, así que /state, /positions y compañía siguen ganando y solo
+# lo que no es de la API cae en el SPA.
+_VIGIA = REPO_ROOT / "apps" / "command-center" / "dist"
+if _VIGIA.is_dir():
+    # Rutas del SPA que no son ficheros: `/track` es la página del enlace (teléfono + GPS).
+    @app.get("/track", include_in_schema=False)
+    def spa_track():
+        return FileResponse(_VIGIA / "index.html")
+
+    app.mount("/", StaticFiles(directory=_VIGIA, html=True), name="vigia")
+else:
+    log.warning("No encuentro %s; la raíz no sirve Vigía (¿falta `npm run build`?).", _VIGIA)
 
 
 @app.post("/sim/run", status_code=501, tags=["simulador"])

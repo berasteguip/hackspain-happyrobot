@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+from settings import settings
+
 
 # Perímetro que ha avanzado al norte: el borde norte pasa de 41.62 a 41.645, o sea a ~600 m de las
 # casas del Camino del Horno (41.650-41.652). Es el evento que invalida el plan anterior.
@@ -305,3 +307,276 @@ def test_la_prioridad_aerea_explica_por_que_un_sector_va_primero(client):
     assert primero["air_priority_rank"] == 1
     assert "personas" in (primero["air_priority_reason"] or "")
     assert primero["people_inside"] >= 1
+
+
+# --------------------------------------------------------------------------------------
+# La puerta: una clave con acentos no puede valer según el cliente que la mande
+# --------------------------------------------------------------------------------------
+
+
+def test_la_clave_vale_llegue_en_latin1_o_en_utf8(monkeypatch):
+    """Nos costó una hora de ensayo: la misma clave entraba por el navegador y daba 401 por curl.
+
+    Una cabecera HTTP es latin-1 (RFC 9110) y así la decodifica Starlette, pero `curl` manda la
+    `ñ` en UTF-8. Las dos lecturas tienen que valer o la auth depende del cliente.
+    """
+    from main import _api_key_ok
+
+    clave = "secreto-con-eñe"
+    monkeypatch.setattr(settings, "hr_shared_secret", clave)
+
+    # Lo que ve Starlette cuando el cliente manda latin-1 (navegador) y cuando manda UTF-8 (curl).
+    como_latin1 = clave
+    como_utf8 = clave.encode("utf-8").decode("latin-1")
+
+    assert como_utf8 != como_latin1, "si no, el test no prueba nada"
+    assert _api_key_ok(como_latin1) is True
+    assert _api_key_ok(como_utf8) is True
+    assert _api_key_ok("otra-cosa") is False
+    assert _api_key_ok(None) is False
+
+
+def test_sin_secreto_configurado_la_clave_no_valida_nada(monkeypatch):
+    """Con `HR_SHARED_SECRET` vacío la puerta queda abierta en el middleware, pero el
+    comprobador nunca debe decir «sí» a una clave cualquiera."""
+    from main import _api_key_ok
+
+    monkeypatch.setattr(settings, "hr_shared_secret", "")
+    assert _api_key_ok("lo-que-sea") is False
+
+
+# ======================================================================================
+# El camino de vuelta: lo que el agente concluyó al colgar entra en el mapa
+# ======================================================================================
+
+
+def test_la_observacion_del_agente_pinta_a_la_persona_y_cierra_la_llamada(client):
+    """`POST /calls/observation` es el nodo `Observación` del workflow posteando al colgar."""
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-002",
+            "run_id": "run-obs-1",
+            "run_url": "https://platform.eu.happyrobot.ai/runs/run-obs-1",
+            "duration_s": "96",
+            "nivel": "rojo",
+            "PRIOR_NIVEL": "amarillo",
+            "zona_declarada": "El Pinar",
+            "tipo_lugar": "exterior",
+            "llamas": "true",
+            "discrepancia": "prior_bajo_obs_alta",
+            "confianza": "alta",
+            "resultado": "completada",
+            "nota_libre": "Sale andando con su madre por el camino del horno.",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+    persona = client.get("/people/p-002").json()
+    triaje = persona["triage"]
+    assert triaje["level"] == "red", "rojo del agente → red en el contrato"
+    assert triaje["prior_level"] == "yellow"
+    assert triaje["run_url"].endswith("run-obs-1")
+    assert "PEOR de lo que decía el mapa" in triaje["reason"]
+    assert "VE LLAMAS" in triaje["reason"]
+    # Y la llamada se aplicó por el camino de siempre: contestó y cuenta como intento.
+    assert persona["call_attempts"] >= 1
+    assert persona["status"] != "no_answer"
+
+    # El mapa lo lee del roster, no del estado completo.
+    fila = next(f for f in client.get("/api/roster").json() if f["id"] == "p-002")
+    assert fila["triage_level"] == "red"
+    assert fila["triage_confidence"] == "alta"
+    assert fila["triage_reason"]
+
+
+def test_una_observacion_de_llamada_no_contestada_no_inventa_conversacion(client):
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={"PERSONA_ID": "p-003", "resultado": "no_contactado", "nivel": "", "confianza": "baja"},
+    )
+    assert r.status_code == 200
+    persona = client.get("/people/p-003").json()
+    assert persona["status"] == "no_answer", "sin interlocutor no hay contacto"
+    assert persona["triage"]["level"] == "unknown", "un nivel vacío no se inventa"
+    # «confianza baja» sin interlocutor sonaría a que el agente dudó de algo que nadie dijo.
+    assert "nadie descolgó" in persona["triage"]["reason"]
+    assert "confianza" not in persona["triage"]["reason"]
+
+
+def test_los_campos_vacios_del_extract_no_tumban_la_peticion(client):
+    """Todo llega como texto desde la plantilla del nodo webhook: `""` es lo normal, no un 422."""
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-001",
+            "duration_s": "",
+            "llamas": "",
+            "nivel": "Naranja",
+            "zona_declarada": "null",
+        },
+    )
+    assert r.status_code == 200
+    persona = client.get("/people/p-001").json()
+    assert persona["triage"]["level"] == "orange", "el nivel tolera mayúsculas"
+    assert persona["triage"]["declared_zone"] is None, "«null» de una plantilla es nada"
+
+
+def test_una_observacion_de_alguien_desconocido_crea_la_ficha(client):
+    """El agente puede acabar hablando con quien no estaba en el censo: no se tira el dato."""
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={"PERSONA_ID": "p-nueva", "NUMERO_TELEFONO": "+34600990999", "nivel": "verde"},
+    )
+    assert r.status_code == 200
+    assert client.get("/people/p-nueva").json()["triage"]["level"] == "green"
+
+
+def test_registrarse_desde_el_enlace_crea_una_persona_llamable_y_es_idempotente(client):
+    """Quien abre el enlace entra en el censo con su GPS y su teléfono pasa a la lista blanca."""
+    client.post("/reset")
+    r = client.post(
+        "/people/register",
+        json={"name": "Mateo", "phone": "+34 600 00 00 00", "lat": 41.7, "lon": -6.04},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["created"] is True and body["map_url"].endswith(f"/?p={body['person_id']}")
+    fila = next(p for p in client.get("/api/roster").json() if p["id"] == body["person_id"])
+    assert fila["dialable"] is True and fila["location_source"] == "gps"
+    assert any(p["id"] == body["person_id"] for p in client.get("/api/locations").json())
+
+    otra = client.post(
+        "/people/register", json={"phone": "+34600000000", "lat": 41.71, "lon": -6.05}
+    ).json()
+    assert otra["created"] is False and otra["person_id"] == body["person_id"]
+    assert client.post(
+        "/people/register", json={"phone": "600000000", "lat": 41.7, "lon": -6.04}
+    ).status_code == 422
+
+
+def test_anclar_el_mundo_desplaza_fuego_y_vecinos_alrededor_del_registrado(client):
+    client.post("/reset")
+    antes = client.get("/state").json()
+    casa_antes = next(p for p in antes["people"] if p["id"] == "p-001")
+    fuego_antes = antes["fire"]["perimeter"]["coordinates"][0][0]
+    # Muy lejos del escenario (1 grado al norte): todo debe seguirle.
+    centro = client.get("/api/roster").json()
+    ref_lat = sum(p["lat"] for p in centro) / len(centro)
+    ref_lon = sum(p["lng"] for p in centro) / len(centro)
+    r = client.post(
+        "/people/register",
+        json={"phone": "+34600000001", "lat": ref_lat + 1.0, "lon": ref_lon, "anchor": True},
+    )
+    assert r.status_code == 200 and r.json()["anchor"]["lat"] == ref_lat + 1.0
+    despues = client.get("/state").json()
+    casa_despues = next(p for p in despues["people"] if p["id"] == "p-001")
+    assert casa_despues["lat"] > casa_antes["lat"] + 0.9, "el vecino sintético se desplaza con el mundo"
+    assert despues["fire"]["perimeter"]["coordinates"][0][0][1] > fuego_antes[1] + 0.9
+    yo = next(p for p in despues["people"] if p["id"] == r.json()["person_id"])
+    assert yo["lat"] == ref_lat + 1.0, "la persona real no se mueve"
+    assert client.get("/api/anchor").json()["anchored"] is True
+    # Registrarse otra vez en el mismo sitio no vuelve a mover nada.
+    client.post("/people/register", json={"phone": "+34600000002", "lat": ref_lat + 1.0, "lon": ref_lon, "anchor": True})
+    assert next(p for p in client.get("/state").json()["people"] if p["id"] == "p-001")["lat"] == casa_despues["lat"]
+
+
+def test_register_only_calls_bloquea_al_dataset_y_deja_pasar_al_registrado(client, monkeypatch):
+    import notify
+
+    client.post("/reset")
+    monkeypatch.setattr(settings, "register_only_calls", True)
+    assert notify.phone_allowed("+34600990001") is False
+    client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04})
+    assert notify.phone_allowed("+34600000000") is True
+
+
+def test_con_auto_notify_apagado_registrarse_no_dispara_llamadas(client, monkeypatch):
+    import notify
+
+    client.post("/reset")
+    monkeypatch.setattr(settings, "auto_notify", False)
+    llamadas = []
+    monkeypatch.setattr(notify, "_post_to_happyrobot", lambda payload, client=None: llamadas.append(payload) or (True, "ok", "run-x"))
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_shared_secret", "x" * 40)
+    client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04, "anchor": True})
+    client.post("/positions", json={"person_id": "p-001", "lat": 41.66, "lon": -6.05})
+    assert llamadas == [], "sin operador no suena nadie"
+
+
+def test_una_llamada_sin_nada_resenable_tambien_deja_motivo(client):
+    """Una ficha que dice «el agente no dejó motivo» se lee como que algo falló.
+
+    Lo normal es lo contrario: la llamada fue bien y no había nada que corrigiera el mapa. Eso
+    también es información —significa no volver a mirar esta ficha— y tiene que estar escrito.
+    """
+    client.post("/reset")
+    client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-002",
+            "nivel": "verde",
+            "discrepancia": "ninguna",
+            "confianza": "alta",
+            "resultado": "completada",
+        },
+    )
+    motivo = client.get("/people/p-002").json()["triage"]["reason"]
+    assert motivo, "el motivo nunca vuelve vacío"
+    assert "confirma lo que traía el mapa" in motivo
+
+    # Y si ni siquiera hubo comparación, se dice eso otro en vez de afirmar una confirmación.
+    client.post("/calls/observation", json={"PERSONA_ID": "p-004", "nivel": "verde"})
+    otro = client.get("/people/p-004").json()["triage"]["reason"]
+    assert otro and "confirma" not in otro
+
+
+def test_un_campo_ininteligible_no_tira_toda_la_observacion(client):
+    """Caso real del 20 sep 2026: el AI Extract devolvió `"llamas": "llamas"`.
+
+    Pydantic tumbaba la petición entera con un 422 y se perdía una observación que traía nivel
+    rojo, discrepancia y una nota diciendo que la persona veía llamas. Del otro lado de este
+    endpoint hay un modelo de lenguaje: puede poner cualquier cosa en cualquier campo, y eso no
+    puede costar la única información que tenemos de alguien en peligro.
+    """
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-001",
+            "nivel": "rojo",
+            "llamas": "llamas",          # el nombre del campo en vez de un booleano
+            "duration_s": "un rato",     # y un número que no es un número
+            "discrepancia": "prior_bajo_obs_alta",
+            "confianza": "media",
+            "resultado": "cortada",
+            "nota_libre": "Afirmó ver llamas cercanas; el triaje quedó interrumpido.",
+        },
+    )
+    assert r.status_code == 200, "un campo ilegible no puede costar la observación entera"
+
+    triaje = client.get("/people/p-001").json()["triage"]
+    assert triaje["level"] == "red", "lo que SÍ se entendía se guarda"
+    assert triaje["flames"] is None, "lo que no se entendía se descarta, no se inventa"
+    assert "PEOR de lo que decía el mapa" in triaje["reason"]
+    assert "se cortó a medias" in triaje["reason"]
+
+
+def test_los_booleanos_del_extract_admiten_las_formas_razonables(client):
+    from models import CallObservation
+
+    assert CallObservation(llamas="true").flames is True
+    assert CallObservation(llamas="sí").flames is True
+    assert CallObservation(llamas=1).flames is True
+    assert CallObservation(llamas="false").flames is False
+    assert CallObservation(llamas="no").flames is False
+    assert CallObservation(llamas="cualquier cosa").flames is None
+    assert CallObservation(duration_s="96").duration_s == 96
+    assert CallObservation(duration_s="96.7").duration_s == 96
+    assert CallObservation(duration_s="un rato").duration_s is None

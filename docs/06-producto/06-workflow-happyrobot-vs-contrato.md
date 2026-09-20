@@ -11,8 +11,16 @@ envejece el mismo día.
 
 ## 1. Qué hay desplegado
 
-Workflow **`Triaje incendios — MVP`** (`01a0b74c-0573-7ae5-9206-55a933434ad0`),
-versión 2, **draft: ni publicada ni live**. Cuatro nodos:
+Workflow **`Triaje incendios — MVP`** (`01a0b74c-0573-7ae5-9206-55a933434ad0`).
+
+> **Foto de la v2, obsoleta desde el 19 sep 2026 por la tarde.** Ese día el workflow
+> creció hasta la **v6 (publicada y LIVE)**, con 15 nodos: trigger `Incoming hook`,
+> tres cerrojos de destino en Python Sandbox, tres agentes de voz (la persona, un
+> tercero mencionado y un organismo oficial) y sus tools. La v6 sigue siendo la base;
+> lo único que le falta al contrato es lo que añade la **v7** del §5. La tabla de abajo
+> se conserva porque el nodo `Observación` y el prompt no han cambiado.
+
+Cuatro nodos (v2):
 
 | Nodo | Tipo | Qué hace |
 | --- | --- | --- |
@@ -49,8 +57,8 @@ Tres consecuencias:
    ordena la cola por **minutos hasta que el fuego alcanza a la persona**
    ([`03-contrato-de-datos.md`](03-contrato-de-datos.md) §4). Son dos modelos de
    severidad distintos y nadie los ha mapeado.
-3. **El extract no sale a ningún sitio.** No hay nodo `Webhook` que empuje el
-   resultado a `api/`.
+3. ~~**El extract no sale a ningún sitio.** No hay nodo `Webhook` que empuje el
+   resultado a `api/`.~~ **Resuelto el 2026-09-19** — ver §5.
 
 **Bug, además:** el `Initial Message` del agente tiene las variables sin interpolar.
 Sale por voz *«le llama el asistente automático de ␣ por el incendio en ␣.»*, con los
@@ -88,10 +96,103 @@ Cómo levantar `/track` y compartirlo con un móvil real está en
 con el filtro DNS de la wifi de la UPM documentado: aplica a cualquier túnel, también
 al de `web/gps`.
 
+## Propuesta de demo con llamadas reales al equipo — 2026-09-19
+
+> HIPÓTESIS de producto, pendiente de cerrar con el equipo: el coordinador debe poder
+> abrir la conversación de una persona para comprobar qué declaró y por qué cambió
+> su plan. La ficha debería priorizar la instrucción vigente y los datos confirmados,
+> conservando conversación e historial de llamadas por `person_id` y `run_id`.
+
+La petición del equipo plantea una llamada de HappyRobot a un participante que hace
+de afectado, movimiento simulado después de colgar, un cambio de viento que exponga
+al norte y una solicitud posterior de refuerzos. La secuencia propuesta es:
+
+1. Una llamada real de prueba recoge respuesta, disposición a evacuar, movilidad y
+   consentimiento. Su resultado estructurado actualiza al contacto correspondiente.
+2. Solo un resultado compatible inicia el movimiento de su avatar de demo; colgar
+   por sí solo no demuestra aceptación ni evacuación. La ubicación del avatar no se
+   presenta como GPS real del participante.
+3. Un evento de escenario modifica el viento y la versión del plan. El backend
+   determina nuevas exposiciones y rutas afectadas; el agente consulta el contexto
+   actualizado y comunica solo a quienes necesitan una instrucción nueva.
+4. Un rol separado prepara una solicitud de apoyo con sector, necesidad y estado de
+   evacuación, revisable por el mando. Un compañero representa al centro receptor y
+   confirma disponibilidad/ETA. No se llama a servicios públicos reales en la demo.
+
+> HIPÓTESIS: conviene demostrar primero una llamada completa → callback → estado →
+> movimiento, después el cambio de situación y finalmente la coordinación de recursos.
+> Los roles pueden ser nodos/workflows con guiones distintos sobre el mismo estado;
+> no requieren agentes autónomos negociando entre sí ni varias fuentes de verdad.
+
+**Transcripción en vivo pendiente de verificación para el canal elegido.** Las notas
+locales de SDK documentan sesiones/runs y escucha WebRTC, pero eso no demuestra un
+stream de texto para llamadas telefónicas outbound. En esta revisión no se pudo leer
+el mirror privado por sus restricciones de acceso. Como alternativa de demo se puede
+plantear conversación/resumen al finalizar, confirmando antes cómo entrega esos datos
+el workflow. No se debe presentar un texto simulado como transcript de una llamada real.
+
+**Revisión necesaria del guion existente:** `prompts/07-guion-demo.md` §2.2 contiene
+«esto no es una prueba». Para llamadas de demostración al equipo la presentación debe
+identificar el simulacro. Tampoco deben darse por ejecutadas las capacidades descritas
+en ese guion solo porque estén escritas: cada evento debe corresponder a una acción
+observada. Llamar de verdad requiere destinos de prueba autorizados; no basta con
+tratar el interruptor global `ALLOW_REAL_CALLS` como si fuera una lista de destinos.
+
+Fuentes de esta revisión: solicitud del equipo del 2026-09-19;
+[`../02-happyrobot/04-api-y-sdk.md`](../02-happyrobot/04-api-y-sdk.md) §§8–9;
+[`03-contrato-de-datos.md`](03-contrato-de-datos.md) §3;
+[`../../api/notify.py`](../../api/notify.py) y
+[`../../prompts/07-guion-demo.md`](../../prompts/07-guion-demo.md) (revisados 2026-09-19).
+
+## 5. El camino de vuelta: la observación vuelve a Vigía — 2026-09-19
+
+Hecho, no hipótesis. Versión **7** del workflow `Triaje incendios — MVP`
+(`cmupqukyx4lk`), forkeada de la v6 que estaba en vivo: un nodo **`Webhook POST`
+«Observación → Vigía»** cuelga del nodo `Observación` y postea el extract a
+`{{API_BASE_URL}}/calls/observation` con `x-api-key: {{API_KEY}}`.
+
+En `api/` lo recoge `POST /calls/observation`
+([`api/routers/calls.py`](../../api/routers/calls.py)), que **envuelve** a `/calls/outcome`
+—o sea, no duplica el mecanismo de llamadas— y además escribe un objeto `Triage` sobre la
+`Person`. `GET /api/roster` lo expone y el puesto de mando colorea el punto con él.
+
+Sobre el desajuste del §2, que sigue siendo real: no se ha renombrado nada en la plataforma.
+Los nombres del extract (`nivel`, `zona_declarada`, `discrepancia`…) se aceptan **como alias**
+del contrato en inglés, y `person_id` viaja aparte, desde `{{hook.data.PERSONA_ID}}`, que es el
+mismo id que la API mandó al disparar la llamada. Los puntos 1 y 2 del §2 quedan así:
+
+- **Punto 1 (no hay `person_id`)**: resuelto. No sale del extract, sale del trigger.
+- **Punto 2 (`nivel` vs `minutes_to_front`)**: **no se mapean, y es deliberado.**
+  `minutes_to_front` es geometría y sigue ordenando la cola; `triage.level` es lo que dijo una
+  persona y es lo que tiñe el mapa. Inventar una equivalencia (`rojo = 10 min`) sería fabricar
+  un dato: la persona no dijo minutos. Donde discrepan, el campo `discrepancia` del propio
+  extract lo dice con todas las letras y el mando lo lee en la ficha.
+
+### Verificado con sondas contra la plataforma (2026-09-19)
+
+- La sustitución de variables dentro de un `body.raw` con `contentType: application/json`
+  **escapa las comillas** del texto libre: una `nota_libre` con `Dice: "salgo ya"` llega como
+  JSON válido. Comprobado con `test_node` contra `POST /positions` de la API desplegada, que
+  devolvió el cuerpo parseado en su error de validación.
+- `test_node` sobre un nodo webhook lo ejecuta **sin lanzar la llamada de voz**: es la forma
+  barata de probar este nodo sin que suene ningún teléfono.
+
+### Pendiente antes de publicar la v7
+
+1. **La variable `API_KEY` del workflow no la acepta la API desplegada** (`401 x-api-key
+   inválida o ausente`, sonda del 19 sep 2026). Tiene que valer exactamente lo mismo que
+   `HR_SHARED_SECRET` en Railway. La variable `HR_SHARED_SECRET` del workflow tampoco vale:
+   está comprobado que da 401.
+2. **`/calls/observation` todavía no está desplegado.** Vive en la rama
+   `claude/agent-app-webhook-bidirectional-a8316e`; hasta que llegue a Railway el nodo daría 404.
+
+Con esas dos cosas hechas, publicar la v7 (reemplaza a la v6 en producción) y volver a lanzar la
+sonda: un `501` desde `/sim/run` o un `200` desde `/calls/observation` confirman el circuito.
+
 ## Preguntas abiertas
 
 - [ ] ¿El agente ordena moverse o solo informa la ruta? (§3 — bloquea el resto)
-- [ ] ¿Quién alinea `Observación` con `prompts/05-extraccion.md`, y cuándo?
+- [x] ¿Quién alinea `Observación` con `prompts/05-extraccion.md`, y cuándo? — 2026-09-19: no se alinea en la plataforma; la API acepta los nombres del extract como alias (§5).
 - [ ] ¿De dónde sale el número para los SMS salientes: Twilio propio o compra?
 - [ ] ¿Se retira `/track` en favor de `web/gps`, o al revés?
 

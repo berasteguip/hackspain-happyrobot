@@ -373,6 +373,35 @@ de zona) sí.
   cifra interna del propio proyecto, no de mercado, útil para dimensionar el coste de la demo (no del
   pitch de mercado).
 
+## Referencia COP de Palantir — consulta 2026-09-19
+
+> **Actualizado:** 2026-09-19 · **Estado:** referencia de proveedor, verificación parcial
+
+En el extracto indexado de su caso público de respuesta a desastres, Palantir describe
+la integración de registros dispersos de evacuados, un modelo de datos estandarizado
+para su gestión y colaboración entre municipios. Para las lluvias intensas de Noto
+2024 describe un COP que combina cortes de carretera, deslizamientos e imágenes
+satélite con ubicaciones de poblaciones para apoyar la priorización.
+
+La fuente es una descripción del proveedor, no una evaluación independiente de su
+impacto. La consulta directa de la página no devolvió el cuerpo del artículo en esta
+sesión; lo anterior procede del extracto del buscador, no de una auditoría del producto.
+No permite atribuirle todas las funcionalidades propuestas para Vigía.
+
+> HIPÓTESIS de producto: la referencia útil para Vigía es conectar personas, rutas,
+> refugios, recursos y órdenes en un estado compartido, con excepciones pendientes,
+> responsables y confirmación de ejecución. Esa coordinación aporta más que añadir
+> capas visuales sin acciones ni seguimiento.
+
+## Fuentes de esta consulta
+
+- Palantir, *Disaster Response* — https://www.palantir.com/impact/disaster-response/
+  (extracto indexado consultado 2026-09-19; recuperación directa incompleta).
+- Estado local del proyecto: [`../../api/README.md`](../../api/README.md) y
+  [`../07-decisiones/003-frontend-y-dataset-unicos.md`](../07-decisiones/003-frontend-y-dataset-unicos.md)
+  (consultados 2026-09-19; varias capacidades ya existen en el backend, pendiente su
+  integración con el CECOP de Gredos).
+
 ## Limitaciones de esta investigación (léase antes de defenderla ante el jurado)
 
 1. La sección 3 (IA de voz en 911/112 y software de simulación de evacuación) se apoya en fetch en

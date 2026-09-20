@@ -15,12 +15,16 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Iterable
 
 from models import (
+    TERMINAL_CALL_STATES,
     Actor,
     CallLogEntry,
+    CallRun,
+    CallState,
     Convoy,
     DecisionLogEntry,
     DecisionType,
@@ -32,6 +36,7 @@ from models import (
     RoadClosure,
     SafeZone,
     Sector,
+    parse_iso,
     utcnow_iso,
 )
 from settings import settings
@@ -143,10 +148,108 @@ class CrisisState:
         # que el planner pueda formar convoyes sin inventar campos en la entidad.
         self.seats_free: dict[str, int] = {}
 
+        # Teléfonos que se han registrado ellos mismos desde el enlace (`POST /people/register`).
+        # Quien se apunta consiente que le llamen: entran en la lista blanca sin tocar `.env`.
+        self.registered_phones: set[str] = set()
+        # Dónde está anclado el "mundo" del ensayo (lat, lon) tras `POST /people/register` con
+        # `anchor`: el escenario entero se desplaza para rodear a la persona real.
+        self.anchor: tuple[float, float] | None = None
+
+        # Intentos de llamada vivos e históricos, por id de intento. Separado de `Person`
+        # a propósito: el estado del teléfono no es el estado de la persona (ver `CallState`),
+        # y una persona puede acumular varios intentos a lo largo de la crisis.
+        self.calls: dict[str, CallRun] = {}
+
         # Campos pinchados por un humano: el planner no los puede revertir.
         self.overrides: dict[tuple[str, str, str], dict] = {}
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.last_event_id: str | None = None
+
+    # ---------------------------------------------------------------- llamadas
+    def active_call(self, person_id: str) -> CallRun | None:
+        """El intento vivo de esa persona, si lo hay. Evita llamar dos veces a la vez."""
+        vivos = [
+            c
+            for c in self.calls.values()
+            if c.person_id == person_id and c.state not in TERMINAL_CALL_STATES
+        ]
+        return max(vivos, key=lambda c: c.started_at) if vivos else None
+
+    def last_call(self, person_id: str) -> CallRun | None:
+        intentos = [c for c in self.calls.values() if c.person_id == person_id]
+        return max(intentos, key=lambda c: c.started_at) if intentos else None
+
+    def call_by_run_id(self, run_id: str | None) -> CallRun | None:
+        """Lo que permite casar un `/calls/outcome` de HappyRobot con el intento que lo lanzó."""
+        if not run_id:
+            return None
+        candidatos = [c for c in self.calls.values() if c.run_id == run_id]
+        return max(candidatos, key=lambda c: c.started_at) if candidatos else None
+
+    def expire_stale_calls(self) -> list[CallRun]:
+        """Cierra como `stale` los intentos que llevan demasiado sin desenlace.
+
+        El resultado de una llamada llega por `POST /calls/outcome`, y ese callback **puede no
+        llegar nunca**: con la API en localhost HappyRobot no la alcanza. Sin esto, un intento
+        se queda en `ringing` para siempre y esa persona no se puede volver a llamar en toda
+        la crisis, que es justo lo contrario de lo que hace falta ensayando.
+
+        Se marcan `stale`, no `no_answer`: no sabemos si contestó. Inventarse el desenlace
+        sería peor que admitir que no lo sabemos.
+        """
+        limite = settings.call_stale_minutes * 60
+        ahora = datetime.now(timezone.utc)
+        caducados = []
+        with self.lock:
+            for call in self.calls.values():
+                if call.state in TERMINAL_CALL_STATES:
+                    continue
+                marca = parse_iso(call.updated_at)
+                if marca is None or (ahora - marca).total_seconds() < limite:
+                    continue
+                call.state = CallState.stale
+                call.detail = (
+                    f"sin desenlace tras {settings.call_stale_minutes:.0f} min: nunca llegó el "
+                    "resultado a /calls/outcome (¿HappyRobot no alcanza esta API?)"
+                )
+                call.updated_at = utcnow_iso()
+                caducados.append(call)
+            if caducados:
+                self.state_version += 1
+                self.t = utcnow_iso()
+        if caducados:
+            log.warning(
+                "%d llamada(s) sin desenlace marcadas como `stale`: %s",
+                len(caducados),
+                ", ".join(c.person_id for c in caducados),
+            )
+        return caducados
+
+    def set_call_state(
+        self,
+        call_id: str,
+        estado: CallState,
+        *,
+        detail: str | None = None,
+        run_id: str | None = None,
+        answered: bool | None = None,
+    ) -> CallRun | None:
+        """Mueve un intento de estado. Sube `state_version` para que Vigía lo vea en su poll."""
+        with self.lock:
+            call = self.calls.get(call_id)
+            if call is None:
+                return None
+            call.state = estado
+            call.updated_at = utcnow_iso()
+            if detail is not None:
+                call.detail = detail
+            if run_id:
+                call.run_id = run_id
+            if answered is not None:
+                call.answered = answered
+            self.state_version += 1
+            self.t = call.updated_at
+            return call
 
     @property
     def uptime_s(self) -> float:
@@ -230,6 +333,45 @@ class CrisisState:
 
     def clear_override(self, subject_type: str, subject_id: str | None, field: str) -> None:
         self.overrides.pop(self.override_key(subject_type, subject_id, field), None)
+
+    def log_action(
+        self,
+        reason: str,
+        *,
+        type: DecisionType,
+        actor: Actor = Actor.human,
+        approved_by: str | None = None,
+        before: dict[str, Any] | None = None,
+        after: dict[str, Any] | None = None,
+        root_event: bool = True,
+    ) -> DecisionLogEntry:
+        """Registra una acción que cambia el estado pero **no tiene una entidad como sujeto**.
+
+        `mutate()` siempre apunta a algo —una persona, una casa, el fuego— y si no lo encuentra
+        se rinde con un warning. Pero hay acciones del mando que son reales y no van contra una
+        ficha concreta: vaciar el tablero de llamadas es la primera. Sin esto, el timeline
+        tendría un agujero donde desaparecieron doce intentos, y «se entiende y se puede
+        intervenir» deja de cumplirse justo en la parte de intervenir.
+
+        `subject_type` queda en `"system"`: no es una colección del contrato, y por eso no toca
+        `_versions` ni el diff por entidad. Solo sube la versión y deja la entrada.
+        """
+        with self.lock:
+            self.state_version += 1
+            self.t = utcnow_iso()
+            return self._append_entry(
+                type=type,
+                subject_type="system",
+                subject_id=None,
+                before=before or {},
+                after=after or {},
+                reason=reason,
+                actor=actor,
+                trigger_event_id=None,
+                approved_by=approved_by,
+                notified=None,
+                root_event=root_event,
+            )
 
     # ------------------------------------------------------------------ LA mutación
     def mutate(

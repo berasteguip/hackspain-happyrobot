@@ -1,4 +1,4 @@
-import type { FeatureCollection, Polygon } from 'geojson'
+import type { FeatureCollection, Point, Polygon } from 'geojson'
 
 export type FireSettings = { windTowardDeg: number; windKmh: number; spreadMPerMin: number }
 export type Exposure = { level: 'danger' | 'warning' | 'clear' | 'unknown'; minute: number }
@@ -11,9 +11,63 @@ export type FireForecast = {
   initialCells: Cell[]
 }
 export const MAX_FORECAST_MIN = 120
+/** Minutos de simulación que tarda una celda en aparecer o apagarse en el mapa. Solo visual. */
+export const HEAT_BLOOM_MIN = 12
 export const EXPOSURE_LABEL = { danger: 'Peligro en el escenario', warning: 'Exposición futura simulada', clear: 'Sin afectación calculada', unknown: 'Sin evaluación' }
 export const EXPOSURE_COLOR = { danger: '#f36d69', warning: '#f3bd61', clear: '#83bedf', unknown: '#a3acb7' }
 const key = (x: number, y: number) => `${x}:${y}`
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function smoothstep(value: number) {
+  const x = clamp01(value)
+  return x * x * (3 - 2 * x)
+}
+
+function hash(x: number, y: number) {
+  const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
+  return value - Math.floor(value)
+}
+
+/** Intensidad 0–1 para pintar el frente. No cambia exposición ni rutas. */
+export function cellVisualHeat(minute: number, horizon: number) {
+  if (minute === 0) return 1
+  const age = horizon - minute
+  const bloom = smoothstep((age + HEAT_BLOOM_MIN * 0.45) / HEAT_BLOOM_MIN)
+  if (bloom <= 0) return 0
+  return bloom * (0.38 + 0.62 * smoothstep(age / 18))
+}
+
+export function forecastHeatPoints(forecast: FireForecast, horizon: number): FeatureCollection<Point> {
+  const features: FeatureCollection<Point>['features'] = []
+  const jitter = forecast.cellSizeM * 0.28
+  for (const cell of forecast.cells.values()) {
+    if (cell.minute === 0) continue
+    const heat = cellVisualHeat(cell.minute, horizon)
+    if (heat <= 0.03) continue
+    const lng = forecast.origin[0] + (cell.x + 0.5 + (hash(cell.x, cell.y) - 0.5) * 0.56) * forecast.cellSizeM / forecast.lngScale
+    const lat = forecast.origin[1] + (cell.y + 0.5 + (hash(cell.x + 4.2, cell.y + 1.8) - 0.5) * 0.56) * forecast.cellSizeM / 111320
+    const front = horizon - cell.minute < 16 ? 1 : 0
+    features.push({
+      type: 'Feature',
+      properties: { heat, front },
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+    })
+    if (heat > 0.55) {
+      features.push({
+        type: 'Feature',
+        properties: { heat: heat * 0.7, front },
+        geometry: { type: 'Point', coordinates: [
+          lng + (hash(cell.x, cell.y + 9) - 0.5) * 2 * jitter / forecast.lngScale,
+          lat + (hash(cell.x + 8, cell.y) - 0.5) * 2 * jitter / 111320,
+        ] },
+      })
+    }
+  }
+  return { type: 'FeatureCollection', features }
+}
 
 class Queue {
   items: Cell[] = []
@@ -155,24 +209,6 @@ function intersectsBox(ax: number, ay: number, bx: number, by: number, west: num
     }
   }
   return true
-}
-
-export function initialFireClearance(forecast: FireForecast, lng: number, lat: number) {
-  const px = (lng - forecast.origin[0]) * forecast.lngScale
-  const py = (lat - forecast.origin[1]) * 111320
-  const size = forecast.cellSizeM
-  let clearance = Infinity
-  for (const { x, y } of forecast.initialCells) {
-    clearance = Math.min(clearance, Math.max(x * size - px, px - (x + 1) * size, y * size - py, py - (y + 1) * size, 0))
-  }
-  return clearance
-}
-
-export function routeApproachesFire(forecast: FireForecast, coordinates: [number, number][]) {
-  if (coordinates.length < 2) return true
-  const start = initialFireClearance(forecast, ...coordinates[0])
-  const end = initialFireClearance(forecast, ...coordinates[coordinates.length - 1])
-  return !Number.isFinite(start) || end + 1 < start || routeBlocked(forecast, coordinates, 0, Math.max(0, start - forecast.cellSizeM))
 }
 
 export function routeBlocked(forecast: FireForecast, coordinates: [number, number][], horizon: number, marginM: number) {

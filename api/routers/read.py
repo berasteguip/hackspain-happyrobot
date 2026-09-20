@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Query
 
+import notify
 import planner
-from models import HouseStatus, PersonStatus
+from models import HouseStatus, PersonStatus, PositionSource, RosterEntry
 from priority import (
     explain_score,
     house_margin_min,
@@ -17,6 +20,104 @@ from settings import settings
 from state import state
 
 router = APIRouter(tags=["lectura"])
+
+
+@router.get("/api/locations")
+def api_locations() -> list[dict]:
+    """Puente para Vigía (`apps/command-center`), que lee posiciones en otra forma.
+
+    Vigía nació contra un middleware del servidor de desarrollo de Vite que vivía en
+    `vite.config.ts` y no sobrevive a `vite build`: por eso en el despliegue pedía
+    `/api/locations` y recibía un 401 del guard. En vez de tocar su frontend —que el equipo
+    está reescribiendo— se traduce aquí: mismo dato, la forma que Vigía ya sabe leer.
+
+    Solo salen las personas que **están compartiendo** (`position_source` presente). Devolver
+    también las demás pintaría 120 domicilios como si fueran gente localizada, que es
+    justo la confusión que el mapa intenta evitar.
+
+    Es un puente temporal. Lo definitivo es que Vigía lea `GET /state`, que además trae el
+    perímetro del fuego y las zonas de salida, y no solo los puntos.
+    """
+    filas: list[dict] = []
+    for person in state.people.values():
+        if not person.position_source or person.lat is None or person.lon is None:
+            continue
+        ts = _epoch_ms(person.position_updated_at)
+        if ts is None:
+            continue
+        filas.append(
+            {
+                "id": person.id,
+                "name": person.name or person.id,
+                "lng": person.lon,  # Vigía usa `lng`; el contrato, `lon`
+                "lat": person.lat,
+                "ts": ts,  # milisegundos: `mergePings` descarta lo que no sea un número finito
+                "source": "gps" if person.position_source == PositionSource.gps else "unknown",
+            }
+        )
+    return filas
+
+
+def _epoch_ms(iso: str | None) -> int | None:
+    """ISO-8601 → milisegundos. Sin fecha utilizable no hay ping que valga."""
+    if not iso:
+        return None
+    try:
+        return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+@router.get("/api/roster", response_model=list[RosterEntry])
+def api_roster() -> list[RosterEntry]:
+    """El censo que Vigía pinta y rodea: TODA la gente del escenario, no solo la localizada.
+
+    `/api/locations` solo devuelve a quien está compartiendo posición, que es lo correcto para
+    no pintar 120 domicilios como si fueran gente localizada. Pero para **rodear un círculo y
+    llamar** hace falta lo contrario: los puntos que todavía no han contestado son justo los
+    que hay que llamar. Por eso son dos endpoints y no uno.
+
+    **El teléfono no sale entero.** Este endpoint es público (Vigía corre en el navegador de
+    alguien, sin clave), así que devolver la lista completa de móviles del escenario sería
+    publicarla. Va la cola enmascarada, que es lo único que el operador necesita para
+    distinguir dos fichas, y `dialable`, que le dice si ese punto sonaría o lo pararía el
+    cerrojo. Marcar de verdad exige `x-api-key` y ocurre en `POST /calls/dispatch`.
+    """
+    filas: list[RosterEntry] = []
+    for person in state.people.values():
+        casa = state.houses.get(person.house_id or "")
+        ultima = state.last_call(person.id)
+        filas.append(
+            RosterEntry(
+                id=person.id,
+                name=person.name or person.id,
+                phone=_mask_phone(person.phone),
+                lng=person.lon,  # Vigía usa `lng`; el contrato, `lon`
+                lat=person.lat,
+                locality=(casa.village if casa else None) or state.scenario,
+                address=casa.address if casa else None,
+                vulnerable=bool(casa.vulnerable) if casa else False,
+                dialable=bool(person.phone),
+                status=person.status,
+                call_state=ultima.state if ultima else None,
+                location_source=person.position_source,
+                # Lo que el agente concluyó al colgar (`POST /calls/observation`). Es lo que
+                # tiñe el punto: sin llamada no hay color, y eso también es información.
+                triage_level=person.triage.level if person.triage else None,
+                triage_reason=person.triage.reason if person.triage else None,
+                triage_confidence=person.triage.confidence if person.triage else None,
+                triage_at=person.triage.at if person.triage else None,
+            )
+        )
+    return sorted(filas, key=lambda f: f.id)
+
+
+def _mask_phone(phone: str | None) -> str | None:
+    """`+34600990001` → `··· 001`. Suficiente para no confundir dos fichas, inútil para marcar."""
+    if not phone:
+        return None
+    cola = "".join(ch for ch in phone if ch.isdigit())[-3:]
+    return f"··· {cola}" if cola else None
 
 
 @router.get("/health")

@@ -21,9 +21,14 @@ from models import (
     Fire,
     FireEvent,
     FireHistoryEntry,
+    House,
+    HouseStatus,
+    Person,
     PersonStatus,
     PositionEvent,
     PositionSource,
+    RegisterPerson,
+    RegisterResponse,
     ResetRequest,
     RoadClosure,
     RoadClosureEvent,
@@ -35,6 +40,7 @@ from models import (
     parse_iso,
     utcnow_iso,
 )
+from notify import normalize_phone
 from routers._common import write_response
 from settings import settings
 from state import state
@@ -167,6 +173,202 @@ def post_exit_threatened(event: ExitThreatenedEvent) -> WriteResponse:
     state.mark_route_dirty(afectados)
     decisiones = [primera] + planner.run_planner(state, trigger_event_id=state.last_event_id)
     return write_response(decisiones, event="exit-threatened")
+
+
+# Punto del escenario que se hace coincidir con la persona real al anclar. Es la referencia
+# del frontend (ETSIT en el escenario de Madrid) para que ambos mundos se desplacen igual.
+ANCHOR_REF = {"ucm-madrid": (40.452776, -3.725842)}
+
+
+def _shifted_polygon(poly, dlat: float, dlon: float):
+    return poly.model_copy(
+        update={"coordinates": [[[x + dlon, y + dlat] for x, y in ring] for ring in poly.coordinates]}
+    )
+
+
+def reanchor_world(lat: float, lon: float, keep_ids: set[str]) -> tuple[float, float]:
+    """Desplaza TODO el escenario para que rodee a `(lat, lon)`: fuego, casas, vecinos
+    sintéticos, salidas, sectores y patrullas. Las personas con GPS real (`keep_ids`) no se
+    tocan: son de verdad. Devuelve el desplazamiento aplicado en grados."""
+    ref = state.anchor or ANCHOR_REF.get(state.scenario) or (
+        state.scenario_meta.get("map", {}).get("center_lat"),
+        state.scenario_meta.get("map", {}).get("center_lon"),
+    )
+    if ref[0] is None or ref[1] is None:
+        return 0.0, 0.0
+    dlat, dlon = lat - ref[0], lon - ref[1]
+    if abs(dlat) < 1e-6 and abs(dlon) < 1e-6:
+        state.anchor = (lat, lon)
+        return 0.0, 0.0
+
+    def mover(coleccion, subject_type: str, extra=None):
+        for entidad in list(coleccion.values()):
+            if entidad.id in keep_ids or entidad.lat is None or entidad.lon is None:
+                continue
+            cambios = {"lat": entidad.lat + dlat, "lon": entidad.lon + dlon}
+            if extra:
+                cambios.update(extra(entidad))
+            state.mutate(
+                "mundo del ensayo desplazado",
+                type=DecisionType.person_located,
+                subject_type=subject_type,
+                subject_id=entidad.id,
+                changes=cambios,
+                log_decision=False,
+            )
+
+    with state.lock:
+        mover(state.houses, "house")
+        mover(
+            state.people,
+            "person",
+            lambda p: {
+                "trajectory": [tp.model_copy(update={"lat": tp.lat + dlat, "lon": tp.lon + dlon}) for tp in p.trajectory],
+                "assigned_route": None,
+            },
+        )
+        mover(state.safe_zones, "safe_zone")
+        mover(state.patrols, "patrol")
+        for sector in list(state.sectors.values()):
+            if sector.polygon:
+                state.mutate(
+                    "mundo del ensayo desplazado",
+                    type=DecisionType.person_located,
+                    subject_type="sector",
+                    subject_id=sector.id,
+                    changes={"polygon": _shifted_polygon(sector.polygon, dlat, dlon)},
+                    log_decision=False,
+                )
+        if state.fire is not None:
+            fuego = state.fire.model_copy(
+                update={
+                    "perimeter": _shifted_polygon(state.fire.perimeter, dlat, dlon),
+                    "history": [h.model_copy(update={"perimeter": _shifted_polygon(h.perimeter, dlat, dlon)}) for h in state.fire.history],
+                    "updated_at": utcnow_iso(),
+                }
+            )
+            state.mutate(
+                f"Escenario de ensayo desplazado {haversine_m(ref[0], ref[1], lat, lon) / 1000:.1f} km "
+                "para rodear a la persona registrada. Fuego, vecinos y salidas son FICTICIOS.",
+                type=DecisionType.fire_updated,
+                subject_type="fire",
+                entity=fuego,
+                root_event=True,
+            )
+        state._route_cache.clear()
+        state.dirty_all_routes = True
+        state.anchor = (lat, lon)
+    return dlat, dlon
+
+
+@router.get("/api/anchor")
+def api_anchor() -> dict:
+    """Dónde está anclado el mundo del ensayo (público: lo lee el mapa para desplazar su escenario)."""
+    if state.anchor is None:
+        return {"anchored": False}
+    return {"anchored": True, "lat": state.anchor[0], "lon": state.anchor[1]}
+
+
+@router.post("/people/register", response_model=RegisterResponse)
+def post_register(body: RegisterPerson) -> RegisterResponse:
+    """Alguien abre el enlace, da su teléfono con prefijo y comparte su GPS: entra en el mapa.
+
+    Público (corre en el navegador de esa persona, sin clave). Idempotente por teléfono: la misma
+    persona que vuelve a abrir el enlace actualiza su posición, no se duplica. Su teléfono pasa a
+    la lista blanca de llamadas (`REGISTER_AUTO_ALLOW`): apuntarse es el consentimiento.
+    """
+    telefono = normalize_phone(body.phone)
+    digitos = telefono[1:]
+    if not telefono.startswith("+") or not digitos.isdigit() or not 8 <= len(digitos) <= 15:
+        raise HTTPException(status_code=422, detail="teléfono en formato internacional, p. ej. +34600000000")
+    if not (-90 <= body.lat <= 90 and -180 <= body.lon <= 180):
+        raise HTTPException(status_code=422, detail="coordenadas fuera de rango")
+
+    nombre = (body.name or "").strip()[:80] or None
+    t = utcnow_iso()
+    person = state.person_by_phone(telefono)
+    created = person is None
+    if person is None:
+        casa = House(
+            id=state.next_id("h"),
+            address="Registro desde el enlace",
+            village="Registro voluntario",
+            lat=body.lat,
+            lon=body.lon,
+            phone=telefono,
+            residents_expected=1,
+            status=HouseStatus.pending,
+        )
+        state.mutate(
+            f"Casa {casa.id} dada de alta por registro voluntario desde el enlace.",
+            type=DecisionType.person_located,
+            subject_type="house",
+            subject_id=casa.id,
+            entity=casa,
+            root_event=True,
+        )
+        person = Person(
+            id=state.next_id("p"),
+            house_id=casa.id,
+            name=nombre,
+            phone=telefono,
+            lat=body.lat,
+            lon=body.lon,
+            position_source=PositionSource.gps,
+            position_updated_at=t,
+            trajectory=[TrajectoryPoint(lat=body.lat, lon=body.lon, t=t)],
+            household_size=1,
+            has_smartphone=True,
+            consent_position=True,
+            status=PersonStatus.unknown,
+            notes="registrada desde el enlace",
+        )
+        entrada = state.mutate(
+            f"{nombre or person.id} se registra desde el enlace y comparte su GPS.",
+            type=DecisionType.person_located,
+            subject_type="person",
+            subject_id=person.id,
+            entity=person,
+            root_event=True,
+        )
+    else:
+        cambios = {
+            "lat": body.lat,
+            "lon": body.lon,
+            "position_source": PositionSource.gps,
+            "position_updated_at": t,
+            "consent_position": True,
+            "trajectory": list(person.trajectory)[-59:] + [TrajectoryPoint(lat=body.lat, lon=body.lon, t=t)],
+        }
+        if nombre:
+            cambios["name"] = nombre
+        entrada = state.mutate(
+            f"{nombre or person.name or person.id} vuelve a abrir el enlace y actualiza su GPS.",
+            type=DecisionType.person_located,
+            subject_type="person",
+            subject_id=person.id,
+            changes=cambios,
+            root_event=True,
+        )
+    state.registered_phones.add(telefono)
+    state.last_event_id = entrada.id if entrada else state.last_event_id
+    if body.anchor:
+        reales = {p.id for p in state.people.values() if p.position_source == PositionSource.gps}
+        reanchor_world(body.lat, body.lon, reales)
+    state.mark_route_dirty([person.id])
+    planner.run_planner(state, trigger_event_id=state.last_event_id)
+
+    base = settings.public_base_url or settings.api_base_url
+    oculto = f"{telefono[:3]}···{telefono[-3:]}"
+    return RegisterResponse(
+        person_id=person.id,
+        name=person.name,
+        phone=oculto,
+        created=created,
+        map_url=f"{base}/?p={person.id}",
+        gps_url=f"{base}/gps/{person.id}",
+        anchor={"lat": state.anchor[0], "lon": state.anchor[1]} if state.anchor else None,
+    )
 
 
 @router.post("/positions", response_model=WriteResponse)

@@ -1,0 +1,10 @@
+.git
+.claude
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+apps/command-center/dist
+docs/_inbox
+.env
+.env.*

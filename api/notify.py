@@ -10,6 +10,7 @@ lo demás.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,48 +32,207 @@ class NotifyResult:
     detail: str
     at: str = field(default_factory=utcnow_iso)
     payload: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None
+    blocked: bool = False
 
     def as_notified(self) -> Notified:
         return Notified(person_id=self.person_id, channel=self.channel, at=self.at)
 
 
-def _webhook_headers() -> dict[str, str]:
+def _header_value(key: str) -> str | bytes:
+    """Una cabecera HTTP no es texto: es una secuencia de bytes latin-1.
+
+    `httpx` codifica los valores como ASCII y revienta con un `UnicodeEncodeError` de los que
+    no dicen nada (`'ascii' codec can't encode character '\\xf1' in position 6`) en cuanto la
+    clave lleva una eñe. Y la mitad del mundo la manda en UTF-8 y la otra mitad en latin-1, así
+    que una clave con acentos casa en el navegador y falla en `curl` **contra el mismo
+    servidor**. Aquí se manda en latin-1, que es lo que dice el RFC 9110 y lo que hace `fetch`.
+
+    Una clave con caracteres no ASCII sigue siendo mala idea: esto la hace funcionar, no la
+    hace correcta.
+    """
+    try:
+        key.encode("ascii")
+        return key
+    except UnicodeEncodeError:
+        log.warning(
+            "la clave de HappyRobot lleva caracteres no ASCII: se manda en latin-1. "
+            "Cámbiala por una solo-ASCII, o casará en unos clientes y en otros no."
+        )
+        return key.encode("latin-1", errors="replace")
+
+
+def _webhook_headers() -> dict[str, str | bytes]:
     """Cabeceras del POST al workflow de HappyRobot.
 
-    Hay DOS esquemas de autenticación en juego y cruzarlos es un fallo silencioso de 401:
-    HappyRobot usa `Authorization: Bearer sk_live_...` en su plataforma, y `x-api-key` es lo que
-    usa NUESTRA API con quien la llama. Como `HR_WORKFLOW_WEBHOOK` puede apuntar a la plataforma
-    (Bearer) o a un receptor propio de pruebas (x-api-key), mandamos la clave por la vía que
-    corresponde a su forma: si empieza por `sk_`, es de HappyRobot y va como Bearer.
-    NO VERIFICADO qué espera exactamente un webhook trigger suyo → preguntar en el stand
-    (`docs/02-happyrobot/05-preguntas-stand.md`). Mientras no se sepa, mandar las dos no rompe nada:
-    un receptor ignora la cabecera que no entiende.
+    Hay DOS secretos y van en DIRECCIONES CONTRARIAS. Cruzarlos no es un 401: es peor.
+
+    * `HR_API_KEY` autentica **a nosotros frente a HappyRobot**. Es la única que sale de aquí.
+    * `HR_SHARED_SECRET` autentica **a quien llama a nuestra API** (`x-api-key` del guard de
+      `main.py`). Es NUESTRA puerta. Mandarla en un POST saliente la deja escrita en los logs
+      de run de un tercero —comprobado: aparece literal en el output del nodo del webhook—, y
+      cualquiera con acceso a ese workspace se lleva la llave de nuestra API. Por eso ya no hay
+      respaldo de una a la otra, aunque `HR_API_KEY` esté vacía.
+
+    Si el trigger no tiene autenticación configurada —el caso del `incoming_hook` de ahora—,
+    no hace falta mandar nada: se va sin cabecera de auth y entra igual.
     """
-    key = settings.hr_api_key or settings.hr_shared_secret
-    headers = {"Content-Type": "application/json"}
-    if key:
-        if key.startswith("sk_"):
-            headers["Authorization"] = f"Bearer {key}"
-        headers["x-api-key"] = key
+    headers: dict[str, str | bytes] = {"Content-Type": "application/json"}
+    key = settings.hr_api_key
+    if not key:
+        return headers
+    valor = _header_value(key)
+    # `sk_...` es una clave de plataforma de HappyRobot y va como Bearer; una clave de trigger
+    # va en `x-api-key`. Sin saber cuál es, mandar las dos no rompe: se ignora la que sobra.
+    if key.startswith("sk_"):
+        headers["Authorization"] = (
+            f"Bearer {key}" if isinstance(valor, str) else b"Bearer " + valor
+        )
+    headers["x-api-key"] = valor
     return headers
 
 
-def _post_to_happyrobot(payload: dict, client: httpx.Client | None = None) -> tuple[bool, str]:
-    """POST al webhook del workflow. Devuelve (ok, detalle)."""
+def normalize_phone(phone: str | None) -> str:
+    """E.164 sin espacios, guiones ni paréntesis. Comparar teléfonos «a ojo» falla."""
+    if not phone:
+        return ""
+    return "".join(ch for ch in phone if ch.isdigit() or ch == "+")
+
+
+def phone_allowed(phone: str | None) -> bool:
+    """Cerrojo opcional del ensayo con el enlace: con `REGISTER_ONLY_CALLS` solo suena quien se
+    registró él mismo desde `/track`. Apagado (por defecto) no filtra nada."""
+    if not settings.register_only_calls:
+        return True
+    from state import state  # import tardío: state importa settings, no al revés
+
+    return normalize_phone(phone) in state.registered_phones
+
+
+
+
+def _run_id_from(resp: httpx.Response) -> str | None:
+    """HappyRobot devuelve el id del run; el nombre del campo no está fijado en su doc."""
+    try:
+        cuerpo = resp.json()
+    except Exception:
+        return None
+    if not isinstance(cuerpo, dict):
+        return None
+    for clave in ("run_id", "runId", "id"):
+        valor = cuerpo.get(clave)
+        if isinstance(valor, str) and valor:
+            return valor
+    anidado = cuerpo.get("run") or cuerpo.get("data")
+    if isinstance(anidado, dict):
+        for clave in ("run_id", "runId", "id"):
+            valor = anidado.get(clave)
+            if isinstance(valor, str) and valor:
+                return valor
+    return None
+
+
+def _post_to_happyrobot(
+    payload: dict, client: httpx.Client | None = None
+) -> tuple[bool, str, str | None]:
+    """POST al webhook del workflow. Devuelve (ok, detalle, run_id)."""
     url = settings.hr_workflow_webhook
     if not url:
-        return False, "HR_WORKFLOW_WEBHOOK sin configurar"
+        return False, "HR_WORKFLOW_WEBHOOK sin configurar", None
     own_client = client is None
-    c = client or httpx.Client(timeout=8.0)
+    c = client or httpx.Client(timeout=15.0)
     try:
         resp = c.post(url, json=payload, headers=_webhook_headers())
         ok = resp.status_code < 400
-        return ok, f"HTTP {resp.status_code}"
+        if ok:
+            return True, f"HTTP {resp.status_code}", _run_id_from(resp)
+        # El cuerpo del error es lo único que distingue «trigger equivocado» de «clave mala».
+        return False, f"HTTP {resp.status_code}: {resp.text[:180]}", None
     except Exception as exc:
-        return False, f"error de red: {exc}"
+        return False, f"error de red: {exc}", None
     finally:
         if own_client:
             c.close()
+
+
+def trigger_payload(
+    person: Person,
+    *,
+    channel: Channel = Channel.call,
+    reason: str = "",
+    text: str | None = None,
+    extra: dict | None = None,
+) -> dict:
+    """El cuerpo que recibe el trigger del workflow de HappyRobot.
+
+    Va en DOS juegos de claves a propósito, y no es descuido:
+
+    * **MAYÚSCULAS** (`NUMERO_TELEFONO`, `PERSONA_NOMBRE`, …) son los nombres que el trigger
+      del workflow «Vigía · triaje completo» declara en su lista `params`, y los que su prompt
+      interpola. Si estos no llegan, el agente saluda con huecos vacíos («le llama el asistente
+      automático de   por el incendio en  »).
+    * **minúsculas** (`person_id`, `phone`, …) son las que ya usaba este repo y las que lee
+      cualquier receptor de pruebas. Un webhook ignora sin quejarse las claves que no espera,
+      así que mandar las dos cuesta cero y ahorra una tarde de depuración cuando alguien
+      renombra un parámetro en la plataforma.
+
+    `PRIOR_ZONA` / `PRIOR_NIVEL` son la ESTIMACIÓN que lleva el agente al descolgar, no un
+    hecho: el prompt le exige que la persona al teléfono gane sobre esto.
+    """
+    base = settings.public_base_url or settings.api_base_url
+    sector = person.sector_id or ""
+    nivel = _prior_level(person)
+    return {
+        # --- contrato del trigger de HappyRobot ---
+        "NUMERO_TELEFONO": person.phone or "",
+        "PERSONA_ID": person.id,
+        "PERSONA_NOMBRE": person.name or "",
+        "CAMPANA_ORGANISMO": settings.campaign_org,
+        "CAMPANA_ZONA": settings.campaign_zone,
+        "PRIOR_ZONA": sector,
+        "PRIOR_NIVEL": nivel,
+        "ORDEN_AUTORIDAD": settings.authority_order,
+        # --- lo que exige el cerrojo del propio workflow ---
+        # `DEMO_MODE` es el freno de mano del lado de HappyRobot: su nodo de autorización se
+        # niega a marcar si la petición no viene declarada como simulacro. Ya NO viaja una
+        # lista blanca: desde la v9 el workflow no filtra por número, porque el destino de
+        # `llamar_a_persona` lo dicta el vecino durante la llamada y no puede estar en una
+        # lista escrita de antemano.
+        "DEMO_MODE": "true" if settings.demo_mode else "false",
+        # El número al que llama `llamar_a_organismo_oficial`. Es fijo y lo pone la
+        # configuración: el agente no lo elige ni se lo pregunta a la persona.
+        "NUMERO_ORGANISMO": settings.demo_org_phone,
+        # --- claves propias del repo ---
+        "action": "call" if channel == Channel.call else "sms",
+        "person_id": person.id,
+        "name": person.name,
+        "phone": person.phone,
+        "reason": reason,
+        "text": text,
+        # para que el agente de voz pueda leer la instrucción en vivo sin salir de la plataforma
+        "instructions_url": f"{base}/instructions/{person.id}",
+        "gps_link": f"{base}/gps/{person.id}",
+        **(extra or {}),
+    }
+
+
+def _prior_level(person: Person) -> str:
+    """Color que el agente lleva de partida, derivado de los minutos hasta el frente.
+
+    Los cortes salen de la clasificación del prompt del agente (rojo/naranja/amarillo/verde).
+    Es deliberadamente grosero: es una estimación geográfica, y el guion de la llamada manda
+    al agente rebajarla en cuanto la persona desmienta lo que traía.
+    """
+    minutos = person.minutes_to_front
+    if minutos is None:
+        return "amarillo"  # sin dato no se tranquiliza a nadie, pero tampoco se alarma
+    if minutos <= 15:
+        return "rojo"
+    if minutos <= 45:
+        return "naranja"
+    if minutos <= 120:
+        return "amarillo"
+    return "verde"
 
 
 def _dispatch(
@@ -86,19 +246,9 @@ def _dispatch(
     client: httpx.Client | None = None,
     trigger_event_id: str | None = None,
 ) -> NotifyResult:
-    payload = {
-        "action": "call" if channel == Channel.call else "sms",
-        "person_id": person.id,
-        "name": person.name,
-        "phone": person.phone,
-        "reason": reason,
-        "text": text,
-        # para que el agente de voz pueda leer la instrucción en vivo sin salir de la plataforma
-        "instructions_url": f"{settings.public_base_url or settings.api_base_url}"
-        f"/instructions/{person.id}",
-        **(extra or {}),
-    }
+    payload = trigger_payload(person, channel=channel, reason=reason, text=text, extra=extra)
 
+    run_id = None
     if not settings.allow_real_calls:
         simulated = True
         ok = True
@@ -115,15 +265,37 @@ def _dispatch(
         ok = False
         detail = "sin teléfono en la ficha"
         log.warning("no se puede contactar a %s: sin teléfono", person.id)
+    elif not phone_allowed(person.phone):
+        simulated = True
+        ok = True
+        detail = f"BLOQUEADO: {person.phone} no se registró desde el enlace (REGISTER_ONLY_CALLS)"
+        log.warning("[BLOQUEADO] llamada a %s (%s): no registrado", person.name or person.id, person.phone)
+    elif settings.secret_is_public:
+        # El cerrojo vive AQUÍ y no solo en `/calls/dispatch` porque el planner marca por su
+        # cuenta —convoy roto, persona en riesgo, instrucción que cambia— sin pasar por el
+        # despachador. Esa es precisamente la vía que dispara sin que nadie esté mirando, así
+        # que dejarla fuera del cerrojo lo convertía en decorativo.
+        simulated = True
+        ok = True
+        detail = (
+            "BLOQUEADO: HR_SHARED_SECRET es un valor de ejemplo del repo, y el repo es público. "
+            "Cámbialo (`openssl rand -hex 32`) antes de marcar de verdad."
+        )
+        log.error(
+            "[BLOQUEADO] %s a %s: la clave de esta API está publicada en el repo",
+            "llamada" if channel == Channel.call else "SMS",
+            person.name or person.id,
+        )
     else:
         simulated = False
-        ok, detail = _post_to_happyrobot(payload, client=client)
+        ok, detail, run_id = _post_to_happyrobot(payload, client=client)
         log.info(
-            "[REAL] %s a %s · %s · %s",
+            "[REAL] %s a %s · %s · %s%s",
             "llamada" if channel == Channel.call else "SMS",
             person.phone,
             reason,
             detail,
+            f" · run {run_id}" if run_id else "",
         )
 
     result = NotifyResult(
@@ -133,6 +305,8 @@ def _dispatch(
         person_id=person.id,
         detail=detail,
         payload=payload,
+        run_id=run_id,
+        blocked=detail.startswith("BLOQUEADO"),
     )
 
     if state is not None:
@@ -151,7 +325,7 @@ def _record(
 ) -> None:
     """Una llamada/SMS es una acción del sistema: va al decision_log con su motivo."""
     tipo = DecisionType.call_placed if result.channel == Channel.call else DecisionType.sms_sent
-    marca = "simulada" if result.simulated else "real"
+    marca = "bloqueada" if result.blocked else "simulada" if result.simulated else "real"
     verbo = "Llamada" if result.channel == Channel.call else "SMS"
     estado = "enviada" if result.ok else f"FALLÓ ({result.detail})"
     changes: dict[str, Any] = {}

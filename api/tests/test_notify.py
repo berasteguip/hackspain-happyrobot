@@ -32,7 +32,6 @@ def _persona() -> Person:
     return Person(id="p-tel", name="Antonio Prieto", phone="+34600992001")
 
 
-
 def test_sin_la_variable_de_entorno_no_se_llama_a_nadie(state, cliente_espia):
     cliente, enviadas = cliente_espia
     assert settings.allow_real_calls is False, "el entorno de test NUNCA llama de verdad"
@@ -151,3 +150,70 @@ def test_sin_webhook_configurado_falla_pero_no_explota(state, cliente_espia, mon
     # y el fallo también se registra: el mando tiene que ver que no se pudo avisar
     assert "FALLÓ" in state.decision_log[-1].reason
 
+
+# --------------------------------------------------------------------------------------
+# Las dos claves van en direcciones contrarias y no se cruzan
+# --------------------------------------------------------------------------------------
+
+
+def test_el_secreto_de_nuestra_api_no_sale_hacia_happyrobot(monkeypatch):
+    """`HR_SHARED_SECRET` es la llave de NUESTRA puerta.
+
+    Si viaja en un POST saliente queda escrita en los logs de run de un tercero, y con ella
+    cualquiera con acceso a ese workspace entra en nuestra API. Ya pasó una vez: apareció
+    literal en el output del nodo del webhook.
+    """
+    monkeypatch.setattr(settings, "hr_api_key", "")
+    monkeypatch.setattr(settings, "hr_shared_secret", "la-llave-de-nuestra-puerta")
+
+    cabeceras = notify._webhook_headers()
+
+    assert "x-api-key" not in cabeceras
+    assert "Authorization" not in cabeceras
+    assert "la-llave-de-nuestra-puerta" not in str(cabeceras)
+
+
+def test_una_clave_con_enes_se_manda_en_latin1_y_no_revienta(monkeypatch):
+    """`httpx` codifica las cabeceras como ASCII y una eñe lo tumba con un error críptico."""
+    monkeypatch.setattr(settings, "hr_api_key", "clave-con-eñe")
+
+    cabeceras = notify._webhook_headers()
+
+    assert cabeceras["x-api-key"] == "clave-con-eñe".encode("latin-1")
+
+
+def test_una_clave_de_plataforma_va_tambien_como_bearer(monkeypatch):
+    monkeypatch.setattr(settings, "hr_api_key", "sk_live_abc123")
+
+    cabeceras = notify._webhook_headers()
+
+    assert cabeceras["Authorization"] == "Bearer sk_live_abc123"
+    assert cabeceras["x-api-key"] == "sk_live_abc123"
+
+
+def test_sin_clave_de_happyrobot_no_se_manda_cabecera_de_auth(monkeypatch):
+    """El `incoming_hook` de ahora no tiene auth configurada: entra sin cabecera."""
+    monkeypatch.setattr(settings, "hr_api_key", "")
+    monkeypatch.setattr(settings, "hr_shared_secret", "")
+
+    assert notify._webhook_headers() == {"Content-Type": "application/json"}
+
+
+def test_el_planner_tampoco_marca_con_la_clave_publica(state, cliente_espia, monkeypatch):
+    """El planner llama por su cuenta sin pasar por `/calls/dispatch`.
+
+    Si el cerrojo de la clave pública viviera solo en el despachador, la vía que dispara sin
+    que nadie mire —convoy roto, persona en riesgo— se lo saltaría. Sería decorativo.
+    """
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
+    monkeypatch.setattr(settings, "hr_shared_secret", "cambiame-por-algo-largo")
+
+    persona = _persona()
+    state.people[persona.id] = persona
+    resultado = notify.place_call(persona, "el planner la ve en riesgo", state, client=cliente)
+
+    assert enviadas == [], "no puede salir una petición con la clave publicada"
+    assert resultado.blocked is True
+    assert "público" in resultado.detail

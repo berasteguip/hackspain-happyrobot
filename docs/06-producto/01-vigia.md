@@ -69,12 +69,14 @@ muestran como desconocidas. El endpoint de desarrollo no autentica identidades y
 no debe exponerse como servicio de seguimiento de producción.
 
 **Revisión visual del fuego (2026-09-19):** el polígono de superficie y su contorno
-anteriores ya no se dibujan. La representación activa es una huella roja de celdas
-sintéticas de ~~100 m~~ **25 m** (refinadas el 2026-09-19), con manchas separadas y huecos interiores, inspirada en la
-captura aportada por el equipo. El tamaño de celda es una decisión visual de la
-demo, no la resolución de un instrumento NASA. La propagación y los puntos térmicos
-quedan ocultos inicialmente; pueden activarse desde Capas. La fuente externa FIRMS
-continúa separada y no se utiliza para inventar superficies quemadas.
+anteriores ya no se dibujan. ~~La representación activa es una huella roja de celdas
+sintéticas de 100 m / 25 m.~~ **Ajuste 2026-09-19 noche:** el avance ya no pinta
+rectángulos ni bandas 30/60/120. El mapa usa un heatmap (humo + brasa + llama) cuya
+intensidad florece unos minutos de simulación alrededor de cada celda, para que el
+frente se lea como fuego y no como teselas. El modelo de exposición y rutas sigue
+siendo la rejilla de `fire-model.ts`; el floreo es solo visual. El tamaño de celda
+es una decisión de la demo, no la resolución de un instrumento NASA. FIRMS sigue
+separada y no inventa superficies quemadas.
 
 El último ajuste visual del 2026-09-19 sustituye las agrupaciones elípticas por una
 masa principal alargada y ramificada con huecos de tamaños variables y fragmentos
@@ -247,15 +249,23 @@ del proveedor. No se realizaron comunicaciones a centros.
 
 ## Viento visible y evacuación coherente — revisión 2026-09-19
 
+**Parcialmente sustituido el 2026-09-19:** la revisión «Campañas por círculo» de
+abajo cambia la selección de destinatarios, los colores de respuesta, el filtro de
+alejamiento y las posiciones mostradas de hospital/bomberos. Se conserva el historial.
+
 Petición del equipo del 2026-09-19: sustituir los controles manuales por una capa
-visual de viento on/off y un botón «Simular incendio dentro de 1 hora», mostrar los
+visual de viento on/off y un botón «Simular incendio dentro de 1 hora» ~~(obsoleto
+2026-09-19 noche: la tarjeta y el panel de propagación usan `+1 h` / `NE` /
+`Inicial` / `Viento`, sin copy de demo)~~, mostrar los
 centros desde el arranque, usar azul para todas las personas y evitar trayectos
 que las acerquen al fuego.
 
 - La app abre con el incendio inicial, sin proyección. La capa de viento muestra
-  trazos animados en la dirección del escenario, adaptados al bearing del mapa.
-  On/off controla solo su visibilidad; ocultar la capa no elimina el viento del
-  cálculo. Con `prefers-reduced-motion` se muestran flechas estáticas.
+  rachas de partículas con estela, en la dirección del escenario y adaptadas al
+  bearing del mapa. Más viento = racha más larga y brillante (referencia visual:
+  firemap.live; no es GFS). On/off controla solo su visibilidad; ocultar la
+  capa no elimina el viento del cálculo. Con `prefers-reduced-motion` las
+  rachas quedan estáticas.
 - El botón calcula/muestra la extensión a +60 min y permite volver al inicio.
   Se mantienen **parámetros ficticios prefijados**, no meteorología en vivo:
   viento hacia SO (225°), 20 km/h, avance base 5 m/min y margen de demo 150 m.
@@ -305,8 +315,274 @@ sliders. Tras avanzar 75 segundos de llamadas en el navegador, los contactos de
 El Arenal sin ruta admisible permanecen en su posición, sin desplazarse hacia el
 fuego. No se han validado aquí carreteras ni meteorología reales.
 
+## Campañas por círculo y centros reubicados — revisión 2026-09-19
+
+**Actualización posterior del 2026-09-19:** la precarga de corredores y la exclusión
+estática de toda la proyección futura se sustituyen por «Rutas individuales y tiempo
+de paso», descrito abajo. El resto del flujo de campaña se conserva.
+
+El equipo confirma **demo completa en interfaz** y **solo carreteras reales** el
+2026-09-19. Esta revisión afecta al CECOP de Gredos; no conecta sus contactos con
+HappyRobot ni unifica sus IDs con el backend de Zamora. `api/notify.py` y sus controles
+de llamadas reales no se modifican.
+
+- **Selección:** «Zona» permite dibujar un círculo arrastrando desde su centro con
+  ratón o pantalla táctil. Se muestran el radio y las personas seleccionadas antes
+  de lanzar ninguna llamada. Escape o «Borrar selección» cancela la selección;
+  también existe una selección por botón del entorno del incendio (3 km).
+  El gesto admite radios de 50 m a 20 km y usa distancia geodésica para incluir puntos.
+- **Campaña:** solo se encolan contactos ficticios pendientes de la selección.
+  La lista de IDs se conserva aunque los puntos se muevan o se borre el círculo.
+  Nuevas selecciones pueden añadir contactos sin duplicar los ya encolados. Los
+  pings de sesiones GPS no reciben llamadas ni desplazamientos simulados.
+- Los 300 contactos parten sin llamar; se eliminan las 12 respuestas precargadas de
+  la primera demo. Las llamadas avanzan en oleadas de cuatro, con pausa/reanudación
+  y contadores de respuestas, movimiento, ausencia de respuesta y falta de ruta.
+- **Respuesta y movimiento:** azul antes de responder, amarillo en llamada y verde
+  al contestar; el verde confirma respuesta de demo, no llegada a salvo. El contorno
+  de selección queda bajo el punto para no ocultar su estado. La ausencia de respuesta
+  no produce movimiento. Respuesta con consentimiento y ruta disponible permite
+  simular la salida; rechazo o falta de ruta quedan explicados en la ficha.
+- **Refugios:** se precargan corredores de Mapbox, pero la asignación individual se
+  hace tras responder y consentir. Entre alternativas admisibles de la localidad se
+  escoge la menor distancia restante por carretera, incluyendo el acceso aproximado.
+  La comparación manual sigue ofreciendo tiempos del proveedor.
+- **Corrección del bloqueo excesivo:** se retira la exigencia de que todo el trayecto
+  aumente su distancia al fuego. Un refugio puede estar geométricamente más cerca
+  del fuego que el origen y seguir fuera de la zona expuesta. Se mantiene la exclusión
+  de destinos, carreteras y accesos que intersecten la huella/proyección y su margen,
+  evaluando al menos la próxima hora. No se inventan rutas si Mapbox falla. Por tanto,
+  contestar no garantiza que toda persona tenga un recorrido admisible en esta demo.
+- **Centros próximos:** hospital y bomberos se muestran en posiciones ficticias de
+  Gredos, rotuladas **DEMO**, por petición explícita del equipo. Hospital:
+  40.215, -5.075. ~~Bomberos: 40.208, -5.148~~ **(obsoleto 2026-09-19 noche: el
+  parque de demo se acerca al hospital, 40.2122, -5.0788, ~450 m)**. Se conservan
+  sus coordenadas originales de Talavera en `realLocation` y las fuentes originales,
+  diferenciadas de la posición mostrada. El centro de salud de Arenas no se desplaza.
+
+Datos de interfaz locales (no se incorporan al contrato HTTP de `api/`): `CallArea`
+contiene `lng`, `lat`, `radiusM`; la campaña conserva IDs de contactos y tiempos de
+llamada del simulador existente. `ResponseCenter.locationSource` distingue `osm`
+de `demo`, y `realLocation` conserva la referencia real de los centros reubicados.
+
+Fuentes: petición y respuestas del equipo del 2026-09-19; código local en
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx),
+[simulation.ts](../../apps/command-center/src/simulation.ts),
+[routing.ts](../../apps/command-center/src/routing.ts),
+[scenario.ts](../../apps/command-center/src/scenario.ts),
+[response.ts](../../apps/command-center/src/response.ts) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs).
+
+Verificación del 2026-09-19: **24 tests pasan**, build correcto y lint sin avisos.
+Pruebas en Chrome headless con Mapbox/Directions mockeados: círculo por arrastre,
+selección táctil en móvil, cancelación con Escape, destinatarios congelados,
+pausa/reanudación, colores y referencias de los centros reubicados. En una selección
+de 156 contactos de Arenas, tras 35 s simulados hubo 40 respuestas y 15 personas
+que habían cambiado de posición; los no contactados y todos los ajenos a la selección
+permanecieron inmóviles. Son resultados de un test con geometrías de proveedor
+mockeadas, no una validación de itinerarios reales. No se enviaron llamadas externas.
+
+## Rutas individuales y tiempo de paso — corrección 2026-09-19
+
+Tras el aviso del equipo de que los contactos respondían pero no se movían, se
+reprodujeron dos bloqueos en código:
+
+1. Un corredor compartido podía rechazarse por un tramo anterior a la posición de
+   la persona, aunque desde esa persona hasta el refugio quedara una ruta admisible.
+   Además, quedar a más de 100 m de los corredores precargados impedía buscar una
+   carretera propia.
+2. Se trataba la extensión de fuego a +60 min como si ya estuviera ardiendo. Eso
+   impedía salir de una zona futura amenazada aunque el trayecto pudiera terminar
+   antes de que llegara el fuego.
+
+Correcciones implementadas en el CECOP:
+
+- No se cargan 72 corredores al abrir. Tras respuesta y consentimiento se consulta
+  Directions **desde la posición de esa persona**, con dos planificaciones en paralelo.
+  Se mantiene la selección del refugio más cercano entre las alternativas admisibles.
+- Cada tramo se contrasta con el tiempo estimado de paso: se usan anotaciones de
+  duración del proveedor y, cuando faltan, un reparto proporcional a la longitud.
+  Los accesos aproximados se temporizan a 4 km/h. La comprobación divide los tramos
+  en partes de hasta 50 m e incluye un margen temporal **de demo** de 2 min.
+- Un refugio sigue evaluándose al menos a +60 min. El trayecto puede salir de la
+  proyección futura si pasa antes de la llegada simulada del fuego; nunca se admite
+  atravesar la huella actual con su margen. Durante la animación se comprueba el
+  fuego actual, no se convierte la proyección de una hora en fuego presente.
+- Se muestra «Calculando ruta individual» mientras llega la respuesta. HTTP de
+  Directions, timeout, fallo de conexión, accesos excesivos y falta de alternativas
+  tienen mensajes distintos, sin mostrar el token. «Reintentar rutas pendientes»
+  repite la planificación, no las llamadas. Pausar aborta peticiones pendientes;
+  reanudar permite volver a consultarlas sin duplicar desplazamientos.
+
+Estos cambios corrigen bloqueos reproducibles del planificador. No demuestran que
+el token o las peticiones del navegador del equipo funcionen; esa comprobación
+requiere observar el resultado real de Directions. La proyección y su margen
+siguen siendo ilustrativos, no un cálculo de seguridad operativa.
+
+Fuentes: reproducción local del 2026-09-19 y código de
+[routing.ts](../../apps/command-center/src/routing.ts),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs). Las regresiones incluyen la
+salida a tiempo de una proyección futura, una salida demasiado lenta, planificación
+desde la persona, HTTP 403 sin exponer credenciales y exclusión de sesiones reales.
+
+Verificación del 2026-09-19: **29 tests pasan**, build correcto y lint sin avisos.
+En navegador, con respuestas de Directions controladas, se verificó ausencia de
+precarga, consulta después de responder, diagnóstico HTTP 403, recuperación mediante
+reintento, movimiento de 24 personas, pausa/reanudación y ausencia de cambios fuera
+de la selección. Esta prueba no valida credenciales ni disponibilidad real de Mapbox.
+
+## Iconos con emojis — revisión 2026-09-19
+
+~~Por petición del equipo, navegación, capas y centros usan emojis: 🏠 refugios,
+🏥 hospitales, 🩺 centros de salud y 🚒 bomberos.~~ **Obsoleto 2026-09-19
+noche:** hospital (cruz), centro de salud (anillo), bomberos (rombo) y punto de
+encuentro (casa geométrica). Los medios siguen siendo cápsulas de color. La
+navegación de capas que no son centros conserva emojis. Los marcadores
+cartográficos se rasterizan en canvas.
+
+Fuente: implementación local en [CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+[response.ts](../../apps/command-center/src/response.ts) e
+[index.css](../../apps/command-center/src/index.css), revisada el 2026-09-19.
+
+## Limpieza de código muerto — 2026-09-19
+
+Se retira del CECOP el andamiaje que ya no ejecutaba nada desde que la planificación
+pasó a ser individual (sección del 379 en adelante). Lo eliminado:
+
+- Corredores compartidos: `EVACUATION_CORRIDORS` (72 definiciones construidas al
+  cargar el módulo), `loadCorridorRoutes`, `resolveGroupZones` y
+  `assignEvacuationRoutes`. La ruta se sigue pidiendo desde la posición de cada
+  persona con `planCitizenRoute`.
+- Geometrías fijas que el mapa ya no dibuja: `RISK_AREA`, `FIRE_PERIMETER`,
+  `FIRE_FRONT` y `SPREAD_AREA`, sustituidas por `SCENARIO_FIRE_CELLS` y la
+  proyección de `fire-model.ts`.
+- Utilidades sin uso: `routeApproachesFire`, `initialFireClearance`, `pointInRing`,
+  los campos `originLng`/`originLat` y los export de `toRad`/`toDeg`.
+- CSS de la dock anterior (`.dock-*`), de los símbolos previos a los emojis
+  (`.legend-zone`, `.legend-point.hollow`, `svg` en la barra) y `.time-presets`.
+
+Además, el círculo de la zona de llamadas pasa a ser una capa conmutable
+(`callArea`, 🎯) en el panel de capas; antes se dibujaba siempre sin poder ocultarse.
+
+Las secciones anteriores de este documento que describen corredores precargados,
+`SPREAD_AREA` como propagación o la ausencia de tests siguen siendo el registro de
+cómo estaba el código entonces: **quedan obsoletas a partir de hoy**, no se borran.
+
+Las propiedades que solo cubrían el código retirado se reescriben sobre el camino
+vivo: elección del refugio admisible más cercano y rechazo de un destino junto al
+fuego para El Arenal, ambas con `planCitizenRoute`, y el rechazo de un recorrido de
+otra localidad en `moveEvacuees`. Verificación del 2026-09-19: **29 tests pasan**,
+typecheck, build y lint sin avisos. No se ha validado visualmente el mapa en
+navegador porque este entorno no dispone de token de Mapbox.
+
+Fuente: implementación local en [scenario.ts](../../apps/command-center/src/scenario.ts),
+[routing.ts](../../apps/command-center/src/routing.ts),
+[geo.ts](../../apps/command-center/src/geo.ts),
+[fire-model.ts](../../apps/command-center/src/fire-model.ts),
+[types.ts](../../apps/command-center/src/types.ts),
+[index.css](../../apps/command-center/src/index.css) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs), revisada el 2026-09-19.
+
+## Avisos al mando y despacho de medios — 2026-09-19
+
+~~La bandeja de llamadas mostraba copy de HappyRobot, «· demo» y varios
+estados a la vez.~~ **Obsoleto 2026-09-19 noche:** el dock pasa por
+dibujar / llamar / progreso (`N/M respondidas` + pausa). Se retira el
+sello DEMO y el resto de copy de demostración de la interfaz.
+
+El CECOP pasa a proponer al mando lo que cambia en el escenario, sin ejecutar
+nada por su cuenta:
+
+- `alerts.ts` compara el estado actual con lo ya avisado. Emite novedades:
+  núcleos o refugios que entran en la proyección, giro de viento, personas de
+  la campaña sin respuesta, salidas sin carretera y personas detenidas en ruta.
+- ~~«Simular incendio dentro de 1 hora» y «Girar viento hacia NE»~~ **(obsoleto
+  2026-09-19 noche: `+1 h` y `NE`)** son acciones explícitas de demo. El
+  segundo cambia el rumbo de 225° a 45° y recalcula la proyección; no es
+  meteorología en vivo.
+- Cada aviso es un hecho corto más **una** acción (`Llamar zona`, `Ver rutas`,
+  `Patrulla`, `Ambulancia`, `Bomberos`). ~~El mando podía enviar los tres
+  medios desde cada tarjeta.~~ **Obsoleto 2026-09-19 noche:** el despacho
+  alternativo sigue en la ficha de persona. El clic en el aviso centra el mapa.
+
+El despacho de medios (`units.ts`) es otra llamada simulada de HappyRobot:
+
+- En **Gredos**, ambulancia y bomberos salen de marcadores de demo junto al
+  escenario (hospital y parque reubicados). La patrulla sale del sur de
+  Arenas (~4 km), fuera de la huella. Las coordenadas reales de Talavera se
+  conservan en la ficha del centro; no se usan como origen del vehículo.
+- En **Madrid**, ambulancia, bomberos y patrulla salen de centros publicados:
+  Hospital Clínico San Carlos, Parque 01 Chamberí y Comisaría de
+  Moncloa-Aravaca. Capacidad y turno no verificados.
+- Directions se consulta del origen al destino pedido, **sin filtrar por
+  exposición**: el vehículo va hacia quien está en riesgo. ~~Si no hay
+  carretera, el medio queda en espera.~~ **(obsoleto 2026-09-19 noche: si
+  Directions falla o el acceso supera 500 m, el medio usa un tramo recto de
+  reserva y entra en `en_route` para que la demo no se quede parada.)**
+- El marcador del medio es el emoji del tipo (🚑 🚓 🚒) en mapa y panel.
+  ~~Cápsula de color~~ y ~~silueta geométrica~~ **obsoletas 2026-09-19
+  noche.** Avanza por la geometría con el mismo reloj acelerado ×12 que las
+  personas.
+
+Sigue sin haber llamadas reales ni contacto con 112. Límite de 12 envíos por
+sesión. Verificación del 2026-09-19: tests de detección, origen de medios,
+movimiento y fallo HTTP de Directions; typecheck, lint y build.
+
+Fuente: [alerts.ts](../../apps/command-center/src/alerts.ts),
+[units.ts](../../apps/command-center/src/units.ts),
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx) y
+[cop.test.mjs](../../apps/command-center/cop.test.mjs), 2026-09-19.
+
+## Catálogo de incendios activos (19 sep, noche)
+
+El CECOP abre una lista de incendios. Cada uno reutiliza la misma estructura
+(personas, núcleos, puntos de encuentro, hospital, centro de salud, bomberos,
+avisos y despacho). Cambiar de incendio remonta el mapa y reinicia la sesión.
+
+- **Dehesa de la Villa · ETSIT** (por defecto en la demo): arranca como un
+  foco pequeño ~850 m al norte de ETSIT-UPM. **Avanzar** crece el incendio
+  en el reloj del escenario (~8 min de fuego por segundo; tope 120 min) para
+  que el mando llame antes de que alcance el campus. Hospital Clínico San
+  Carlos (OSM way 394889274), Parque de Bomberos 01 Chamberí (Santa
+  Engracia 118, catálogo municipal + OSM way 388670230), Centro de Salud
+  Argüelles (Calle Quintana 11, OSM nodo 903735671) y Comisaría de
+  Moncloa-Aravaca (Calle del Rey Francisco, OSM way 319941974) van en
+  coordenadas publicadas. ~~El parque de bomberos y la patrulla eran
+  marcadores junto al campus.~~ **Obsoleto 2026-09-19 noche.** Capacidad y
+  turno no verificados.
+- **Sierra de Gredos**: el escenario de Ávila se conserva como segundo
+  incendio activo.
+
+> HIPÓTESIS: el incendio de Ciudad Universitaria es un escenario de demo para
+> el jurado en ETSIT, no un parte real.
+
+Fuente: [scenario-madrid.ts](../../apps/command-center/src/scenario-madrid.ts),
+[scenarios.ts](../../apps/command-center/src/scenarios.ts),
+ETSIT-UPM (40.452776, -3.725842) — https://www.etsit.upm.es/ (consultado
+2026-09-19), SERMAS Hospital Clínico San Carlos —
+https://www.comunidad.madrid/hospital/clinicosancarlos/ (consultado
+2026-09-19), OpenStreetMap hospital way 394889274 (40.4406324, -3.7199109)
+— https://www.openstreetmap.org/way/394889274 (Nominatim 2026-09-19).
+~~Wikipedia coordenadas del hospital (40.44055556, -3.72027778)~~
+**Obsoleto 2026-09-19 noche:** se usa el recinto OSM. Ayuntamiento de
+Madrid, parques de bomberos (Parque 01 Chamberí, 40.440221, -3.700819) —
+https://datos.madrid.es/egob/catalogo/211642-0-bomberos-parques.json
+(consultado 2026-09-19), OpenStreetMap way 388670230 —
+https://www.openstreetmap.org/way/388670230. CS Argüelles, OSM nodo
+903735671 — https://www.openstreetmap.org/node/903735671. Comisaría
+Moncloa-Aravaca, OSM way 319941974 — https://www.openstreetmap.org/way/319941974.
+
 ## Fuentes
 
+- FireMap.live, referencia visual de rachas de viento (largo/brillo según intensidad; no se usa su GFS) — https://firemap.live/ (consultado 2026-09-19).
+- OpenStreetMap, Hospital Clínico San Carlos (40.4406324, -3.7199109) — https://www.openstreetmap.org/way/394889274 (Nominatim 2026-09-19).
+- Ayuntamiento de Madrid, catálogo de parques de bomberos — https://datos.madrid.es/egob/catalogo/211642-0-bomberos-parques.json (consultado 2026-09-19; Parque 01 Chamberí, Santa Engracia 118, 40.440221, -3.700819).
+- OpenStreetMap, Parque de Bomberos n.º 1 Chamberí — https://www.openstreetmap.org/way/388670230 (Nominatim 2026-09-19; no confirma operatividad).
+- OpenStreetMap, Centro de Salud Argüelles (Calle de Quintana 11) — https://www.openstreetmap.org/node/903735671 (Nominatim 2026-09-19).
+- OpenStreetMap, Comisaría de Moncloa-Aravaca (Calle del Rey Francisco) — https://www.openstreetmap.org/way/319941974 (Nominatim 2026-09-19; no confirma operatividad).
 - OpenStreetMap, recinto sanitario de Arenas (40.2116975, -5.0855068) — https://www.openstreetmap.org/way/992325099 (localizado con Nominatim el 2026-09-19).
 - SESCAM, Hospital Nuestra Señora del Prado — https://sanidad.castillalamancha.es/ciudadanos/centros/hospital-nuestra-senora-del-prado (consultado 2026-09-19).
 - OpenStreetMap, hospital de Talavera (39.9646542, -4.8073831) — https://www.openstreetmap.org/way/668566543 (localizado con Nominatim el 2026-09-19).
@@ -327,6 +603,7 @@ fuego. No se han validado aquí carreteras ni meteorología reales.
 - Guisando, referencia geográfica — https://www.ayuntamiento.es/guisando/ (consultado 2026-09-19).
 - AEMET, coordenadas de El Hornillo — https://www.aemet.es/es/eltiempo/prediccion/municipios/hornillo-el-id05100 (consultado 2026-09-19).
 - El Arenal, coordenadas del núcleo — https://es.wikipedia.org/wiki/El_Arenal_(%C3%81vila) (consultado 2026-09-19).
+- Arenas de San Pedro, referencia para situar la salida de patrulla al sur del núcleo — https://es.wikipedia.org/wiki/Arenas_de_San_Pedro (consultado 2026-09-19).
 
 - Decisión de producto de equipo, 2026-09-19 (este hackathon)
 - NASA FIRMS active fire CSV — https://firms.modaps.eosdis.nasa.gov/ (consultado 2026-09-19)

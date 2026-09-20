@@ -87,6 +87,8 @@ def load_scenario(state, name: str | None = None) -> dict:
                 coll[entity.id] = entity
             resumen[coll_name] = len(coll)
 
+        _apply_phone_overrides(state)
+
         fire_raw = data.get("fire")
         if fire_raw:
             fire = _build(Fire, fire_raw, "fire")
@@ -105,6 +107,37 @@ def load_scenario(state, name: str | None = None) -> dict:
     )
     resumen["source"] = origen  # type: ignore[assignment]
     return resumen
+
+
+def _apply_phone_overrides(state) -> None:
+    """Mete los teléfonos reales del ensayo, que vienen del entorno y no del fichero.
+
+    El escenario versionado solo tiene números del rango reservado `+3460099xxxx` (contrato §1).
+    Los móviles de verdad se declaran en `.env` con `PHONE_OVERRIDES=p-001:+34...,p-002:+34...`
+    y se aplican aquí, al cargar. Así el repo —que es público— nunca contiene el móvil de nadie,
+    y aun así se puede ensayar contra teléfonos reales sin tocar el dataset.
+
+    La casa de esa persona hereda el número: si no, la patrulla y el `house_by_phone` seguirían
+    mirando al teléfono falso y las llamadas entrantes no casarían con la ficha.
+    """
+    if not settings.phone_overrides:
+        return
+    aplicados = 0
+    for person_id, telefono in settings.phone_overrides.items():
+        person = state.people.get(person_id)
+        if person is None:
+            log.warning("PHONE_OVERRIDES: no existe la persona %s; se ignora", person_id)
+            continue
+        person.phone = telefono
+        casa = state.houses.get(person.house_id or "")
+        if casa is not None:
+            casa.phone = telefono
+        aplicados += 1
+    if aplicados:
+        log.info(
+            "PHONE_OVERRIDES: %d teléfono(s) sustituido(s) desde el entorno (no versionados)",
+            aplicados,
+        )
 
 
 def _build(model: type, raw: dict, key: str):

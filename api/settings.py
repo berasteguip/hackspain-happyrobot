@@ -34,6 +34,62 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+def _int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _phone_map(name: str) -> dict[str, str]:
+    """`p-001:+34600112233,p-002:+34600445566` → `{"p-001": "+34600112233", ...}`.
+
+    Existe para que **ningún teléfono real entre en el repo**. El escenario se comitea con
+    números del rango reservado y los de verdad se inyectan desde `.env`, que no se comitea.
+    El repo es público: un móvil en un fichero versionado se queda en el historial de git para
+    siempre, y normalmente no es tuyo el móvil que publicas.
+    """
+    mapa: dict[str, str] = {}
+    for trozo in (os.getenv(name, "") or "").split(","):
+        if ":" not in trozo:
+            continue
+        pid, _, tel = trozo.partition(":")
+        limpio = "".join(ch for ch in tel if ch.isdigit() or ch == "+")
+        if pid.strip() and limpio:
+            mapa[pid.strip()] = limpio
+    return mapa
+
+
+def _phone_set(name: str) -> set[str]:
+    """Lista de teléfonos separada por comas → conjunto en E.164 sin espacios ni guiones."""
+    raw = os.getenv(name, "") or ""
+    limpio = {
+        "".join(ch for ch in trozo if ch.isdigit() or ch == "+")
+        for trozo in raw.split(",")
+        if trozo.strip()
+    }
+    return {t for t in limpio if t}
+
+
+def _phone(name: str) -> str:
+    """Un teléfono suelto del entorno → E.164 sin espacios ni guiones."""
+    raw = os.getenv(name, "") or ""
+    return "".join(ch for ch in raw if ch.isdigit() or ch == "+")
+
+
+# Secretos que están escritos en un fichero versionado de un repo PÚBLICO. Quien lea el repo
+# los tiene. Si alguno de estos es la clave de un despliegue, ese despliegue está abierto.
+SECRETOS_PUBLICOS = frozenset(
+    {
+        "cambiame-por-algo-largo",
+        "clave-de-ensayo",
+        "changeme",
+        "secret",
+        "test",
+    }
+)
+
+
 @dataclass
 class Settings:
     # --- HappyRobot / auth -------------------------------------------------
@@ -48,8 +104,60 @@ class Settings:
     )
     public_base_url: str = field(default_factory=lambda: os.getenv("PUBLIC_BASE_URL", ""))
 
+    hr_workflow_id: str = field(default_factory=lambda: os.getenv("HR_WORKFLOW_ID", ""))
+
     # La bandera que impide llamar a 120 teléfonos de verdad por accidente.
     allow_real_calls: bool = field(default_factory=lambda: _bool("ALLOW_REAL_CALLS", False))
+
+    # --- Reparto de llamadas ------------------------------------------------------------
+    # Aquí vivía `CALL_ALLOWLIST`, una lista blanca de teléfonos. Se quitó: el agente llama a
+    # números que le dicta la persona durante la conversación (la madre que se quedó en casa),
+    # y eso es incompatible con una lista escrita de antemano. Lo que frena ahora una ráfaga
+    # mal dibujada es `ALLOW_REAL_CALLS`, `CALL_MAX_BATCH` y `CALL_MAX_RADIUS_M`, más el hecho
+    # de que los teléfonos del escenario son del rango reservado.
+    # `p-001:+34...,p-002:+34...` — sustituye el teléfono de esas personas al cargar el
+    # escenario. Los móviles reales de los ensayos viven aquí, nunca en un fichero versionado.
+    phone_overrides: dict[str, str] = field(
+        default_factory=lambda: _phone_map("PHONE_OVERRIDES")
+    )
+    # Ensayo con el enlace (`POST /people/register`): con `true`, solo suenan los teléfonos que
+    # se registraron ellos mismos desde `/track`. Los del dataset quedan bloqueados aunque
+    # `ALLOW_REAL_CALLS` esté encendido. No sustituye a la lista blanca que se quitó: es opt-in.
+    register_only_calls: bool = field(default_factory=lambda: _bool("REGISTER_ONLY_CALLS", False))
+    # `false`: el planner no llama ni manda SMS por su cuenta (rutas nuevas, convoyes, riesgo);
+    # solo suena lo que el operador rodea en el mapa. Para ensayos donde el mando decide.
+    auto_notify: bool = field(default_factory=lambda: _bool("AUTO_NOTIFY", True))
+    # Llamadas simultáneas que se lanzan al rodear un círculo en Vigía.
+    call_parallelism: int = field(default_factory=lambda: _int("CALL_PARALLELISM", 8))
+    # Radio máximo que se acepta en /calls/dispatch: un círculo de 200 km no es una zona.
+    call_max_radius_m: float = field(default_factory=lambda: _float("CALL_MAX_RADIUS_M", 20000.0))
+    # Tope de llamadas por ráfaga. Rodear el mapa entero no debe lanzar 120 runs.
+    call_max_batch: int = field(default_factory=lambda: _int("CALL_MAX_BATCH", 25))
+    # Minutos tras los cuales un intento sin desenlace deja de bloquear otro. Existe porque el
+    # resultado llega por un callback que puede no llegar nunca (API en localhost, túnel caído),
+    # y sin esto una llamada de dos minutos bloquea a esa persona el resto de la crisis.
+    call_stale_minutes: float = field(default_factory=lambda: _float("CALL_STALE_MINUTES", 5.0))
+
+    # --- Contexto que el agente de voz lee al descolgar ----------------------------------
+    # El prompt del workflow los interpola literalmente ("le llama el asistente automático de
+    # {CAMPANA_ORGANISMO} por el incendio en {CAMPANA_ZONA}"), así que un valor vacío se oye
+    # como un hueco en mitad de la frase.
+    campaign_org: str = field(
+        default_factory=lambda: os.getenv("CAMPANA_ORGANISMO", "Protección Civil")
+    )
+    campaign_zone: str = field(default_factory=lambda: os.getenv("CAMPANA_ZONA", "su zona"))
+    # "ninguna" o la orden en vigor. Si NO es "ninguna", el agente la transmite sin ofrecer
+    # alternativas: no es un texto decorativo.
+    authority_order: str = field(default_factory=lambda: os.getenv("ORDEN_AUTORIDAD", "ninguna"))
+    # El workflow tiene su PROPIO cerrojo (un nodo Python que valida el destino antes de
+    # marcar) y exige que la petición se declare como simulacro. Ponerlo a false hace que el
+    # workflow rechace todas las llamadas: es el freno de mano del lado de HappyRobot.
+    demo_mode: bool = field(default_factory=lambda: _bool("DEMO_MODE", True))
+    # El móvil que hace de «organismo oficial» cuando el agente usa `llamar_a_organismo_oficial`
+    # en mitad de una llamada. El workflow NO lo elige ni se lo pregunta a nadie. Desde la v9 el
+    # nodo lleva un número fijo y usa este solo si llega: sirve para cambiar el mando de la
+    # demo sin tocar el workflow. Vacío = se queda el fijo del nodo.
+    demo_org_phone: str = field(default_factory=lambda: _phone("DEMO_ORG_PHONE"))
 
     # --- Escenario y persistencia -----------------------------------------
     scenario: str = field(default_factory=lambda: os.getenv("SCENARIO", "sierra-culebra"))
@@ -95,13 +203,34 @@ class Settings:
     max_houses_per_patrol: int = 3
     escalate_after_attempts: int = 2
 
+    @property
+    def secret_is_public(self) -> bool:
+        """¿La clave de nuestra API es una que está escrita en el repo?"""
+        return self.hr_shared_secret.strip().lower() in SECRETOS_PUBLICOS
+
     def summary(self) -> dict:
         """Lo que se imprime al arrancar (sin secretos)."""
         return {
             "scenario": self.scenario,
             "routing_provider": self.routing_provider,
             "allow_real_calls": self.allow_real_calls,
-            "auth": "on" if self.hr_shared_secret else "OFF (HR_SHARED_SECRET vacío)",
+            "phone_overrides": (
+                f"{len(self.phone_overrides)} teléfono(s) sustituido(s) desde el entorno"
+                if self.phone_overrides
+                else "ninguno (se usan los del escenario)"
+            ),
+            "demo_org_phone": (
+                self.demo_org_phone
+                if self.demo_org_phone
+                else "VACÍO (el agente no podrá consultar a ningún organismo)"
+            ),
+            "auth": (
+                "⚠️  CLAVE PÚBLICA (está en el repo: cámbiala)"
+                if self.secret_is_public
+                else "on"
+                if self.hr_shared_secret
+                else "OFF (HR_SHARED_SECRET vacío)"
+            ),
             "webhook_happyrobot": "configurado" if self.hr_workflow_webhook else "sin configurar",
             "state_jsonl": str(self.state_jsonl),
         }
