@@ -8,3 +8,7 @@ apps/command-center/dist
 docs/_inbox
 .env
 .env.*
+# El roster con nombres y móviles reales. Sin esta línea, `COPY . .` lo mete dentro de la
+# imagen cuando se construye desde una máquina que lo tiene (`railway up`, `docker build`), y
+# de ahí ya no sale. En Railway el roster entra por la variable ROSTER_B64, no por el disco.
+data/private/

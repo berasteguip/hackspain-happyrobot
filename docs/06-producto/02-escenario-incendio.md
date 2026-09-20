@@ -89,6 +89,63 @@ No se llama a Zamora, se llama a la zona de evacuación: 3 a 6 pueblos de 50 a 4
 
 Para la hackathon: dataset sintético de 3 pueblos con unas 120 casas (dirección, coordenadas, teléfono, movilidad), declarado como sintético. Capas 0 y 2 se ven funcionar; 1 y 3 se cuentan en el pitch.
 
+### 9.1 El banco de ensayo con gente de verdad (`ucm-grupo`)
+
+La demo va con `sierra-culebra`, que es sintético de arriba abajo. Aparte hay un escenario de
+ensayo, `data/scenarios/ucm-grupo.json`, para probar la ráfaga grande —rodear un círculo y que
+salgan decenas de llamadas en paralelo— contra móviles de personas que están en el evento y lo
+saben. Lo genera `data/generate_ucm_grupo.py [N]`.
+
+Dos manchas separadas ~570 m en la Ciudad Universitaria: el equipo (p-001..p-004, círculo de
+150 m) y el grupo (p-005 en adelante, círculo de 200 m). Están separadas a propósito para poder
+rodear una sin la otra sin afinar el radio al metro delante del jurado; el generador falla si
+alguien mueve una constante y las manchas se tocan.
+
+**Ni un nombre ni un móvil real entra en el repo**, que es público: el fichero versionado lleva
+`Vecino NN` y números del rango reservado. Los datos de verdad van en `data/private/roster.csv`
+(`person_id,name,phone`), directorio ignorado por git, y `api/loader.py` los aplica al cargar.
+Plantilla con los ids ya puestos: `python3 data/roster_template.py ucm-grupo --grupo`.
+
+**Si el ensayo corre en Railway, el roster viaja en una variable.** En el contenedor no hay disco
+donde dejar el CSV, así que el fichero entero va en base64 dentro de `ROSTER_B64` y se decodifica
+en memoria al arrancar: no se escribe nada en el contenedor ni entra nada en el repo. Se genera con
+`python3 data/roster_secret.py`, que escupe la línea lista para pegar en Railway → servicio →
+Variables. Precedencia completa en `03-contrato-de-datos.md` §5; en corto,
+`ROSTER_B64` < fichero local < `PHONE_OVERRIDES`, y un valor mal pegado deja los nombres genéricos
+pero no impide arrancar.
+
+⚠️ Con el roster en Railway, **los móviles del grupo los ve cualquiera con acceso al proyecto** en
+el panel de variables. Es asumible durante el evento; la variable **se borra al terminar**, junto
+con los datos de posición. La carga del roster no escribe ni un teléfono ni un nombre en el log —
+solo cuántas personas entraron y por qué vía—, pero el log de decisiones del planner sí nombra a
+quien reasigna («p-001 · Marta Ruiz → Nuevos Ministerios»), igual que `/api/roster` devuelve los
+nombres sin enmascarar. Los nombres se tratan como operativos y los teléfonos como secretos; quien
+mire los logs del despliegue verá los primeros.
+
+**El techo de la ráfaga lo pone HappyRobot, no nuestro código.** Rodear a ~90 personas tiene que
+lanzar 90 llamadas a la vez, así que `CALL_PARALLELISM` está en 128 (era 8: convertía la ráfaga
+en once tandas, y se veía en el mapa encendiéndose por grupos) y `CALL_MAX_BATCH` en 150 (era 25:
+de 90 rodeados salían 25 y 65 «fuera del tope», un fallo nuestro disfrazado de decisión). El tope
+sigue existiendo para que rodear `sierra-culebra` entero no dispare 300 runs. Los dos los defiende
+`api/tests/test_dispatcher.py`, y el de concurrencia no mide tiempos: hace coincidir 90 llamadas
+en una barrera, así que con el paralelismo bajo falla siempre y nunca por casualidad.
+
+Lo que sí hay que mirar antes de un ensayo es `ALLOW_REAL_CALLS`. La lista blanca `CALL_ALLOWLIST`
+ya no existe: `main` la retiró el 20 de septiembre de 2026 (commit `052c776`) porque el agente
+marca números que le dicta la persona en mitad de la conversación, y con noventa móviles reales
+tampoco habría sido un cerrojo útil salvo rellenándola entera. Su hueco lo ocupa un opt-in,
+`REGISTER_ONLY_CALLS=true`, que deja sonar solo a quien se haya registrado desde `/track`.
+
+El equipo de `ucm-grupo` sigue siendo de cuatro (p-001..p-004) aunque en `ucm-madrid` sean cinco
+desde que `main` metió a Luis: aquí la mancha del equipo es una figura geométrica para poder
+rodear una cosa y no la otra, no la plantilla del equipo, y quien falte entra por el roster con
+el resto del grupo.
+
+> HIPÓTESIS (sin verificar, 20 sep 2026): no sabemos el límite de runs en paralelo de nuestro
+> workspace de HappyRobot. Está en la lista de `docs/02-happyrobot/05-preguntas-stand.md`. Si
+> nos frenan, se verá en el tablero: cada run rechazado aterriza como `failed` con el cuerpo de
+> la respuesta, no como un hueco.
+
 ## 10. Qué es de HappyRobot y qué construimos nosotros
 
 | HappyRobot | Nosotros |

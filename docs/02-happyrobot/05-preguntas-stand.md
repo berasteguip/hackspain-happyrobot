@@ -22,6 +22,10 @@ importa menos que si van de una en una.
 que el sistema elige bien **a quién llamar primero** con un recurso escaso. Es exactamente el criterio
 "Prioridad" de la rúbrica, así que no perdemos puntos — cambiamos qué enseñamos, no qué construimos.
 
+**Estado (20 sep 2026):** por nuestro lado ya no hay tope antes de 90 —`CALL_PARALLELISM=128`,
+`CALL_MAX_BATCH=150`, con tests que lo defienden—, así que el número que salga de esta pregunta es
+el único que manda. Cuando lo sepamos, se escribe aquí con fecha.
+
 ### 2. ¿Twin tiene endpoint REST fuera de un workflow?
 
 **Por qué importa:** hemos verificado que se accede por nodos `twin.read`/`twin.write` dentro de un

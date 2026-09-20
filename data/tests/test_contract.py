@@ -1,4 +1,27 @@
 import json
+from pathlib import Path
+
+import pytest
+
+SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+
+
+@pytest.mark.parametrize(
+    "escenario",
+    sorted(SCENARIOS_DIR.glob("*.json")),
+    ids=lambda p: p.stem,
+)
+def test_los_escenarios_del_repo_pasan_la_validacion(escenario, val):
+    """Los ficheros COMITEADOS, no solo los que las fixtures generan al vuelo.
+
+    Los dos tests de abajo validan escenarios recién construidos en memoria, así que un fichero
+    de `data/scenarios/` podía divergir del contrato sin que fallara nada: es exactamente lo que
+    le pasó a `ucm-madrid.json`, que llevaba desde siempre con el `bbox` como lista (el validador
+    ni siquiera llegaba a informar: reventaba con un `TypeError`) y con casa y persona
+    compartiendo teléfono. Este test mira lo que de verdad se carga al arrancar.
+    """
+    errors = val.run_validation(escenario)
+    assert errors.ok(), f"\n{escenario.name}:\n" + "\n".join(errors.items)
 
 
 def test_scenario_120_passes_contract_validation(scenario_120, tmp_path, val):

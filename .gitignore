@@ -2,6 +2,12 @@
 .env
 .env.*
 !.env.example
+
+# Datos personales de los ensayos: nombres y móviles reales de gente que no ha firmado
+# nada. Este repo es público y el historial de git no se borra. El escenario versionado
+# lleva nombres genéricos y el rango reservado +3460099xxxx; lo de verdad vive aquí y lo
+# inyecta api/loader.py al arrancar (ROSTER_CSV).
+data/private/
 **/config.js
 !**/config.example.js
 
@@ -26,7 +32,7 @@ __pycache__/
 
 # Artefactos de ejecucion
 api/state.jsonl
-api/tests/.state-test.jsonl
+api/tests/.state-*.jsonl
 **/build.log
 sim/out/
 sim/cache/
