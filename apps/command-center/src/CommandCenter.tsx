@@ -271,6 +271,7 @@ export function CommandCenter({ token }: { token: string }) {
       if (drawingArea) { setDrawingArea(false); setCallArea(null); setAreaIds([]); return }
       setSelectedId(null)
       setPanel(null)
+      if (hrCard !== 'hidden') { setHrCard('hidden'); return }
       if (panel === 'campaign') campaignButtonRef.current?.focus()
       else if (panel === 'incidents') incidentButtonRef.current?.focus()
       else if (panel === 'cop') copButtonRef.current?.focus()
@@ -281,7 +282,7 @@ export function CommandCenter({ token }: { token: string }) {
     }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
-  }, [panel, drawingArea])
+  }, [panel, drawingArea, hrCard])
   useEffect(() => {
     if (!showFirms) return
     let cancelled = false
@@ -580,6 +581,12 @@ export function CommandCenter({ token }: { token: string }) {
   const beginArea = () => {
     setSelectedId(null)
     setPanel(null)
+    setHrCard('hidden')
+    if (drawingArea) {
+      setDrawingArea(false)
+      updateArea(null)
+      return
+    }
     updateArea(null)
     setDrawingArea(true)
     setLayers(previous => ({ ...previous, citizens: true, references: true }))
@@ -595,6 +602,7 @@ export function CommandCenter({ token }: { token: string }) {
     setDispatching(true)
     setDispatchError('')
     setSelectedId(null)
+    setHrCard('hidden')
     setPanel('campaign')
     try {
       const resultado = await dispatchCircle(operatorKey, area, { operator: 'puesto de mando', force: forceRecall, reason })
@@ -669,6 +677,8 @@ export function CommandCenter({ token }: { token: string }) {
       setLayers(previous => ({ ...previous, units: true }))
       setFocusTarget({ lng: unit.lng, lat: unit.lat, bounds: [[unit.lng, unit.lat], [target.lng, target.lat]] })
       setSelectedId(null)
+      setDrawingArea(false)
+      setHrCard('hidden')
       setPanel('alerts')
     } catch {
       // destino inválido: no se crea el medio
@@ -690,6 +700,8 @@ export function CommandCenter({ token }: { token: string }) {
     }
     if (action === 'review-routes') {
       setFilter('assistance')
+      setDrawingArea(false)
+      setHrCard('hidden')
       setPanel('people')
       if (alert.focus) setFocusTarget(alert.focus)
       return
@@ -707,18 +719,32 @@ export function CommandCenter({ token }: { token: string }) {
     if (!unit) return
     setSelectedId(null)
     setSelectedUnitId(id)
+    setDrawingArea(false)
+    setHrCard('hidden')
     setPanel('alerts')
     setFocusTarget({ lng: unit.lng, lat: unit.lat, zoom: 14 })
   }
   const selectCitizen = (id: string | null) => {
     setSelectedId(id)
     setPanel(null)
-    if (id) setLayers((previous) => ({ ...previous, citizens: true, references: true }))
+    setDrawingArea(false)
+    if (id) {
+      setHrCard('hidden')
+      setLayers((previous) => ({ ...previous, citizens: true, references: true }))
+    }
   }
   const togglePanel = (next: 'people' | 'layers' | 'cop' | 'centers' | 'alerts' | 'campaign' | 'incidents') => {
     setSelectedId(null)
+    setDrawingArea(false)
+    setHrCard('hidden')
     if (next === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
     setPanel((current) => current === next ? null : next)
+  }
+  const toggleHappyRobot = () => {
+    setSelectedId(null)
+    setDrawingArea(false)
+    setPanel(null)
+    setHrCard((value) => value === 'hidden' ? 'open' : 'hidden')
   }
   const selectScenario = (id: string) => {
     if (id === scenarioId) return
@@ -771,6 +797,8 @@ export function CommandCenter({ token }: { token: string }) {
     if (!center) return
     setSelectedId(null)
     setSelectedCenterId(id)
+    setDrawingArea(false)
+    setHrCard('hidden')
     setPanel('centers')
     setFocusTarget({ lng: center.lng, lat: center.lat })
     setLayers(previous => ({ ...previous, [center.kind === 'hospital' ? 'hospitals' : center.kind === 'health' ? 'healthCenters' : 'fireStations']: true }))
@@ -785,6 +813,7 @@ export function CommandCenter({ token }: { token: string }) {
   // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
   const hrView: HrView = selected ? 'person' : panel ?? (hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
   const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Plan operativo' : 'Personas'
+  const panelKicker = selected ? 'Censo' : panel === 'incidents' ? 'Escenario' : panel === 'layers' ? 'Mapa' : panel === 'cop' ? 'Modelo' : panel === 'centers' ? 'Coordinación' : panel === 'alerts' ? 'Operación' : 'Censo'
   const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
   const playFire = () => {
     setLayers(previous => ({ ...previous, spread: true, perimeter: true }))
@@ -850,14 +879,14 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={alertsButtonRef} type="button" data-demo="tool-alerts" aria-label={`Plan operativo · ${unreadAlerts.length} cambios nuevos`} className={panel === 'alerts' ? 'active' : ''} aria-expanded={panel === 'alerts'} aria-controls="map-panel" onClick={() => togglePanel('alerts')}><Icon name="alerts" /><span>Plan</span>{unreadAlerts.length > 0 && <small>{unreadAlerts.length}</small>}</button>
         <button ref={peopleButtonRef} type="button" data-demo="tool-people" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" data-demo="tool-layers" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
-        <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={() => setHrCard(value => value === 'hidden' ? 'open' : 'hidden')}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
+        <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={toggleHappyRobot}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
       <CallLog />
-      {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
+      {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setDrawingArea(false); setHrCard('hidden'); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
       {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label={panelTitle}>
-        <div className="floating-panel-heading"><h2>{panelTitle}</h2><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
+        <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">{panelKicker}</p><h2>{panelTitle}</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>
         <div className="floating-panel-body" key={selected?.id ?? panel}>
-          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} data-demo="scenario" data-demo-id={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><i className="incident-dot" aria-hidden="true" /><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} selectedUnitId={selectedUnitId} unitsPaused={unitsPaused} plan={{ status: planStale ? 'stale' : planReview.reviewedAt ? 'active' : 'draft', revision: planReview.revision, reviewedAt: planReview.reviewedAt, recommendedCount: recommendedCounts?.risk ?? 0, affectedCount: recommendedCounts?.affected ?? 0, campaignCount: campaignIds.length, answered: counts.answered, silent: counts.silent, moving: counts.moving, waiting: counts.waiting, live: liveMode }} onToggleUnits={() => setUnitsPaused(value => !value)} onRetryUnit={retryUnit} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} onAdoptPlan={() => adoptCurrentPlan(true)} onStartRecommended={() => launchRecommended('risk')} onOpenCampaign={() => setPanel('campaign')} /> : panel === 'layers' ? (
+          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} data-demo="scenario" data-demo-id={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><span className="row-mark"><i className="incident-dot" aria-hidden="true" /></span><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} selectedUnitId={selectedUnitId} unitsPaused={unitsPaused} plan={{ status: planStale ? 'stale' : planReview.reviewedAt ? 'active' : 'draft', revision: planReview.revision, reviewedAt: planReview.reviewedAt, recommendedCount: recommendedCounts?.risk ?? 0, affectedCount: recommendedCounts?.affected ?? 0, campaignCount: campaignIds.length, answered: counts.answered, silent: counts.silent, moving: counts.moving, waiting: counts.waiting, live: liveMode }} onToggleUnits={() => setUnitsPaused(value => !value)} onRetryUnit={retryUnit} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} onAdoptPlan={() => adoptCurrentPlan(true)} onStartRecommended={() => launchRecommended('risk')} onOpenCampaign={() => { setDrawingArea(false); setHrCard('hidden'); setPanel('campaign') }} /> : panel === 'layers' ? (
             <div className="layer-content">
               <div className="map-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><span className="site-emoji" aria-hidden="true">{SITE_EMOJI.meeting}</span>Punto de encuentro</span><span><Icon name="units" />Medios</span><span><i className="legend-fire" />Huella térmica</span></div>
               {layerOptions(scenario).map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><LayerMark layer={layer.key} symbol={layer.symbol} /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" data-demo="layer-toggle" data-demo-id={layer.key} aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}
@@ -869,7 +898,7 @@ export function CommandCenter({ token }: { token: string }) {
               <label className="search-label"><span className="sr-only">Buscar persona o localidad</span><input className="search" data-demo="people-search" placeholder="Nombre, localidad o ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
               <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todas'], ['outside', 'Fuera del núcleo'], ['no_answer', 'Sin respuesta'], ['assistance', 'Revisión de ruta']].map(([value, label]) => <button type="button" key={value} data-demo="people-filter" data-demo-id={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
               <div className="list-summary"><span>{filtered.length} {filtered.length === 1 ? 'persona' : 'personas'}</span><span>{counts.located} ubicaciones compartidas</span></div>
-              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" data-demo="person" data-demo-id={citizen.id} onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.call ? 'answered' : citizen.status}`} style={citizen.triage ? { background: TRIAGE_COLOR[citizen.triage.level] } : undefined} /><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.triage ? TRIAGE_LABEL[citizen.triage.level] : citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
+              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" data-demo="person" data-demo-id={citizen.id} onClick={() => selectCitizen(citizen.id)}><span className="row-mark"><span className={`dot ${citizen.call ? 'answered' : citizen.status}`} style={citizen.triage ? { background: TRIAGE_COLOR[citizen.triage.level] } : undefined} /></span><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.triage ? TRIAGE_LABEL[citizen.triage.level] : citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
               {!filtered.length && <div className="empty-state"><strong>No hay coincidencias</strong><button type="button" data-demo="people-clear" onClick={() => { setFilter('all'); setQuery('') }}>Limpiar filtros</button></div>}
             </>
           )}
@@ -890,9 +919,10 @@ export function CommandCenter({ token }: { token: string }) {
           : <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={beginArea}><Icon name="zone" /><span>Dibujar zona</span></button>}
       </section>
       {panel === 'campaign' && !selected && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label="Campaña de llamadas">
-        <div className="floating-panel-heading"><h2>Campaña de llamadas</h2><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
+        <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">Llamadas</p><h2>Campaña de llamadas</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>
+        <div className="panel-context"><span className="eyebrow">Selección</span><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><span className={`status-pill ${liveMode && !DEMO_ONLY ? 'live' : ''}`}>{DEMO_ONLY || !liveMode ? 'Demo' : 'Real'}</span></div>
         <div className="floating-panel-body"><section className="campaign-settings">
-        <div className="campaign-heading"><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas seleccionadas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><small>{DEMO_ONLY ? 'Simulación local · datos fijos del escenario' : liveMode ? `HappyRobot · llamadas reales${apiRoster ? '' : ' · SIN censo de la API'}` : 'HappyRobot · simulación local'}</small></div>
+        <p className="fine">{DEMO_ONLY ? 'Simulación local · datos fijos del escenario' : liveMode ? `HappyRobot · llamadas reales${apiRoster ? '' : ' · SIN censo de la API'}` : 'HappyRobot · simulación local'}</p>
         {DEMO_ONLY ? <p className="fine">Modo demo: 110 vecinos sintéticos, triaje simulado y evacuación en el navegador. No requiere API ni HappyRobot.</p> : <>
         <label className="row live-toggle"><input type="checkbox" data-demo="campaign-live" checked={liveMode} onChange={(event) => { setLiveMode(event.target.checked); setDispatchError('') }} />Llamar de verdad por HappyRobot</label>
         {liveMode && <label className="search-label"><span className="sr-only">Clave de operador</span><input className="search" data-demo="campaign-operator-key" type="password" autoComplete="off" placeholder="Clave de operador (HR_SHARED_SECRET)" value={operatorKey} onChange={(event) => { setOperatorKey(event.target.value); saveOperatorKey(event.target.value) }} /></label>}
@@ -945,7 +975,7 @@ function CallBoard({ calls, skipped, onSelect }: { calls: CallRun[]; skipped: Di
         {calls.map((call) => (
           <li key={call.id}>
             <button type="button" data-demo="call" data-demo-id={call.person_id} onClick={() => onSelect(call.person_id)}>
-              <span className={`dot ${call.state === 'answered' ? 'answered' : call.state === 'no_answer' ? 'no_answer' : 'pending'}`} />
+              <span className="row-mark"><span className={`dot ${call.state === 'answered' ? 'answered' : call.state === 'no_answer' ? 'no_answer' : 'pending'}`} /></span>
               <span className="person-row-copy"><strong>{call.name || call.person_id}</strong><em>{call.detail || CALL_STATE_LABEL[call.state]}</em></span>
               <span className="person-row-meta"><span>{CALL_STATE_LABEL[call.state]}</span></span>
             </button>

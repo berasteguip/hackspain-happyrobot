@@ -32,6 +32,8 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(html.includes('campaign-dock'))
   assert.ok(html.includes('data-demo="tour-start"'))
   assert.ok(html.includes('Guía'))
+  assert.ok(html.includes('Memoria compartida'))
+  assert.ok(html.includes('data-demo="tool-happyrobot"'))
   assert.ok(!html.includes('class="forecast-summary"'))
   assert.ok(!html.includes('class="minimal-legend"'))
   assert.ok(!html.includes('class="incident-list"'))

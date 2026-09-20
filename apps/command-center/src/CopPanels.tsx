@@ -40,7 +40,7 @@ export function FireControls({ settings, horizon, playing, onPlay, onReset, show
     <h3>Exposición</h3>
     <div className="cop-list">{zones.map(zone => {
       const exposure = exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)
-      return <button type="button" key={zone.id} data-demo="fire-zone" data-demo-id={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
+      return <button type="button" key={zone.id} data-demo="fire-zone" data-demo-id={zone.id} onClick={() => onFocus(zone)}><span className="row-mark"><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /></span><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
     })}</div>
     <p className="fine">Ilustrativo. No es un pronóstico.</p>
   </div>
@@ -193,7 +193,7 @@ export function AlertsPanel({ alerts, units, selectedUnitId, unitsPaused, plan, 
 
   return <div className="cop-content">
     <section className={`plan-hero ${plan.status}`} aria-labelledby="plan-priority">
-      <div className="plan-status-row"><span>Plan {plan.revision}</span><strong>{planLabel}</strong></div>
+      <div className="plan-status-row"><span>Plan {plan.revision}</span><strong className={`status-pill ${plan.status === 'stale' ? 'warn' : plan.status === 'active' ? 'ok' : ''}`}>{planLabel}</strong></div>
       <p className="plan-kicker">Prioridad actual</p>
       <h3 id="plan-priority">{priorityTitle}</h3>
       <p>{priorityDetail}</p>
