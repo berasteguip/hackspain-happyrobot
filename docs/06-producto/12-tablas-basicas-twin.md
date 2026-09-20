@@ -1,6 +1,7 @@
 # Las tablas básicas de Twin: el padrón sobre el que se apoya el log
 
-> **Creado:** 2026-09-19 (tarde) · **Estado:** creadas y cargadas en Twin, verificado
+> **Creado:** 2026-09-19 (tarde) · **Actualizado:** 2026-09-20 (§6, las claves foráneas del log) ·
+> **Estado:** creadas y cargadas en Twin, verificado
 > **En una frase:** el log de llamadas guarda un `person_id`, y hasta ahora ese id no apuntaba a nada.
 >
 > ⚠️ Los docs 07 a 11 de esta carpeta viven hoy en otra rama sin fusionar. Los enlaces a
@@ -174,6 +175,42 @@ Dos asimetrías deliberadas entre las dos copias:
 
 `GET /calls/log` filtra por `topic`, `road`, `locality_id`, `person_id`, `only_open` (la cola de lo
 que hay que volver a preguntar) y `vigentes`.
+
+### Las cuatro claves foráneas: el agente no dicta ids — 2026-09-20
+
+`call_log` tiene cuatro columnas que apuntan a otras tablas: `locality_id → locality(id)`,
+`person_id → person(id)`, `source_id → source(id)` (además `not null`) y `callback_to → source(id)`.
+Escribir en ellas un valor que no exista **tira el `insert` entero**: no se pierde un campo, se
+pierde la anotación completa, y en mitad de una llamada de voz nadie se entera.
+
+Revisando el nodo `anotar_log` de la v8 el 2026-09-20 aparecen dos formas de que eso pase, y la
+segunda no falla —que es peor—:
+
+1. **`locality_id` con el nombre del pueblo.** El prompt le pedía al agente «el nombre del pueblo»
+   y esa columna solo acepta `n-losacio`, `n-ferreruela-de-tabara`, `n-sesnandez-de-tabara` y
+   `n-tabara`. «Losacio» no es un id: `insert` al suelo, anotación perdida.
+2. **`person_id` del payload del hook, ensayando otro escenario.** `notify.trigger_payload` manda
+   `PERSONA_ID` y los ids se repiten entre escenarios: `ucm-madrid` tiene `p-001`…`p-025` y esos
+   existen en Twin, donde son vecinos de Losacio. La clave foránea **se cumple** y el `insert`
+   entra: la anotación de una llamada de la Complutense queda colgada de Mercedes Cid. Contaminación
+   silenciosa entre escenarios, que es el fallo que menos se ve y más cuesta.
+
+La regla que sale de esto: **ningún id llega a Twin desde la boca del agente ni desde un pill que
+pueda venir de otro escenario.**
+
+| Columna | De dónde sale | Por qué |
+| --- | --- | --- |
+| `locality_id` | parámetro **enum cerrado** en la tool, con los cuatro ids del padrón | Un enum el modelo lo respeta y no se puede inventar un valor. En `ucm-madrid` no hay ninguno válido: lo deja vacío y el sitio va a `place_text`. Degrada a `NULL`, no a error. |
+| `person_id` | **no se escribe** en Twin | El id solo significa algo dentro de su escenario. `phone` es texto libre y `person.phone` tiene índice único: quien quiera resolver la persona hace el join por teléfono. La copia de la API **sí** lo recibe, porque esa sabe en qué escenario vive (y si no viene, `post_call_log` lo resuelve por teléfono). |
+| `source_id` | parámetro **enum cerrado** con las 11 filas de `reference.sql` | Es `not null` y sin default utilizable desde el nodo: fuera del vocabulario, `insert` al suelo. |
+| `callback_to` | el mismo enum, opcional | Idem. |
+
+Y lo que el agente sí dicta en texto libre, sin riesgo: `question`, `answer`, `place_text`, `road`,
+`source_detail`. Ahí es donde va «la pista de La Cernada» o «Facultad de Físicas, planta 2».
+
+> **Pendiente (2026-09-20):** el arreglo es de plataforma, no de repo — la función de `anotar_log`
+> y los pills del `Write to Twin` de la v8. No está aplicado: falta acceso al MCP de HappyRobot
+> desde esta sesión. `api/` no cambia.
 
 ### La lectura que hace el agente
 
