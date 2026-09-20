@@ -454,7 +454,7 @@ class CallState(str, Enum):
     answered = "answered"  # contestó (llega por /calls/outcome)
     no_answer = "no_answer"  # no contestó (llega por /calls/outcome)
     failed = "failed"  # ni siquiera se pudo marcar (sin teléfono, 4xx, red)
-    blocked = "blocked"  # el cerrojo lo paró: fuera de CALL_ALLOWLIST
+    blocked = "blocked"  # un cerrojo lo paró (hoy: la clave pública sin cambiar)
     simulated = "simulated"  # ALLOW_REAL_CALLS=false: nadie ha recibido nada
     # Se lanzó, pero nunca llegó el resultado. NO es `no_answer`: no sabemos si contestó o no,
     # y decir que no contestó sería inventarse un dato. Pasa siempre que HappyRobot no puede
