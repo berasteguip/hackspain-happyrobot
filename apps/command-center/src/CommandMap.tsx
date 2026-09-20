@@ -15,7 +15,7 @@ import { CENTER_COLOR, SITE_EMOJI } from './response'
 import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
 import type { RecommendedAreas } from './risk'
-import { UNIT_STATUS_LABEL } from './units'
+import { UNIT_COLOR, UNIT_STATUS_LABEL, unitStops, unitTrail } from './units'
 import type { DispatchUnit } from './units'
 import { DEMO_PEOPLE } from './demo-points'
 import { WindOverlay } from './WindOverlay'
@@ -374,7 +374,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   fireStations: ['center-fire', 'center-fire-label'],
   routes: ['refuge-route-casing', 'refuge-route-line'],
   callArea: ['call-area-fill', 'call-area-edge', 'recommended-fill', 'recommended-edge', 'recommended-label'],
-  units: ['unit-point', 'ambulance-vehicle', 'police-car', 'helicopter-unit', 'unit-label'],
+  units: ['unit-point', 'ambulance-vehicle', 'police-car', 'helicopter-unit', 'unit-label', 'unit-route-casing', 'unit-route-line', 'unit-route-ahead', 'unit-stop', 'unit-stop-label'],
 }
 
 type Props = {
@@ -391,7 +391,7 @@ type Props = {
   horizon: number
   marginM: number
   route: RefugeRoute | null
-  focusTarget: { lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]] } | null
+  focusTarget: { lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]]; maxZoom?: number } | null
   onCenterSelect: (id: string) => void
   showWind: boolean
   windDirection: number
@@ -409,6 +409,8 @@ type Props = {
   onFireComplete: (ring: [number, number][]) => void
   recommended: RecommendedAreas | null
   units: DispatchUnit[]
+  /** El medio pulsado: su ruta y sus próximas paradas se pintan sobre el mapa. */
+  selectedUnitId: string | null
   onUnitSelect: (id: string) => void
   fireCells: FeatureCollection<Polygon>
   centers: ResponseCenter[]
@@ -542,6 +544,34 @@ function unitsGeo(units: DispatchUnit[]): FeatureCollection<Point> {
   }
 }
 
+/**
+ * La estela del medio seleccionado: lo recorrido en gris, el tramo hasta la siguiente parada en el
+ * color del medio y a rayas, el resto del circuito tenue. Cada parte es un LineString propio.
+ */
+function unitRouteGeo(unit: DispatchUnit | undefined): FeatureCollection<LineString> {
+  if (!unit) return { type: 'FeatureCollection', features: [] }
+  const trail = unitTrail(unit)
+  const color = UNIT_COLOR[unit.kind]
+  return {
+    type: 'FeatureCollection',
+    features: (['done', 'ahead', 'rest'] as const).filter(part => trail[part].length > 1).map(part => ({
+      type: 'Feature', properties: { part, color }, geometry: { type: 'LineString', coordinates: trail[part] },
+    })),
+  }
+}
+
+/** Las próximas paradas del medio seleccionado, numeradas en el orden en que va a pasar por ellas. */
+function unitStopsGeo(unit: DispatchUnit | undefined): FeatureCollection<Point> {
+  if (!unit) return { type: 'FeatureCollection', features: [] }
+  const color = UNIT_COLOR[unit.kind]
+  return {
+    type: 'FeatureCollection',
+    features: unitStops(unit).map((stop, index) => ({
+      type: 'Feature', properties: { order: index + 1, label: stop.label, color, next: index === 0 }, geometry: { type: 'Point', coordinates: [stop.lng, stop.lat] },
+    })),
+  }
+}
+
 function callAreaGeo(area: CallArea | null): FeatureCollection<Polygon> {
   return { type: 'FeatureCollection', features: area && area.radiusM > 0 ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circle(area.lng, area.lat, area.radiusM)] } }] : [] }
 }
@@ -634,7 +664,7 @@ function fireAnchor(fires: FireSpot[]): { lng: number; lat: number } | null {
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, plannedFires, fireStroke, drawingFire, onFireStroke, onFireComplete, recommended, units, onUnitSelect, fireCells, centers, incident }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, plannedFires, fireStroke, drawingFire, onFireStroke, onFireComplete, recommended, units, selectedUnitId, onUnitSelect, fireCells, centers, incident }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -749,6 +779,15 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('refuge-route', { type: 'geojson', data: routeGeo(current.route) })
       map.addLayer({ id: 'refuge-route-casing', type: 'line', source: 'refuge-route', paint: { 'line-color': '#12252e', 'line-width': 7 } }, 'zone-point')
       map.addLayer({ id: 'refuge-route-line', type: 'line', source: 'refuge-route', paint: { 'line-color': '#8bddff', 'line-width': 3, 'line-dasharray': [3, 1] } }, 'zone-point')
+      // La ruta y las paradas del medio pulsado: debajo de los puntos de encuentro y de los vehículos.
+      const selectedUnit = current.units.find(unit => unit.id === selectedUnitId)
+      map.addSource('unit-route', { type: 'geojson', data: unitRouteGeo(selectedUnit) })
+      map.addSource('unit-stops', { type: 'geojson', data: unitStopsGeo(selectedUnit) })
+      map.addLayer({ id: 'unit-route-casing', type: 'line', source: 'unit-route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#101820', 'line-width': ['match', ['get', 'part'], 'ahead', 7, 5], 'line-opacity': 0.85 } }, 'zone-point')
+      map.addLayer({ id: 'unit-route-line', type: 'line', source: 'unit-route', filter: ['!=', ['get', 'part'], 'ahead'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['match', ['get', 'part'], 'done', '#8a9aa3', ['get', 'color']], 'line-width': 2.5, 'line-opacity': ['match', ['get', 'part'], 'done', 0.75, 0.4] } }, 'zone-point')
+      map.addLayer({ id: 'unit-route-ahead', type: 'line', source: 'unit-route', filter: ['==', ['get', 'part'], 'ahead'], layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-dasharray': [2, 1.4] } }, 'zone-point')
+      map.addLayer({ id: 'unit-stop', type: 'circle', source: 'unit-stops', paint: { 'circle-radius': ['case', ['get', 'next'], 6.5, 5], 'circle-color': '#101820', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': ['case', ['get', 'next'], 2.5, 1.5] } }, 'zone-point')
+      map.addLayer({ id: 'unit-stop-label', type: 'symbol', source: 'unit-stops', layout: { 'text-field': ['concat', ['to-string', ['get', 'order']], ' · ', ['get', 'label']], 'text-size': 10.5, 'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-allow-overlap': true }, paint: { 'text-color': ['get', 'color'], 'text-halo-color': '#101820', 'text-halo-width': 2 } }, 'zone-point')
       map.addSource('response-centers', {
         type: 'geojson', attribution: 'Centros: © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
         data: centersGeo(centers),
@@ -907,9 +946,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     source(map, 'thermal')?.setData(firesGeo(fires))
     source(map, 'people')?.setData(citizensGeo(citizens))
     source(map, 'units')?.setData(unitsGeo(units))
+    const selectedUnit = units.find(unit => unit.id === selectedUnitId)
+    source(map, 'unit-route')?.setData(unitRouteGeo(selectedUnit))
+    source(map, 'unit-stops')?.setData(unitStopsGeo(selectedUnit))
     source(map, 'accuracy')?.setData(accuracyGeo(citizens.find((citizen) => citizen.id === selectedId)))
     patchLayers(map, layers, selectedId, areaIds)
-  }, [citizens, fires, selectedId, layers, loaded, areaIds, units])
+  }, [citizens, fires, selectedId, layers, loaded, areaIds, units, selectedUnitId])
 
   useEffect(() => {
     const map = mapRef.current
@@ -1123,7 +1165,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (focusTarget.bounds) {
       const bounds = new mapboxgl.LngLatBounds(focusTarget.bounds[0], focusTarget.bounds[1])
-      mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 180, left: 80, right: 380 } : 70, duration: reduced ? 0 : 900, maxZoom: 12 })
+      mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 180, left: 80, right: 380 } : 70, duration: reduced ? 0 : 900, maxZoom: focusTarget.maxZoom ?? 12 })
       return
     }
     mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: focusTarget.zoom ?? 14, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: reduced ? 0 : 850 })

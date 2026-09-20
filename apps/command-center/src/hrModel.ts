@@ -10,6 +10,8 @@
  * igual que uno real. Ver `docs/06-producto/06-workflow-happyrobot-vs-contrato.md`.
  */
 
+import type { DispatchTarget, UnitKind, UnitMission, UnitStatus } from './units'
+
 /**
  * El workflow desplegado en la organización del equipo. Leído de la plataforma vía MCP el
  * 2026-09-19 (`docs/06-producto/06-workflow-happyrobot-vs-contrato.md` §1 y §5). Si alguien
@@ -23,7 +25,7 @@ export const HR_WORKFLOW = {
 }
 
 /** Tipo de nodo. Decide el icono; el resto de la fila es texto. */
-export type HrNodeKind = 'trigger' | 'lock' | 'voice' | 'extract' | 'webhook' | 'api' | 'map' | 'zone' | 'human' | 'sms' | 'loop' | 'route' | 'building' | 'note' | 'search' | 'code' | 'db' | 'dbWrite' | 'send'
+export type HrNodeKind = 'trigger' | 'lock' | 'voice' | 'extract' | 'webhook' | 'api' | 'map' | 'zone' | 'human' | 'sms' | 'loop' | 'route' | 'building' | 'note' | 'search' | 'code' | 'db' | 'dbWrite' | 'send' | 'clock' | 'unit' | 'paths'
 
 /**
  * Estado visual de un nodo.
@@ -65,6 +67,12 @@ export const HR_ICONS: Record<HrNodeKind, string> = {
   dbWrite: 'M20 5.5c0 1.4-3.6 2.5-8 2.5S4 6.9 4 5.5 7.6 3 12 3s8 1.1 8 2.5ZM4 5.5v13C4 19.9 7.6 21 12 21s8-1.1 8-2.5v-13M9 14l3 3 3-3M12 17v-6',
   // Send direct message: el enlace sale por mensaje.
   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4Z',
+  // Loop que vigila con el tiempo: la ETA frente al frente, minuto a minuto.
+  clock: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM12 7v5l3 2',
+  // El mismo trazo que el botón «Medios» de la barra de herramientas: el vehículo.
+  unit: 'M3 6h11v12H3Zm11 4h4l3 4v4h-7M5 18v2m12-2v2M7 10h3M8.5 8.5v3',
+  // Conditions → Paths: el flujo se bifurca.
+  paths: 'M6 3v18M6 9c0 5 12 3 12 8v4M15 18l3 3 3-3',
 }
 
 /**
@@ -125,8 +133,76 @@ export const HR_CALL_TOOLS: HrCallTool[] = [
   },
 ]
 
+/**
+ * El despacho de un medio: el workflow «Despacho de medio» nodo a nodo, con los nombres de la
+ * plataforma, en el mismo formato que el run de escalada. Se ejecuta al enviar un medio desde el
+ * CECOP (los pasos avanzan con reloj y el vehículo sale en el paso de Vigía, como en la escalada) y
+ * se enseña completado al pulsar un vehículo que ya está en marcha. Es una simulación local del
+ * workflow, igual que la escalada.
+ *
+ * Dos fases. `run`: los pasos del workflow, que corren con reloj (`ms`) hasta que el medio sale.
+ * `trail`: el seguimiento, que no tiene reloj: lo marca el vehículo real (ETA, en el acceso, sin
+ * ruta). Los pasos `inLoop` son el cuerpo del Loop: una iteración por medio asignado.
+ */
+export type HrUnitStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; phase: 'run' | 'trail'; inLoop?: boolean; ms: number; chain?: HrChainLink[] }
+
+export const HR_UNIT_SCRIPT: HrUnitStep[] = [
+  { id: 'trigger', kind: 'trigger', lane: 'api', phase: 'run', ms: 900, label: 'Workflow Function Request', detail: 'Lo invoca otro workflow (el plan de puntos rojos o la escalada) con incidente, sector, destino, tipo de medio y minutos hasta el frente. El botón «Enviar» del CECOP hace la misma llamada.', hint: 'Trigger · Workflow Function Request «despacho_de_medio»' },
+  { id: 'twin-people', kind: 'db', lane: 'happyrobot', phase: 'run', ms: 1100, label: 'Query Twin with SQL · v_person_support', detail: 'Quién espera en el destino: personas en rojo pendientes del sector, vulnerables, movilidad (camilla) y casas cercanas sin respuesta para un solo viaje.', hint: 'Twin → Query Twin with SQL · v_person_support' },
+  { id: 'twin-fleet', kind: 'db', lane: 'happyrobot', phase: 'run', ms: 1000, label: 'Query Twin with SQL · v_available_transport', detail: 'Vehículos en standby con plazas y camillas, priorizando el municipio del incidente.', hint: 'Twin → Query Twin with SQL · v_available_transport' },
+  { id: 'sandbox', kind: 'code', lane: 'happyrobot', phase: 'run', ms: 1400, label: 'Python Sandbox · elegir medio', detail: 'ETA por carretera (Distance Matrix) frente a minutos hasta el frente: priority_rank. Respeta plazas y camillas. Si nadie llega antes que el fuego, no_viable.', hint: 'Code → Python Sandbox + Google Maps Distance Matrix' },
+  { id: 'paths-plan', kind: 'paths', lane: 'happyrobot', phase: 'run', ms: 700, label: 'Paths · ¿hay medio viable?', detail: 'Rama «Sin medio viable»: mensaje al mando por Slack y se corta aquí. Con medio, sigue a la aprobación.', hint: 'Conditions → Paths' },
+  { id: 'approval', kind: 'human', lane: 'mando', phase: 'run', ms: 900, label: 'Approval Process', detail: 'El mando aprueba mandar el medio a un sector amenazado (POST /human/approve). Desde el CECOP, el clic de «Enviar» es la aprobación.', hint: 'Approval Process del workflow' },
+  { id: 'loop', kind: 'loop', lane: 'happyrobot', phase: 'run', ms: 400, label: 'Loop · colección, paralelo', detail: 'Una iteración por medio asignado. Dentro, por cada asignación:', hint: 'Loop en modo colección, paralelo' },
+  { id: 'call-driver', kind: 'voice', lane: 'happyrobot', phase: 'run', inLoop: true, ms: 2200, label: 'Outbound Voice Agent · conductor', detail: 'Le lee la asignación: destino exacto, personas esperadas, vulnerables, minutos hasta el frente y casas cercanas para un solo viaje.', hint: 'AI Agent → Outbound Voice Agent «Aviso al medio»' },
+  { id: 'extract', kind: 'extract', lane: 'happyrobot', phase: 'run', inLoop: true, ms: 900, label: 'Extract · desenlace y ETA', detail: 'De la transcripción: aceptado, rechazado o bloqueo, y la ETA que da el conductor.', hint: 'AI → Extract' },
+  { id: 'paths-result', kind: 'paths', lane: 'happyrobot', phase: 'run', inLoop: true, ms: 700, label: 'Paths · según el desenlace', detail: 'Aceptado sigue. «Necesita reasignación»: vuelve al sandbox sin ese medio. Bloqueo: road_closures y ruta nueva.', hint: 'Conditions → Paths' },
+  { id: 'sms', kind: 'sms', lane: 'vecino', phase: 'run', inLoop: true, ms: 1000, label: 'Outbound Text Agent · SMS', detail: 'Al conductor, el enlace con la ruta. A quien espera, quién llega y en cuántos minutos.', hint: 'AI Agent → Outbound Text Agent' },
+  { id: 'vigia', kind: 'webhook', lane: 'api', phase: 'run', inLoop: true, ms: 800, label: 'Write to Twin + POST «Medio → Vigía»', detail: 'unit_log y patrol_assigned. El medio sale en el mapa con su ruta y sus paradas.', hint: 'Write to Twin · unit_log → POST «Medio → Vigía»' },
+  { id: 'loop-end', kind: 'loop', lane: 'happyrobot', phase: 'run', ms: 500, label: 'Loop End', detail: 'Cierra cuando todas las iteraciones terminan.', hint: 'Loop End' },
+  {
+    id: 'watch', kind: 'clock', lane: 'happyrobot', phase: 'trail', ms: 0, label: 'Loop · cada minuto, ETA frente al fuego', detail: 'Query Twin de posición y frente. Rama «Frente en la ruta»: ruta nueva y rellamada route_recalculated.', hint: 'Loop fijo cada minuto → Paths',
+    chain: [
+      { kind: 'route', hint: 'Ruta nueva desde la posición actual del medio' },
+      { kind: 'voice', hint: 'Outbound Voice Agent «Ruta nueva» · la única llamada que nace sola del bucle: el plan de hace veinte minutos ya no vale' },
+    ],
+  },
+  {
+    id: 'report', kind: 'extract', lane: 'happyrobot', phase: 'trail', ms: 0, label: 'Parte al llegar', detail: 'El conductor llama o el loop detecta on_scene: Extract (en el acceso, casa vaciada, recogida) → Write to Twin → POST «Parte → Vigía» → Slack al mando.', hint: 'Extract «Parte»',
+    chain: [
+      { kind: 'webhook', hint: 'POST «Parte → Vigía» · el medio y la casa cambian de estado en el mapa' },
+      { kind: 'send', hint: 'Mensaje al puesto de mando (Slack)' },
+    ],
+  },
+]
+
+/** Los pasos que corren con reloj, en orden de ejecución. El CECOP los avanza con `setTimeout(ms)`. */
+export const HR_UNIT_RUN_STEPS: HrUnitStep[] = HR_UNIT_SCRIPT.filter(step => step.phase === 'run')
+
+/** Las cuatro tools del agente que habla con el conductor, con lo que cada una dispara detrás. */
+export const HR_UNIT_TOOLS: HrCallTool[] = [
+  { id: 'confirm', kind: 'note', word: 'Confirmar', hint: 'confirmar_asignacion · el conductor acepta y da su ETA', chain: [{ kind: 'dbWrite', hint: 'Write to Twin · unit_log: aceptado' }] },
+  { id: 'reject', kind: 'loop', word: 'Rechazar', hint: 'rechazar_asignacion · no puede o no llega antes que el fuego', chain: [{ kind: 'code', hint: 'Vuelve al Python Sandbox sin ese medio: «Necesita reasignación»' }] },
+  { id: 'block', kind: 'zone', word: 'Bloqueo', hint: 'reportar_bloqueo · carretera cortada, humo, árbol caído', chain: [{ kind: 'dbWrite', hint: 'Write to Twin · road_closures' }, { kind: 'route', hint: 'Ruta nueva que evita el corte' }] },
+  { id: 'escalate', kind: 'human', word: 'Mando', hint: 'escalar_a_mando · pone al conductor con el CECOP', chain: [{ kind: 'building', hint: 'Outbound Voice Agent «Llamada al mando» · el único teléfono teñido es la rellamada del bucle' }] },
+]
+
+/** El run de un despacho mientras corre: el CECOP lo mantiene y la tarjeta lo dibuja. */
+export type HrUnitRun = {
+  id: string
+  kind: UnitKind
+  target: DispatchTarget
+  agent: string
+  label: string
+  startedAt: number
+  /** Índice del paso en curso en `HR_UNIT_RUN_STEPS`; `>= length` es «terminado». */
+  step: number
+  /** El vehículo, desde que sale en el paso de Vigía. */
+  unitId?: string
+}
+
 /** Qué ficha del CECOP está abierta. `overview` es «ninguna»: se enseña el circuito completo. */
-export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'centers' | 'cop' | 'incidents' | 'layers' | 'escalation' | 'reroute'
+export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'unit' | 'centers' | 'cop' | 'incidents' | 'layers' | 'escalation' | 'reroute'
 
 /**
  * Cuánto de esta ficha pasa de verdad por HappyRobot hoy.
@@ -144,6 +220,37 @@ export type HrViewSpec = { title: string; summary: string; coverage: HrCoverage 
 /** El pulso de la campaña, para iluminar el flujo: cuántas llamadas hay y en qué punto están. */
 export type HrCallsPulse = { total: number; open: number; answered: number }
 
+/**
+ * El pulso de un medio: lo que el CECOP sabe de verdad del vehículo pulsado. Es lo único que
+ * ilumina el despacho; el diagrama no inventa ni ETA ni estado.
+ */
+export type HrUnitPulse = {
+  id: string
+  callSign: string
+  kind: UnitKind
+  status: UnitStatus
+  mission: UnitMission
+  /** Sube con cada redirección: revisión 2 es «se tiró el plan y salió otro». */
+  revision: number
+  /** Quién lo pidió («Operador · demo», «HappyRobot · Escalada») y la frase completa del despacho. */
+  agent: string
+  summary: string
+  /** De dónde sale: hospital, parque, base aérea. */
+  origin: string
+  /** Etiqueta del destino asignado; en patrulla no hay. */
+  target?: string
+  /** Minutos que quedan por carretera, solo en camino. */
+  etaMin?: number
+  /** Kilómetros de la ruta, cuando la hay. */
+  distanceKm?: number
+  /** Por qué está detenido, solo en `hold`. */
+  hold?: string
+  /** Nació del run de escalada: la aprobación y la llamada a organismo ya pasaron allí. */
+  escalated: boolean
+  /** Las próximas paradas en orden: el destino de un despacho o el circuito de una patrulla desde la que viene ahora. */
+  stops: { label: string; km?: number; etaMin?: number }[]
+}
+
 export type HrDiagramProps = {
   /** La API de crisis responde (`/api/roster`). */
   connected: boolean
@@ -151,6 +258,10 @@ export type HrDiagramProps = {
   live: boolean
   /** Solo mientras hay una campaña: sin llamadas, el diagrama es la anatomía en reposo. */
   calls?: HrCallsPulse
+  /** Solo con un vehículo pulsado: su despacho se ilumina con lo que el CECOP sabe de él. */
+  unit?: HrUnitPulse
+  /** Un despacho en marcha: los pasos avanzan con reloj hasta que el medio sale. */
+  unitRun?: HrUnitRun | null
 }
 
 /**
@@ -173,6 +284,7 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   people: { title: 'Personas', summary: 'El color de cada persona es el extract que el agente postea al colgar. Sin llamada atendida, no hay color.', coverage: 'partial' },
   person: { title: 'Ficha de persona', summary: 'Triaje, motivo y hora salen del extract. Las rutas las calcula Mapbox, no HappyRobot.', coverage: 'partial' },
   alerts: { title: 'Plan operativo', summary: 'Avisar a la patrulla sería otro workflow disparado por webhook al escalar una casa sin respuesta. Hoy los medios son simulados.', coverage: 'planned' },
+  unit: { title: 'Despacho de un medio', summary: 'El workflow «Despacho de medio» nodo a nodo: Twin, sandbox, aprobación, llamada al conductor, SMS y vuelta a Vigía. Corre en local como la escalada; la ruta y el movimiento son de Mapbox.', coverage: 'partial' },
   centers: { title: 'Centros y coordinación', summary: 'El preaviso al hospital o a bomberos saldría por un agente de voz o SMS de HappyRobot. Hoy es un borrador local.', coverage: 'planned' },
   cop: { title: 'Propagación y viento', summary: 'Un giro de viento reasigna salidas y la API dispararía rellamadas con la instrucción nueva. Hoy no conecta.', coverage: 'planned' },
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },

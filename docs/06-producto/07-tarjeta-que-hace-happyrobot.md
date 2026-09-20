@@ -1,6 +1,6 @@
 # La tarjeta «qué hace HappyRobot detrás»
 
-> **Actualizado:** 2026-09-20 · **Estado:** plantilla cerrada y primera materialización (ficha «Campaña») hecha
+> **Actualizado:** 2026-09-20 · **Estado:** plantilla cerrada y dos materializaciones hechas (fichas «Campaña» y «Medio»)
 > **Vinculante:** cualquier tarjeta o diagrama de HappyRobot que se construya después sale de esta
 > plantilla. No se hacen tarjetas nuevas ni se inventan estilos de diagrama: ver §«Plantilla».
 > **En una frase:** una tarjeta lateral del CECOP que enseña, ficha a ficha, qué workflow de
@@ -154,6 +154,63 @@ en el editor.
 lanzado, Agente cuántas están sonando (late, en azul) y Vigía cuántas han vuelto ya con
 observación. En reposo el mismo diagrama sirve de anatomía sin números.
 
+## El despacho de un medio (ficha «Despacho de un medio»)
+
+Es el workflow **«Despacho de medio»** nodo a nodo, con los nombres de la plataforma, en el mismo
+formato que el run de escalada. Tiene dos disparadores y dos momentos:
+
+- **Enviar un medio** (desde una ficha de persona, una alerta o una zona) arranca el run: la tarjeta
+  se abre, los pasos avanzan con reloj (unos doce segundos), el que corre late y la tarjeta se
+  desplaza para seguirlo, y **el vehículo sale en el paso de Vigía**, igual que en la escalada. El
+  mapa encuadra entonces vehículo y destino.
+- **Pulsar un vehículo** (mapa o lista del plan) enseña el mismo guion completado y el seguimiento
+  vivo: la ETA frente al fuego mientras va de camino, el parte cuando llega, ámbar si no hubo
+  carretera. Una patrulla sin tarea lo enseña todo en reposo con sus próximas paradas.
+
+Como la escalada, **el run es una simulación local del workflow**; lo que sí es real es la ruta de
+Mapbox, el movimiento y las paradas. Datos en `HR_UNIT_SCRIPT` y `HR_UNIT_TOOLS` (`hrModel.ts`),
+componente `UnitDiagram`, reloj en `CommandCenter.tsx` (`unitRun`, un run a la vez).
+
+**El guion**, en el orden del lienzo. Los pasos con sangría son el cuerpo del Loop:
+
+| Nodo | Carril | Qué hace |
+| --- | --- | --- |
+| Workflow Function Request (trigger) | API router | Lo invoca otro workflow (el plan de puntos rojos o la escalada) con incidente, sector, destino, tipo de medio y minutos hasta el frente. El botón «Enviar» del CECOP hace la misma llamada |
+| Twin → Query Twin with SQL · `v_person_support` | HappyRobot | Quién espera en el destino: personas en rojo pendientes del sector, vulnerables, movilidad (camilla), casas cercanas sin respuesta para un solo viaje |
+| Twin → Query Twin with SQL · `v_available_transport` | HappyRobot | Vehículos en standby con plazas y camillas, priorizando el municipio del incidente |
+| Code → Python Sandbox · elegir medio | HappyRobot | ETA por carretera (Distance Matrix) frente a minutos hasta el frente: `priority_rank`. Respeta plazas y camillas; si nadie llega antes que el fuego, `no_viable` |
+| Conditions → Paths · ¿hay medio viable? | HappyRobot | Rama «Sin medio viable»: mensaje al mando por Slack y corta ahí |
+| Approval Process | Mando | Aprueba mandar el medio a un sector amenazado (`POST /human/approve`). Desde el CECOP, el clic de «Enviar» es la aprobación |
+| Loop · colección, paralelo | HappyRobot | Una iteración por medio asignado |
+| ↳ AI Agent → Outbound Voice Agent · conductor | HappyRobot | Le lee la asignación: destino exacto, personas esperadas, vulnerables, minutos hasta el frente, casas cercanas. Cuatro tools: `confirmar_asignacion` (Write to Twin), `rechazar_asignacion` (vuelve al sandbox sin ese medio), `reportar_bloqueo` (Write to Twin `road_closures` → ruta nueva), `escalar_a_mando` (llamada al CECOP) |
+| ↳ AI → Extract · desenlace y ETA | HappyRobot | De la transcripción: aceptado, rechazado o bloqueo, y la ETA del conductor |
+| ↳ Conditions → Paths · según el desenlace | HappyRobot | Aceptado sigue; «Necesita reasignación» vuelve al sandbox; bloqueo: `road_closures` y ruta nueva |
+| ↳ AI Agent → Outbound Text Agent · SMS | Vecino | Al conductor, el enlace con la ruta; a quien espera, quién llega y en cuántos minutos |
+| ↳ Write to Twin + POST «Medio → Vigía» | API router | `unit_log` y `patrol_assigned`. **Aquí sale el vehículo** en el mapa con su ruta y paradas |
+| Loop End | HappyRobot | Cierra cuando todas las iteraciones terminan |
+| Loop · cada minuto, ETA frente al fuego | HappyRobot | Seguimiento, sin reloj: lo marca el vehículo. Rama «Frente en la ruta»: ruta nueva → **llamada** «Ruta nueva» (`route_recalculated`) |
+| Parte al llegar | HappyRobot | El conductor llama o el loop detecta `on_scene`: Extract → Write to Twin → POST «Parte → Vigía» → Slack al mando |
+
+**Lo teñido** sigue siendo el teléfono al final de la cadena de vigilancia: la única llamada que nace
+sola del bucle cuando el fuego entra en la carretera. «Rechazar» y «Bloqueo» son «cuándo tirar el
+plan» dicho por el propio conductor.
+
+**Estados.** Con run: hecho / en curso / pendiente por reloj, y la pill dice «Ejecutando run · 4/13».
+Sin run, con vehículo: todos los pasos del workflow hechos y el seguimiento según el vehículo (pill
+«En camino · 7 min», «En el acceso» con bloque de resultado, «Sin ruta» con el paso de Vigía en
+ámbar y el motivo). Los detalles de los pasos salen del despacho real cuando lo hay: la frase de la
+petición, «Elegido A-01 desde … · 2,8 km por carretera», el SMS con la ETA. Un medio nacido de la
+escalada dice que su aprobación y su llamada pasaron en aquel run.
+
+**El mapa cuenta lo mismo.** Al pulsar el vehículo, el mapa encuadra su ruta entera y la pinta
+como estela: lo recorrido en gris, el tramo hasta la siguiente parada a rayas en el color del medio
+y el resto del circuito tenue; las próximas paradas van numeradas en el orden en que va a pasar por
+ellas. La tarjeta lista esas mismas paradas bajo la pill («Destino» en un despacho, «Próximas
+paradas» en una patrulla) con kilómetros y minutos. La lógica es de `units.ts` (`unitStops`,
+`unitTrail`, `sliceRoute`) y las capas `unit-route-*` y `unit-stop*` de `CommandMap.tsx` se
+apagan con la capa «Medios». Una parada a menos de 25 m cuenta como pasada y pasa al final de la
+vuelta.
+
 ## Plantilla: cómo se añade un diagrama nuevo
 
 Esto es lo que hay que leer antes de construir la siguiente tarjeta de HappyRobot, venga de la
@@ -188,7 +245,9 @@ Pasos, todos en `apps/command-center/src`:
    cobertura de abajo y la tabla de `data-demo` del [README del command center](../../apps/command-center/README.md).
 
 **Disparadores.** Hoy el diagrama se elige por la ficha abierta (`hrView` en `CommandCenter.tsx`),
-con una excepción: con llamadas en marcha y ninguna ficha abierta manda la campaña. Cuando aparezcan
+con tres excepciones: un run de escalada en marcha manda sobre todo, con llamadas en marcha y
+ninguna ficha abierta manda la campaña, y con un despacho en marcha o un vehículo pulsado y ninguna
+ficha abierta manda el despacho (enviar o pulsar abre la tarjeta y cierra la ficha). Cuando aparezcan
 otros disparadores (una alerta, un cambio de viento, un webhook de vuelta), **la regla es la misma:
 el disparador decide qué diagrama se enseña, nunca cómo se pinta**. Un disparador nuevo se resuelve
 en `hrView` y punto; la tarjeta no se entera.
@@ -202,6 +261,7 @@ en `hrView` y punto; la tarjeta no se entera.
 | Personas | Parcial | El color es el extract que el agente postea al colgar | pendiente |
 | Ficha de persona | Parcial | Triaje, motivo y hora salen del extract; las rutas son de Mapbox | pendiente |
 | Avisos y medios | Previsto | Aviso a la patrulla por webhook `house_escalated_to_patrol`; hoy los medios son simulados | pendiente |
+| Despacho de un medio (enviar o pulsar un vehículo) | Parcial | El run «Despacho de medio» corre en local como la escalada; la ruta, el movimiento y las paradas son de Mapbox | hecho: **el workflow nodo a nodo**, con reloj al enviar y seguimiento vivo al pulsar. Ver §«El despacho de un medio». |
 | Centros y coordinación | Previsto | Preaviso a hospital o bomberos por voz o SMS; hoy es un borrador local | pendiente |
 | Propagación y viento | Previsto | Giro de viento → reasignación → rellamadas `route_recalculated`; hoy no conecta | pendiente |
 | Escenarios · Capas | Sin HappyRobot | Nada; la tarjeta enseña el circuito completo | — |

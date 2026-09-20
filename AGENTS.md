@@ -205,6 +205,13 @@ limita las llamadas a los registrados aunque la allowlist esté vacía; `/track`
 SPA desde FastAPI. En Railway hay que poner esas dos variables si se quiere el mismo ensayo.
 Incidencia real del 19-20 sep: HappyRobot devolvía «no live development version» porque nadie
 tenía la versión activa; se publicó la v7 en development desde el MCP.
+Ajuste 2026-09-20 (Pablo): enviar un medio arranca en la tarjeta de HappyRobot el run «Despacho
+de medio» (nodo a nodo, con reloj; **el vehículo sale en el paso de Vigía**, unos once segundos
+después del clic, como en la escalada) y pulsar un vehículo abre la tarjeta en su despacho
+(`docs/06-producto/07-tarjeta-que-hace-happyrobot.md` §«El despacho de un medio»), encuadra su
+ruta y la pinta como estela con las próximas paradas numeradas. `units.ts` expone para ello
+`unitStops`, `unitTrail` y `sliceRoute`; las capas del mapa son `unit-route-*` y `unit-stop*`, en
+la capa «Medios». Sigue sin decisiones de agente conectadas: solo se enseña lo que ya se simula.
 
 ## 10. Tarjeta «qué hace HappyRobot detrás» — plantilla obligatoria — 2026-09-20
 

@@ -497,14 +497,24 @@ button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
 .hr-node[data-state="error"] .hr-node-icon { color: var(--hr-warn); border-color: #9a6a2455; background: #9a6a240a; }
 
 /* El run de escalada dentro de la tarjeta. */
-.hr-run { display: grid; gap: 14px; }
-.hr-run-head { display: flex; align-items: baseline; gap: 10px; }
-.hr-run-head small { font-size: 11px; color: var(--hr-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* La columna es `minmax(0, 1fr)` y el rótulo puede encoger: un texto largo se corta con puntos
+   suspensivos en vez de ensanchar el run más que la tarjeta. */
+.hr-run { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.hr-run-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.hr-run-head small { flex: 1; min-width: 0; font-size: 11px; color: var(--hr-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hr-run-state { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; border: 1px solid var(--hr-line); white-space: nowrap; }
 .hr-run-state > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .hr-run-state.active { color: var(--hr-move); border-color: #2c738744; background: #2c73870d; }
 .hr-run-state.active > i { animation: hr-pulse 1.2s ease-in-out infinite; }
 .hr-run-state.done { color: #fff; background: var(--hr-safe); border-color: var(--hr-safe); animation: hr-sent 420ms ease-out; }
+.hr-run-state.idle { color: var(--hr-muted); }
+.hr-run-state.error { color: var(--hr-warn); border-color: #9a6a2455; background: #9a6a240a; }
+.hr-run-result.error { border-color: #9a6a2455; background: #9a6a240a; }
+/* Las paradas del medio: informativo, sin color de éxito. */
+.hr-run-result.plain { border-color: var(--hr-line); background: var(--hr-panel); animation: none; }
+.hr-run-result.plain strong { color: var(--hr-soft); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.hr-run-result.plain li b { min-width: 16px; color: var(--hr-move); }
+.hr-run-result.error strong { color: var(--hr-warn); }
 .hr-run .hr-node[data-state="idle"] .hr-node-copy strong { color: var(--hr-muted); font-weight: 400; }
 .hr-run .hr-node[data-state="idle"] .hr-node-icon { opacity: 0.55; }
 .hr-run .hr-node[data-state="idle"] .hr-node-side em { opacity: 0.5; }
@@ -559,6 +569,21 @@ button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
 .hr-cnode[data-state="active"] .hr-chain, .hr-cnode[data-state="done"] .hr-chain { color: var(--hr-soft); }
 /* Las dos tools que acaban en otra llamada son lo más fuerte del workflow: el teléfono se tiñe. */
 .hr-chain-link[data-kind="voice"] { color: var(--hr-move); }
+/* Un nodo previsto no tiene arista que corra: ni la que sale de él, ni la que le llega
+   (`data-edge="still"` en el nodo anterior), ni las de las tools que cuelgan de él. */
+.hr-node[data-edge="still"]::before, .hr-tree-node[data-state="mock"]::before, .hr-tree-node[data-edge="still"]::before,
+.hr-node[data-state="mock"] .hr-tools::before, .hr-node[data-state="mock"] .hr-tools > li::before, .hr-node[data-state="mock"] .hr-tools > li::after { animation: none; }
+/* Las tools que cuelgan de un paso del run: misma rama compacta que en la anatomía de la llamada. */
+.hr-node .hr-tools { margin: 6px 0 6px 37px; }
+/* El cuerpo de un Loop: los pasos de cada iteración, sangrados y con el corchete del bucle a la izquierda. */
+.hr-flow-nested { margin: 6px 0 8px 15px; padding: 4px 0 0 21px; border-left: 1px dashed var(--hr-line); }
+.hr-flow-nested .hr-node-icon { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 8px; }
+.hr-flow-nested .hr-icon { width: 14px; height: 14px; }
+.hr-flow-nested .hr-node::before { left: 13px; top: 30px; }
+.hr-flow-nested .hr-node-copy strong { font-size: 11.5px; }
+.hr-flow-nested .hr-node .hr-tools { margin-left: 33px; }
+.hr-node-copy small .hr-chain { display: inline-flex; vertical-align: middle; margin-left: 6px; }
+.hr-node-copy small .hr-chain .hr-icon { width: 12px; height: 12px; }
 .hr-pulse-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; border: 1px solid #2c738744; background: #2c73870d; color: var(--hr-move); font-size: 10.5px; font-weight: 550; font-variant-numeric: tabular-nums; }
 .hr-pulse-chip .hr-icon { width: 11px; height: 11px; }
 /* El bucle de la vista general: anillo, cinco paradas, una palabra por parada. El anillo también
