@@ -355,7 +355,7 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
 .demo-marker { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; }
 /* Memoria compartida — el log de llamadas, abajo a la izquierda sobre el mapa.
    Lo que una llamada averigua y las otras pueden consultar sin volver a preguntar. */
-.call-log { position: absolute; left: 24px; bottom: 68px; width: 400px; max-height: min(52dvh, 560px); z-index: 4; display: flex; flex-direction: column; background: var(--panel); border: 1px solid #3a484fcc; border-radius: 8px; box-shadow: 0 4px 25px #0003; backdrop-filter: blur(14px); overflow: hidden; }
+.call-log { position: absolute; left: 24px; bottom: 86px; width: 400px; max-height: min(52dvh, 560px); z-index: 4; display: flex; flex-direction: column; background: var(--panel); border: 1px solid #3a484fcc; border-radius: 8px; box-shadow: 0 4px 25px #0003; backdrop-filter: blur(14px); overflow: hidden; }
 .call-log.collapsed { max-height: none; }
 .call-log > header { display: flex; align-items: center; gap: 9px; padding: 13px 16px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .call-log.collapsed > header { border-bottom: 0; }
