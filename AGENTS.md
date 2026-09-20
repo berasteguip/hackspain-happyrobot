@@ -235,6 +235,9 @@ acción humana.
 
 ## 12. Leyenda del mapa — 2026-09-20
 
+**Obsoleto:** petición posterior del usuario elimina el botón y desplegable de Leyenda
+sobre el mapa. No reintroducirlos. Se conserva debajo la decisión anterior como historial.
+
 La vista principal mantiene un control compacto **Leyenda** junto a **Guía**. Al desplegarse
 explica personas pendientes, colores de triaje, incendio, zona de riesgo, posible afectación a
 60 minutos y vehículos. Debe seguir plegado por defecto para que el mapa conserve espacio; no

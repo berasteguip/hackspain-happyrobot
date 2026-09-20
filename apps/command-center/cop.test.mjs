@@ -34,8 +34,6 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(html.includes('Guía'))
   assert.ok(html.includes('Memoria compartida'))
   assert.ok(html.includes('data-demo="tool-happyrobot"'))
-  assert.ok(html.includes('data-demo="map-key"'))
-  for (const label of ['Punto azul', 'Triaje tras la llamada', 'Incendio del escenario', 'Zona de riesgo', 'Posible afectación · +60 min', 'Medio en movimiento']) assert.ok(html.includes(label), label)
   assert.ok(!html.includes('class="forecast-summary"'))
   assert.ok(!html.includes('class="minimal-legend"'))
   assert.ok(!html.includes('class="incident-list"'))
@@ -63,9 +61,9 @@ test('la guía señala escenario, herramientas, llamadas y plan, sin abrir panel
   assert.equal(shouldShowTourIntro(), false)
   const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
   const intro = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
-  assert.ok(intro.includes('Así se usa el puesto de mando'))
+  assert.ok(intro.includes('Un recorrido por el mapa'))
   assert.ok(intro.includes('Ver guía'))
-  assert.ok(intro.includes('Saltar'))
+  assert.ok(intro.includes('Cerrar introducción'))
 })
 
 test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {

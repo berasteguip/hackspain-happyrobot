@@ -595,76 +595,26 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
 .zone-hint { display: flex; justify-content: space-between; gap: 12px; border: 1px solid #8abca433; background: #8abca40a; padding: 14px; font-size: 12px; border-radius: 8px; }
 
 .tour-replay {
-  position: absolute; left: 372px; bottom: 86px; z-index: 5;
+  position: absolute; left: 20px; bottom: 86px; z-index: 5;
   min-height: 40px; padding: 8px 14px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--panel); color: var(--text);
   font-size: 12px; font-weight: 550; box-shadow: var(--shadow);
 }
 .tour-replay:hover { background: var(--surface); }
-.map-key {
-  position: absolute; left: 372px; bottom: 32px; z-index: 5;
-  color: var(--text);
-}
-.map-key > summary {
-  list-style: none; display: flex; align-items: center; gap: 8px;
-  min-height: 40px; padding: 8px 14px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow);
-  font-size: 12px; font-weight: 550; backdrop-filter: blur(18px);
-}
-.map-key > summary::-webkit-details-marker { display: none; }
-.map-key > summary:hover, .map-key[open] > summary { background: var(--surface); }
-.map-key-info {
-  display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
-  border: 1px solid #82939c; color: #b7c5cb; font: 600 11px/1 ui-monospace, monospace;
-}
-.map-key-card {
-  position: absolute; left: 0; bottom: calc(100% + 8px); width: 270px;
-  padding: 16px; border: 1px solid var(--line); border-radius: 12px;
-  background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(18px);
-}
-.map-key-card > strong { display: block; margin-bottom: 12px; font-size: 12px; font-weight: 600; }
-.map-key-card ul { display: grid; gap: 11px; margin: 0; padding: 0; list-style: none; }
-.map-key-card li { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 9px; }
-.map-key-card li > span:last-child { min-width: 0; }
-.map-key-card b, .map-key-card small { display: block; }
-.map-key-card b { font-size: 11px; font-weight: 550; }
-.map-key-card small { margin-top: 2px; color: var(--muted); font-size: 10px; }
-.map-key-person { justify-self: center; width: 9px; height: 9px; border-radius: 50%; background: #459eff; box-shadow: 0 0 0 4px #459eff22; }
-.map-key-triage { display: grid; grid-template-columns: repeat(2, 7px); gap: 3px; justify-content: center; }
-.map-key-triage i { width: 7px; height: 7px; border-radius: 50%; background: #ff4d4f; }
-.map-key-triage i:nth-child(2) { background: #ff9f43; }
-.map-key-triage i:nth-child(3) { background: #f4d03f; }
-.map-key-triage i:nth-child(4) { background: #4de3a6; }
-.map-key-fire { justify-self: center; width: 22px; height: 15px; border-radius: 50%; background: radial-gradient(ellipse, #ffd26a 0 18%, #ed7940 38%, #9d3a2388 65%, transparent 72%); }
-.map-key-ring { justify-self: center; width: 22px; height: 22px; border-radius: 50%; border: 2px dashed #ff7468; }
-.map-key-ring.forecast { width: 25px; height: 25px; border-color: #f3bd61; }
-.map-key-unit { justify-self: center; width: 19px; height: 11px; border: 1px solid #bac6cb; border-radius: 4px 4px 3px 3px; background: linear-gradient(90deg, #dde5e8 0 35%, #52789a 35% 66%, #dde5e8 66%); box-shadow: 0 0 0 2px #11191d; }
-.map-key[open] ~ .tour-replay { visibility: hidden; }
+/* Invitación breve bajo la cabecera; el recorrido empieza solo al pulsar. */
 .tour-intro {
-  position: absolute; left: 372px; bottom: 86px; z-index: 6;
-  width: min(340px, calc(100% - 400px)); padding: 0; border-radius: 12px;
+  position: absolute; left: 20px; top: 90px; z-index: 6;
+  display: flex; align-items: center; gap: 12px; width: 390px; max-width: calc(100% - 40px);
+  min-height: 56px; padding: 8px 10px 8px 16px; border-radius: 10px;
   background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow);
-  overflow: hidden;
 }
-.tour-intro-head {
-  display: flex; align-items: center; gap: 8px; min-height: 58px;
-  padding: 0 18px; background: #ffffff06; border-bottom: 1px solid var(--line);
-}
-.tour-intro-head .eyebrow, .tour-intro-kicker, .tour-kicker {
-  margin: 0; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); flex: 1;
-}
-.tour-intro-body { padding: 14px 18px 4px; }
-.tour-intro h2 { margin: 0 0 8px; font-size: 16px; font-weight: 550; letter-spacing: -0.3px; }
-.tour-intro-body p { margin: 0; color: var(--muted); line-height: 1.55; }
-.tour-intro-actions {
-  display: flex; gap: 8px; margin: 0; padding: 14px 18px 16px;
-  border-top: 1px solid var(--line);
-}
-.tour-intro-actions .cop-primary { width: auto; flex: 1; }
-.tour-intro-actions .cop-secondary {
-  width: auto; flex: 0 0 auto; padding: 11px 14px; border: 1px solid var(--line);
-  border-radius: 9px; text-align: center; color: var(--text);
-}
+.tour-intro > span { flex: 1; font-size: 12px; color: var(--muted); }
+.tour-intro-start { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: 6px; background: #a3c3cf16; color: var(--text); font-size: 12px; white-space: nowrap; }
+.tour-intro-start:hover { background: #a3c3cf30; }
+.tour-intro-close { display: grid; place-items: center; flex: 0 0 30px; height: 32px; padding: 7px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.tour-intro-close:hover { background: var(--surface); color: var(--text); }
+.tour-intro-close svg { width: 16px; height: 16px; }
+.tour-kicker { margin: 0; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .vigia-tour.driver-popover {
   background: #1c2429; color: var(--text); border: 1px solid var(--line);
   border-radius: 12px; box-shadow: var(--shadow); max-width: 320px;
@@ -718,9 +668,7 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   .campaign-dock .campaign-pause { min-width: 32px; width: 32px; padding: 6px; }
   .map-toolbar { left: 12px; bottom: 108px; padding: 4px; border-radius: 8px; }
   .tour-replay { left: 12px; bottom: 176px; }
-  .map-key { left: auto; right: 12px; bottom: 176px; }
-  .map-key-card { left: auto; right: 0; width: min(270px, calc(100vw - 24px)); }
-  .tour-intro { left: 12px; right: 12px; bottom: 176px; width: auto; }
+  .tour-intro { left: 12px; right: 12px; top: 150px; bottom: auto; width: auto; max-width: none; gap: 8px; padding-left: 12px; }
   .call-log { left: 12px; right: 12px; width: auto; bottom: 108px; }
   .map-toolbar button, .view-options > summary { font-size: 10px; padding: 7px 10px; }
   .map-app .mapboxgl-ctrl-bottom-left { left: 4px; }
@@ -748,8 +696,14 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
 .demo-marker { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; }
 /* Memoria compartida — el log de llamadas, abajo a la izquierda sobre el mapa.
    Lo que una llamada averigua y las otras pueden consultar sin volver a preguntar. */
-.call-log { position: absolute; left: 20px; bottom: 86px; width: 340px; max-height: min(52dvh, 560px); z-index: 4; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); backdrop-filter: blur(18px); overflow: hidden; }
+.call-log { position: absolute; left: 20px; bottom: 146px; width: 340px; max-height: min(52dvh, 560px); z-index: 4; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); backdrop-filter: blur(18px); overflow: hidden; }
 .call-log.collapsed { max-height: none; }
+.call-log.collapsed > header { min-height: 48px; }
+.log-dot.offline { background: var(--warn); }
+.log-offline { color: var(--warn); font-size: 10px; white-space: nowrap; }
+.log-empty p { margin: 0 0 8px; }
+.log-empty details { font-size: 10px; }
+.log-empty details small { display: block; margin-top: 8px; overflow-wrap: anywhere; }
 .call-log > header { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 0 8px 0 18px; background: #ffffff06; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .call-log.collapsed > header { border-bottom-color: transparent; }
 .call-log > header strong { font-size: 13px; font-weight: 550; }
@@ -787,3 +741,7 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
 @media (max-height: 760px) { .call-log { max-height: 44dvh; } }
 @media (max-width: 1180px) { .call-log { width: 340px; } }
 .demo-marker.tour-anchor { width: 72px; height: 72px; cursor: default; }
+
+@media (max-width: 760px) {
+  .call-log { left: 12px; right: 12px; bottom: 108px; width: auto; max-height: calc(100dvh - 330px); }
+}
