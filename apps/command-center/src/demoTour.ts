@@ -18,7 +18,7 @@ export type TourStep = {
 export const TOUR_STEPS: TourStep[] = [
   {
     element: '[data-demo="tour-fire"]',
-    side: 'left',
+    side: 'right',
     kicker: '1 · Fuego',
     title: 'La mancha naranja es el incendio',
     description: 'Los círculos de puntos dicen a quién avisar: el interior (rojo) es zona de riesgo ahora; el exterior (amarillo), hasta dónde puede llegar en una hora. No es un perímetro oficial.',

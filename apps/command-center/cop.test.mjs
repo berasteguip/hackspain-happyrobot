@@ -34,6 +34,8 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(html.includes('Guía'))
   assert.ok(html.includes('Memoria compartida'))
   assert.ok(html.includes('data-demo="tool-happyrobot"'))
+  assert.ok(html.includes('data-demo="map-key"'))
+  for (const label of ['Punto azul', 'Triaje tras la llamada', 'Incendio del escenario', 'Zona de riesgo', 'Posible afectación · +60 min', 'Medio en movimiento']) assert.ok(html.includes(label), label)
   assert.ok(!html.includes('class="forecast-summary"'))
   assert.ok(!html.includes('class="minimal-legend"'))
   assert.ok(!html.includes('class="incident-list"'))
@@ -51,6 +53,7 @@ test('la guía señala escenario, herramientas, llamadas y plan, sin abrir panel
     '[data-demo="campaign-dock"]',
     '[data-demo="tool-alerts"]',
   ])
+  assert.equal(TOUR_STEPS[0].side, 'right')
   assert.ok(TOUR_STEPS[0].description.includes('zona de riesgo'))
   assert.ok(TOUR_STEPS[1].title.includes('punto azul'))
   assert.ok(TOUR_STEPS[2].title.includes('panel'))

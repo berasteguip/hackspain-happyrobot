@@ -903,6 +903,8 @@ export function CommandCenter({ token }: { token: string }) {
     setShowTourIntro(false)
     setSelectedId(null)
     setPanel(null)
+    setHrCard('hidden')
+    document.querySelector<HTMLDetailsElement>('[data-demo="map-key"]')?.removeAttribute('open')
     setTouring(true)
     window.requestAnimationFrame(() => { void startDemoTour(() => setTouring(false)) })
   }
@@ -940,6 +942,20 @@ export function CommandCenter({ token }: { token: string }) {
         <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={toggleHappyRobot}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
       <CallLog />
+      <details className="map-key" data-demo="map-key">
+        <summary><span className="map-key-info" aria-hidden="true">i</span>Leyenda</summary>
+        <div className="map-key-card" aria-label="Qué significa el mapa">
+          <strong>Qué significa el mapa</strong>
+          <ul>
+            <li><span className="map-key-person" aria-hidden="true" /><span><b>Punto azul</b><small>Persona aún sin contactar</small></span></li>
+            <li><span className="map-key-triage" aria-hidden="true"><i /><i /><i /><i /></span><span><b>Punto con color</b><small>Triaje tras la llamada</small></span></li>
+            <li><span className="map-key-fire" aria-hidden="true" /><span><b>Brillo naranja</b><small>Incendio del escenario</small></span></li>
+            <li><span className="map-key-ring risk" aria-hidden="true" /><span><b>Anillo rojo</b><small>Zona de riesgo</small></span></li>
+            <li><span className="map-key-ring forecast" aria-hidden="true" /><span><b>Anillo amarillo</b><small>Posible afectación · +60 min</small></span></li>
+            <li><span className="map-key-unit" aria-hidden="true" /><span><b>Vehículo</b><small>Medio en movimiento</small></span></li>
+          </ul>
+        </div>
+      </details>
       {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setDrawingArea(false); setHrCard('hidden'); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
       {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label={panelTitle}>
         <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">{panelKicker}</p><h2>{panelTitle}</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>

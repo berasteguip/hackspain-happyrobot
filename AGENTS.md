@@ -232,3 +232,13 @@ adopta una revisión nueva de forma explícita. Los casos sin respuesta suben en
 pero no invalidan por sí solos el plan completo. Este panel organiza datos y controles locales
 ya existentes: no debe presentarse como un motor de decisión operativo ni ejecutar órdenes sin
 acción humana.
+
+## 12. Leyenda del mapa — 2026-09-20
+
+La vista principal mantiene un control compacto **Leyenda** junto a **Guía**. Al desplegarse
+explica personas pendientes, colores de triaje, incendio, zona de riesgo, posible afectación a
+60 minutos y vehículos. Debe seguir plegado por defecto para que el mapa conserve espacio; no
+volver a esconder estas claves únicamente dentro de Capas.
+
+Al iniciar la guía, cerrar la Leyenda y la tarjeta HappyRobot. El primer popover va a la derecha
+del fuego para que no aparezca pegado a Memoria compartida.

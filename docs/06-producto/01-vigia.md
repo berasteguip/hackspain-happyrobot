@@ -610,12 +610,19 @@ Fuente: petición de producto 2026-09-20.
 Al terminar la entradilla, la primera visita (o `?guia=1`) muestra una tarjeta.
 El recorrido usa driver.js y señala **cinco controles**: el fuego y sus
 círculos de riesgo, un punto de persona, las herramientas, la barra de llamadas
-y Plan. No abre paneles ni lanza la campaña. El botón **Guía** (abajo a la izquierda) lo vuelve a lanzar. Si la URL
+y Plan. No abre paneles ni lanza la campaña. El primer paso sale a la derecha
+del fuego, separado de Memoria compartida; al empezar se cierra la tarjeta de
+HappyRobot para dejarle sitio. El botón **Guía** (abajo a la izquierda) lo vuelve a lanzar. Si la URL
 lleva `?p=` (vista de una persona), la tarjeta no aparece sola.
 
 El objetivo es que alguien que no ha visto la plataforma sepa: el mapa es el
 incendio y la gente; la primera acción es «Llamar zona de riesgo»; si se pierde,
 abre Plan.
+
+El mapa también mantiene una **Leyenda** plegada junto a la guía. Explica sin
+abrir Capas el punto azul de una persona pendiente, los cuatro colores de
+triaje, el fuego, la zona de riesgo, la posible afectación a 60 minutos y los
+vehículos en movimiento. Cerrada ocupa un solo botón para no recargar la vista.
 
 Fuente: petición de producto 2026-09-20.
 [demoTour.ts](../../apps/command-center/src/demoTour.ts),
