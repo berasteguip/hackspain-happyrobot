@@ -7,7 +7,7 @@ const pings = new Map<string, Ping>()
 
 function locationApi(): Plugin {
   return {
-    name: 'vigia-location-api',
+    name: 'router-location-api',
     configureServer(server) {
       server.middlewares.use('/api/locations', (req, res, next) => {
         if (req.method === 'GET') {

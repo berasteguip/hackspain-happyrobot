@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import { CommandMap } from './CommandMap'
+import { Wordmark } from './Logo'
+
+/** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
+const INTRO_MS = 1500
 import { fetchFirmsSpain } from './firms'
 import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
 import type { FireScenario } from './scenario'
@@ -27,7 +32,7 @@ import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, S
 /**
  * El censo que sirve la API (`/api/roster`) sustituye al de `scenario.ts` en cuanto responde.
  *
- * Sin backend, Vigía sigue pintando su población de Gredos y su campaña sigue siendo local:
+ * Sin backend, router sigue pintando su población de Gredos y su campaña sigue siendo local:
  * eso es lo que se enseña cuando no hay API levantada. Con backend, los puntos del mapa son
  * las personas que la API puede llamar de verdad, y rodearlas significa marcar sus teléfonos.
  */
@@ -673,13 +678,16 @@ export function CommandCenter({ token }: { token: string }) {
   const toasts = unreadAlerts.slice(0, 3)
   const windShifted = fireSettings.windTowardDeg !== INITIAL_WIND
 
+  const brandRef = useRef<HTMLDivElement>(null)
+
   return (
     <div className="map-app">
       <main className="map-wrap" aria-label="Mapa de situación">
         <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
+      <Intro brand={brandRef} />
       <header className="floating-brand">
-        <div className="brand-row"><span className="brand-symbol" aria-hidden="true">R</span><strong>router</strong></div>
+        <div className="brand-row" ref={brandRef}><Wordmark className="brand-logo" /></div>
         <span className="brand-divider" aria-hidden="true" />
         <button ref={incidentButtonRef} type="button" className="incident-trigger" aria-label="Cambiar escenario" aria-expanded={panel === 'incidents'} aria-controls="map-panel" onClick={() => togglePanel('incidents')}>
           <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${apiRoster ? 'connected' : ''}`} aria-hidden="true" />{apiRoster ? 'API conectada' : 'Escenario de demo'} · {apiRoster ? placeName : scenario.incident.area}</small></span><Icon name="chevron" />
@@ -806,6 +814,56 @@ const LAYER_MARK: Partial<Record<keyof MapLayers, keyof typeof SITE_EMOJI>> = {
   healthCenters: 'health',
   fireStations: 'fire',
   zones: 'meeting',
+}
+
+/**
+ * Entradilla de apertura: al abrir, el logotipo aparece grande en el centro y viaja
+ * hasta su sitio en la cabecera mientras el mapa se descubre por debajo.
+ *
+ * Lo que se mueve es un clon medido contra el logotipo real, así que aterriza encima
+ * de él sea cual sea el tamaño de la pantalla —sin repetir posiciones en el CSS ni
+ * desincronizarse con los puntos de ruptura— y se desvanece al final para que el
+ * relevo entre el clon y el de verdad no se note.
+ */
+function Intro({ brand }: { brand: RefObject<HTMLDivElement | null> }) {
+  // Quien pide menos movimiento entra directo al mapa: la entradilla ni se monta.
+  const [done, setDone] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true)
+  const clone = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const home = brand.current?.getBoundingClientRect()
+    const box = clone.current
+    if (!home || !box || !home.height) return setDone(true)
+
+    box.style.left = `${home.left}px`
+    box.style.top = `${home.top}px`
+    box.style.width = `${home.width}px`
+    box.style.height = `${home.height}px`
+
+    // Grande sin desbordar: 62 % del ancho, o el 22 % del alto si la pantalla es apaisada.
+    const scale = Math.min(window.innerWidth * 0.62 / home.width, window.innerHeight * 0.22 / home.height)
+    const start = `translate(${(window.innerWidth - home.width * scale) / 2 - home.left}px, ${(window.innerHeight - home.height * scale) / 2 - home.top}px) scale(${scale})`
+    // Se planta, viaja, descansa ya colocado y se retira: ese descanso es el que deja
+    // ver que ha aterrizado, y el fundido final tapa el relevo con el logotipo real.
+    const travel = box.animate([
+      { opacity: 1, transform: start, easing: 'linear', offset: 0 },
+      { opacity: 1, transform: start, easing: 'cubic-bezier(.45,0,.15,1)', offset: 0.18 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.72 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.9 },
+      { opacity: 0, transform: 'none', offset: 1 },
+    ], { duration: INTRO_MS, fill: 'both' })
+
+    travel.finished.then(() => setDone(true), () => {})
+    return () => travel.cancel()
+  }, [brand])
+
+  if (done) return null
+  return (
+    <>
+      <div className="intro-veil" aria-hidden="true" />
+      <div className="intro-logo" ref={clone} aria-hidden="true"><Wordmark /></div>
+    </>
+  )
 }
 
 function LayerMark({ layer, symbol }: { layer: keyof MapLayers; symbol: keyof typeof ICONS }) {

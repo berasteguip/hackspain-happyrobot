@@ -76,7 +76,7 @@ export function CitizenTrack({ presetId }: Props) {
   return (
     <div className="citizen">
       <div className="citizen-card">
-        <p className="kicker">Vigía</p>
+        <p className="kicker">router</p>
         <h1>Compartir mi ubicación</h1>
         <p className="lede">
           Si aceptas, el visor recibirá tu ubicación mientras esta página siga abierta.

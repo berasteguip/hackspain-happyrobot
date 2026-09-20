@@ -8,7 +8,7 @@ export function TokenGate({ onReady }: { onReady: (token: string) => void }) {
   return (
     <div className="gate">
       <div className="gate-card">
-        <p className="kicker">Vigía · centro de mando</p>
+        <p className="kicker">router · centro de mando</p>
         <h1>Falta el token de Mapbox</h1>
         <p className="lede">
           Crea un token público en{' '}

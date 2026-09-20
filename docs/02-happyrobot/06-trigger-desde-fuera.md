@@ -45,7 +45,7 @@ CAMPANA_ORGANISMO=Protección Civil de Madrid
 CAMPANA_ZONA=Ciudad Universitaria
 ```
 
-Ensayo: `make vigia && make ensayo`, y `make reset` entre tandas. Círculo que coge exactamente
+Ensayo: `make router && make ensayo`, y `make reset` entre tandas. Círculo que coge exactamente
 al equipo (cinco personas): centro **40.45298 / -3.72695**, radio **150 m**.
 
 ---
