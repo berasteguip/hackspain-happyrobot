@@ -64,15 +64,20 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .floating-actions small { font-size: 10px; color: #d9e3e8; background: #ffffff0b; border-radius: 4px; padding: 1px 4px; }
 .app-icon { display: block; width: 18px; height: 18px; flex: 0 0 auto; }
 
-.map-toolbar { position: absolute; bottom: 24px; left: 20px; display: flex; align-items: center; padding: 5px; gap: 2px; border-radius: 10px; z-index: 4; }
-.map-toolbar button, .view-options > summary { background: transparent; border: 0; border-radius: 6px; padding: 9px 12px; font-size: 11px; color: #aebfc7; }
-.map-toolbar button:hover, .map-toolbar button.active, .view-options[open] > summary { background: #a3c3cf15; color: #e3edf0; }
-.toolbar-divider { width: 1px; height: 18px; margin: 0 5px; background: var(--line); }
-.view-options > summary { list-style: none; }
+/* Encuadre: un botón de diana dentro de la columna de controles de Mapbox, justo encima del zoom.
+   El menú sale del icono hacia la izquierda; la barra inferior izquierda ya no existe. */
+.framing-control { position: relative; }
+.view-options { position: relative; }
+.view-options > summary { list-style: none; display: grid; place-items: center; width: 34px; height: 34px; cursor: pointer; color: #cdd9de; border-radius: 9px; }
 .view-options > summary::-webkit-details-marker { display: none; }
-.view-options > summary::after { content: ''; display: inline-block; width: 5px; height: 5px; border-top: 1px solid; border-right: 1px solid; transform: rotate(-45deg); margin: 0 0 0 10px; }
-.view-options > div { position: absolute; left: 0; bottom: calc(100% + 8px); width: 205px; display: grid; gap: 3px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
-.view-options > div > button { text-align: left; min-height: 40px; }
+.view-options > summary svg { width: 18px; height: 18px; }
+.view-options > summary:hover, .view-options[open] > summary { background: var(--surface); color: #e6f0f3; }
+.view-options > div { position: absolute; right: calc(100% + 10px); bottom: 0; width: 190px; display: grid; gap: 3px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.view-options > div > button { text-align: left; width: 100%; height: auto; min-height: 40px; background: transparent; border: 0; border-radius: 6px; padding: 9px 12px; font-size: 11px; color: #aebfc7; }
+.view-options > div > button:hover { background: #a3c3cf15; color: #e3edf0; }
+/* El menú vive dentro de un `.mapboxgl-ctrl-group`: su CSS separa botón de botón con una línea
+   clara y empata en especificidad con la regla de arriba. Se gana con un selector más largo. */
+.framing-control .view-options > div > button + button { border-top: 0; }
 .campaign-dock { position: absolute; bottom: 24px; right: 20px; width: min(620px, calc(100% - 340px)); min-height: 72px; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; z-index: 4; }
 .campaign-settings-button { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; border: 1px solid var(--line); background: #ffffff04; color: var(--muted); border-radius: 8px; }
 .campaign-settings-button:hover, .campaign-settings-button[aria-expanded="true"] { color: var(--text); background: var(--surface); }
@@ -207,9 +212,11 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .map-message strong, .map-message span { display: block; overflow-wrap: anywhere; }
 .map-message span { color: var(--muted); margin: 6px 0; }
 .map-message button { background: transparent; border: 0; color: var(--move); padding: 8px 0 0; }
-.mapboxgl-ctrl-group { background: var(--panel) !important; border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow) !important; }
-.mapboxgl-ctrl-group button { width: 34px; height: 34px; }
-.mapboxgl-ctrl-group button + button { border-top-color: var(--line); }
+.mapboxgl-ctrl-group { background: var(--panel) !important; border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow) !important; backdrop-filter: blur(18px); }
+/* `.map-app` delante: la hoja de Mapbox se carga después de esta y empata en especificidad.
+   Sin el prefijo, sus 29 px ganan y el zoom queda 2 px más estrecho que el botón de encuadre. */
+.map-app .mapboxgl-ctrl-group > button { width: 34px; height: 34px; }
+.map-app .mapboxgl-ctrl-group > button + button { border-top: 1px solid var(--line); }
 .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon { filter: invert(0.8); }
 .mapboxgl-ctrl-group button:hover { background-color: var(--surface) !important; }
 .mapboxgl-ctrl-scale { background: #1c242999; border-color: #8297a2; color: #bdcbd1; font-size: 9px; }
@@ -289,6 +296,165 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .notice-status { display: block; font-size: 10px; color: var(--warn); margin-top: 8px; }
 .notice-status.acknowledged { color: var(--safe); }
 
+/* Tarjeta «qué hace HappyRobot detrás» (src/HappyRobotCard.tsx). Vive a la izquierda del panel
+   de fichas cuando hay uno abierto y ocupa su sitio cuando no; el cabecero es común a todos los
+   diagramas y el cuerpo cambia con la ficha. Un nodo discontinuo es «previsto», no real. */
+/* Paleta propia, en claro: la tarjeta es el lienzo de HappyRobot, no una ficha más del CECOP.
+   Todo lo de dentro se pinta con estos tokens, así que cambiar de tema es cambiar este bloque. */
+.hr-card {
+  --hr-bg: #fbfbfa;
+  --hr-panel: #ffffff;
+  --hr-ink: #1b2126;
+  --hr-soft: #5d686f;
+  --hr-muted: #7d888e;
+  --hr-line: #e0e1de;
+  --hr-line-soft: #ededea;
+  --hr-move: #2c7387;
+  --hr-safe: #3d7a5c;
+  --hr-warn: #9a6a24;
+  /* El flujo de las aristas: color y ritmo. Un nodo en curso los sube de intensidad. */
+  --hr-flow: #c3c6c2;
+  --hr-flow-speed: 2.4s;
+  position: absolute; right: 20px; top: 90px; width: 340px; max-height: calc(100dvh - 202px);
+  border-radius: 12px; display: flex; flex-direction: column; z-index: 5; overflow: hidden;
+  background: var(--hr-bg); border: 1px solid #ffffff1f; color: var(--hr-ink);
+  box-shadow: 0 16px 48px #00000059, 0 2px 6px #0003; transition: right 220ms ease;
+}
+.map-app.has-panel .hr-card { right: 392px; }
+.map-app.has-hr .alert-toasts { right: 372px; }
+.hr-card-head { display: flex; align-items: center; gap: 6px; min-height: 58px; padding: 0 8px 0 0; background: var(--hr-panel); border-bottom: 1px solid var(--hr-line); flex-shrink: 0; }
+.hr-card.is-collapsed .hr-card-head { border-bottom-color: transparent; }
+.hr-card-brand { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 12px 0 18px; border: 0; background: transparent; text-align: left; color: var(--hr-ink); }
+.hr-card-brand:hover { background: #0000000a; }
+.hr-logo { display: inline-flex; align-items: center; gap: 9px; flex-shrink: 0; }
+.hr-logo strong { font-size: 14px; font-weight: 600; letter-spacing: -0.35px; }
+.hr-mark { display: block; width: 18px; height: 14px; color: var(--text); }
+.hr-logo .hr-mark { color: var(--hr-ink); }
+.hr-status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--hr-line); font-size: 10px; letter-spacing: 0.02em; color: var(--hr-soft); white-space: nowrap; }
+.hr-status > i { width: 6px; height: 6px; border-radius: 50%; background: #a8a396; }
+.hr-status[data-state="connected"] { color: var(--hr-safe); border-color: #3d7a5c44; background: #3d7a5c0d; }
+.hr-status[data-state="connected"] > i { background: var(--hr-safe); }
+.hr-status[data-state="live"] { color: var(--hr-warn); border-color: #9a6a2455; background: #9a6a2412; }
+.hr-status[data-state="live"] > i { background: var(--hr-warn); animation: hr-pulse 1.6s ease-in-out infinite; }
+.hr-chevron { width: 16px; height: 16px; color: var(--hr-muted); flex-shrink: 0; transition: transform 200ms ease; }
+.hr-chevron.is-collapsed { transform: rotate(-90deg); }
+.hr-card-close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; background: transparent; color: var(--hr-muted); border-radius: 7px; flex-shrink: 0; }
+.hr-card-close:hover { background: #0000000d; color: var(--hr-ink); }
+.hr-card-close svg { width: 18px; height: 18px; }
+.hr-card-content { display: flex; flex-direction: column; min-height: 0; }
+.hr-card-content[hidden] { display: none; }
+.hr-card-context { display: flex; align-items: center; gap: 8px; padding: 10px 18px; background: var(--hr-panel); border-bottom: 1px solid var(--hr-line); color: var(--hr-soft); flex-shrink: 0; }
+.hr-card-context .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 9px; color: var(--hr-muted); }
+.hr-card-context strong { font-size: 12px; font-weight: 550; flex: 1; min-width: 0; color: var(--hr-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* El cuerpo es el lienzo del editor: retícula de puntos incluida. */
+.hr-card-body { overflow: auto; min-height: 0; padding: 16px 18px 14px; background-image: radial-gradient(#00000016 1px, transparent 1px); background-size: 15px 15px; scrollbar-gutter: stable; overscroll-behavior: contain; }
+.hr-card-body code { font: 10px/1 ui-monospace, monospace; background: #00000009; padding: 2px 4px; border-radius: 4px; }
+.hr-note { margin: 0 0 14px; font-size: 11px; line-height: 1.7; color: var(--hr-soft); }
+.hr-pending { display: grid; gap: 12px; justify-items: start; padding: 4px 0 12px; }
+.hr-pending p { margin: 0; font-size: 12px; line-height: 1.7; color: var(--hr-soft); }
+/* Etiquetas de estado y de cobertura. */
+.hr-tag { display: inline-block; font-size: 9px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--hr-line); background: var(--hr-panel); color: var(--hr-muted); vertical-align: 1px; white-space: nowrap; }
+.hr-node-copy strong > .hr-tag { margin-left: 7px; }
+.hr-tag.active { color: var(--hr-move); border-color: #2c738744; background: #2c73870d; }
+.hr-tag.done, .hr-tag.real { color: var(--hr-safe); border-color: #3d7a5c44; }
+.hr-tag.error { color: var(--hr-warn); border-color: #9a6a2455; }
+.hr-tag.mock, .hr-tag.planned { color: var(--hr-warn); border-color: #9a6a2455; border-style: dashed; }
+.hr-tag.partial { color: var(--hr-move); border-color: #2c738740; }
+
+/* --- Aristas con flujo -------------------------------------------------------------------
+   Toda arista es una tira de guiones que corre en el sentido del circuito: de arriba abajo en
+   las verticales, hacia la derecha en los codos. Que se mueva es el mensaje: aquí pasa algo.
+   Excepción deliberada: un nodo `mock` (previsto, no construido) tiene arista quieta. */
+@keyframes hr-flow-y { to { background-position: 0 12px; } }
+@keyframes hr-flow-x { to { background-position: 12px 0; } }
+@keyframes hr-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
+@keyframes hr-loop-flow { to { stroke-dashoffset: -24; } }
+.hr-edge-y { background-image: repeating-linear-gradient(to bottom, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 1px 12px; background-repeat: repeat-y; animation: hr-flow-y var(--hr-flow-speed) linear infinite; }
+.hr-edge-x { background-image: repeating-linear-gradient(to right, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 12px 1px; background-repeat: repeat-x; animation: hr-flow-x var(--hr-flow-speed) linear infinite; }
+
+/* El flujo: nodos unidos por una arista vertical. */
+.hr-flow { list-style: none; margin: 0; padding: 0; display: grid; }
+.hr-node { position: relative; padding-bottom: 12px; }
+.hr-node::before { content: ''; position: absolute; left: 15px; top: 34px; bottom: -2px; width: 1px; background-image: repeating-linear-gradient(to bottom, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 1px 12px; background-repeat: repeat-y; animation: hr-flow-y var(--hr-flow-speed) linear infinite; }
+.hr-node:last-child::before { display: none; }
+.hr-node-row { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; color: inherit; }
+button.hr-node-row { border-radius: 8px; }
+button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
+.hr-node-icon { position: relative; width: 32px; height: 32px; flex: 0 0 32px; display: grid; place-items: center; border: 1px solid var(--hr-line); background: var(--hr-panel); border-radius: 9px; color: var(--hr-soft); box-shadow: 0 1px 2px #00000008; }
+.hr-icon { width: 16px; height: 16px; }
+.hr-node-copy { flex: 1; min-width: 0; padding-top: 6px; }
+.hr-node-copy strong { display: block; font-size: 12px; font-weight: 500; line-height: 1.4; }
+.hr-node-copy small { display: block; font-size: 10px; color: var(--hr-muted); line-height: 1.55; margin-top: 3px; }
+.hr-node-side { display: grid; justify-items: end; gap: 4px; padding-top: 7px; flex-shrink: 0; }
+.hr-node-side b { font-size: 12px; font-weight: 550; color: var(--hr-ink); font-variant-numeric: tabular-nums; }
+.hr-node-side em { font-size: 9px; font-style: normal; letter-spacing: 0.04em; text-transform: uppercase; color: var(--hr-muted); }
+.hr-node[data-lane="happyrobot"] .hr-node-side em { color: var(--hr-move); }
+.hr-node[data-state="active"] .hr-node-icon { border-color: #2c738766; background: #2c73870f; color: var(--hr-move); box-shadow: 0 0 0 4px #2c73870f; }
+.hr-node-pulse { position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--hr-move); animation: hr-pulse 1.6s ease-in-out infinite; }
+.hr-node[data-state="done"] .hr-node-icon { color: var(--hr-safe); border-color: #3d7a5c44; }
+.hr-node[data-state="error"] .hr-node-icon { color: var(--hr-warn); border-color: #9a6a2455; background: #9a6a240a; }
+.hr-node[data-state="mock"] .hr-node-icon { border-style: dashed; border-color: #9a6a2450; background: transparent; color: #9c8d76; }
+.hr-node[data-state="mock"] .hr-node-copy strong { color: var(--hr-soft); }
+/* Aguas abajo de un nodo en curso el flujo corre más rápido y se tiñe; el previsto no corre. */
+.hr-node[data-state="active"], .hr-tree-node[data-state="active"] { --hr-flow: #2c7387aa; --hr-flow-speed: 0.9s; }
+.hr-node[data-state="done"], .hr-tree-node[data-state="done"] { --hr-flow: #3d7a5c80; --hr-flow-speed: 1.6s; }
+.hr-node[data-state="mock"]::before { animation: none; }
+
+/* Nodo compacto (icono + palabra + número) y el árbol de una llamada: tronco a la izquierda y las
+   herramientas del agente colgando en una rama desplazada a la derecha, como en el editor. */
+.hr-cnode { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.hr-cnode strong { font-size: 12px; font-weight: 500; color: var(--hr-ink); }
+.hr-cnode b { margin-left: auto; font-size: 11px; font-weight: 550; font-variant-numeric: tabular-nums; color: var(--hr-ink); background: var(--hr-panel); padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hr-line); }
+.hr-cnode[data-state="active"] .hr-node-icon { border-color: #2c738766; background: #2c73870f; color: var(--hr-move); box-shadow: 0 0 0 4px #2c73870f; }
+.hr-cnode[data-state="active"] b { color: var(--hr-move); border-color: #2c738755; background: #2c73870d; }
+.hr-cnode[data-state="done"] .hr-node-icon { color: var(--hr-safe); border-color: #3d7a5c44; }
+.hr-cnode[data-state="error"] .hr-node-icon { color: var(--hr-warn); border-color: #9a6a2455; }
+.hr-cnode[data-state="mock"] .hr-node-icon { border-style: dashed; border-color: #9a6a2450; background: transparent; color: #9c8d76; }
+.hr-tree { list-style: none; margin: 0; padding: 0; }
+.hr-tree-node { position: relative; padding-bottom: 10px; }
+.hr-tree-node::before { content: ''; position: absolute; left: 15px; top: 32px; bottom: -2px; width: 1px; background-image: repeating-linear-gradient(to bottom, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 1px 12px; background-repeat: repeat-y; animation: hr-flow-y var(--hr-flow-speed) linear infinite; }
+.hr-tree-node:last-child::before { display: none; }
+.hr-tools { position: relative; list-style: none; margin: 8px 0 2px 37px; padding: 0 0 0 18px; }
+.hr-tools::before { content: ''; position: absolute; left: -22px; top: -24px; width: 22px; height: 1px; background-image: repeating-linear-gradient(to right, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 12px 1px; background-repeat: repeat-x; animation: hr-flow-x var(--hr-flow-speed) linear infinite; }
+.hr-tools > li { position: relative; padding: 3px 0; }
+.hr-tools > li::before { content: ''; position: absolute; left: -18px; top: 0; bottom: 0; width: 1px; background-image: repeating-linear-gradient(to bottom, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 1px 12px; background-repeat: repeat-y; animation: hr-flow-y var(--hr-flow-speed) linear infinite; }
+.hr-tools > li:first-child::before { top: -24px; }
+.hr-tools > li:last-child::before { bottom: 50%; }
+.hr-tools > li::after { content: ''; position: absolute; left: -18px; top: 50%; width: 14px; height: 1px; background-image: repeating-linear-gradient(to right, var(--hr-flow) 0 5px, transparent 5px 12px); background-size: 12px 1px; background-repeat: repeat-x; animation: hr-flow-x var(--hr-flow-speed) linear infinite; }
+.hr-tools .hr-cnode { min-height: 26px; gap: 9px; }
+.hr-tools .hr-node-icon { width: 26px; height: 26px; flex-basis: 26px; border-radius: 7px; }
+.hr-tools .hr-icon { width: 14px; height: 14px; }
+.hr-tools .hr-cnode strong { font-size: 11.5px; color: var(--hr-soft); }
+/* Lo que cada tool dispara detrás, en iconos: el editor los encadena a la derecha y aquí igual.
+   Va después de `.hr-tools .hr-icon` a propósito: empatan en especificidad y gana la última. */
+.hr-chain { margin-left: auto; display: inline-flex; align-items: center; gap: 1px; color: var(--hr-muted); }
+.hr-chain-link { display: inline-flex; align-items: center; gap: 1px; }
+.hr-chain-arrow { width: 8px; height: 8px; flex: 0 0 8px; opacity: 0.55; }
+.hr-chain .hr-icon { width: 13px; height: 13px; }
+.hr-cnode[data-state="active"] .hr-chain, .hr-cnode[data-state="done"] .hr-chain { color: var(--hr-soft); }
+/* Las dos tools que acaban en otra llamada son lo más fuerte del workflow: el teléfono se tiñe. */
+.hr-chain-link[data-kind="voice"] { color: var(--hr-move); }
+.hr-pulse-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; border: 1px solid #2c738744; background: #2c73870d; color: var(--hr-move); font-size: 10.5px; font-weight: 550; font-variant-numeric: tabular-nums; }
+.hr-pulse-chip .hr-icon { width: 11px; height: 11px; }
+/* El bucle de la vista general: anillo, cinco paradas, una palabra por parada. El anillo también
+   es una arista, así que también corre: guiones girando en el sentido de las flechas. */
+.hr-loop { display: block; width: 100%; max-width: 290px; height: auto; margin: 4px auto 10px; overflow: visible; }
+.hr-loop-ring { fill: none; stroke: var(--hr-flow); stroke-width: 1.4; stroke-dasharray: 5 7; animation: hr-loop-flow var(--hr-flow-speed) linear infinite; }
+.hr-loop-arrow { fill: none; stroke: var(--hr-move); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.75; }
+.hr-loop-node circle { fill: var(--hr-panel); stroke: var(--hr-line); stroke-width: 1; transition: stroke 200ms ease, fill 200ms ease; }
+.hr-loop-icon { color: var(--hr-soft); }
+.hr-loop-node text { fill: var(--hr-ink); font-size: 11.5px; font-weight: 500; letter-spacing: 0.02em; }
+.hr-loop-node[data-state="active"] circle { fill: #2c73870f; stroke: #2c738799; }
+.hr-loop-node[data-state="active"] .hr-loop-icon { color: var(--hr-move); }
+.hr-loop-node[data-state="done"] circle { stroke: #3d7a5c66; }
+.hr-loop-node[data-state="done"] .hr-loop-icon { color: var(--hr-safe); }
+/* Quien pide menos movimiento ve el mismo circuito, quieto. */
+@media (prefers-reduced-motion: reduce) {
+  .hr-card *, .hr-card *::before, .hr-card *::after { animation: none !important; }
+}
+/* El botón de la barra de herramientas que enseña u oculta la tarjeta. */
+.floating-actions .hr-mark { width: 16px; height: 12px; color: currentColor; }
+
 .gate, .citizen { min-height: 100%; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at top, #2b3941 0%, #171c1f 65%); }
 .gate-card, .citizen-card { width: min(460px, 100%); border: 1px solid var(--line); background: var(--panel); padding: 32px; border-radius: 14px; box-shadow: var(--shadow); }
 .kicker { text-transform: uppercase; letter-spacing: 0.12em; color: var(--move); font-size: 10px; }
@@ -307,6 +473,10 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   .floating-brand { width: 330px; gap: 10px; padding: 10px 12px; }
   .floating-actions button { padding: 0 8px; gap: 6px; font-size: 11px; }
   .floating-actions .app-icon { width: 16px; height: 16px; }
+}
+@media (max-width: 1100px) {
+  /* No caben tarjeta y ficha lado a lado: la ficha manda. */
+  .map-app.has-panel .hr-card { display: none; }
 }
 @media (max-width: 980px) {
   .floating-actions button > span { display: none; }
@@ -329,12 +499,12 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   .campaign-dock .dock-primary { font-size: 11px; padding: 10px 11px; gap: 6px; }
   .campaign-dock .dock-primary .app-icon { display: none; }
   .campaign-dock .campaign-pause { min-width: 32px; width: 32px; padding: 6px; }
-  .map-toolbar { left: 12px; bottom: 108px; padding: 4px; border-radius: 8px; }
-  .map-toolbar button, .view-options > summary { font-size: 10px; padding: 7px 10px; }
   .map-app .mapboxgl-ctrl-bottom-left { left: 4px; }
   .map-app .mapboxgl-ctrl-bottom-right { right: 4px; bottom: 152px; }
   .map-message { left: 12px; top: 150px; max-width: calc(100% - 24px); }
   .alert-toasts { top: 150px; left: 12px; right: 12px; width: auto; }
+  .map-app.has-hr .alert-toasts { right: 12px; }
+  .hr-card { display: none; }
   .gate-card, .citizen-card { padding: 24px; }
 }
 @media (max-width: 370px) {
@@ -345,9 +515,9 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   .campaign-summary > span { font-size: 8px; }
 }
 @media (max-height: 620px) and (min-width: 761px) {
-  .floating-panel { max-height: calc(100dvh - 196px); }
+  .floating-panel, .hr-card { max-height: calc(100dvh - 196px); }
   .floating-brand, .floating-actions { top: 12px; }
-  .floating-panel, .alert-toasts { top: 80px; }
+  .floating-panel, .alert-toasts, .hr-card { top: 80px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
 /* Zona de clic para guiones de demo: nodo DOM real sobre el canvas del mapa, sin

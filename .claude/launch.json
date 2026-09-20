@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "command-center",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd apps/command-center && npx vite --port \"${PORT:-5176}\" --strictPort"],
+      "port": 5176,
+      "autoPort": true
+    }
+  ]
+}

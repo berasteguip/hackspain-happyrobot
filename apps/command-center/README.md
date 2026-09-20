@@ -19,6 +19,11 @@ npm run dev
 - Página de consentimiento del ciudadano: http://localhost:5173/track
 - Reutilizar un id del escenario: http://localhost:5173/track?id=c-01
 
+**Si el mapa sale en negro y se queda en «Cargando cartografía…»**: Mapbox guarda los teselados
+en el Cache Storage del navegador (`mapbox-tiles`) y esa caché se corrompe de vez en cuando; no
+hay petición fallida que lo delate. Se arregla vaciándola desde la consola y recargando:
+`await caches.delete('mapbox-tiles')`. Visto el 2026-09-20 sobre el código sin tocar.
+
 ## Qué hay ahora
 
 - Escenario de incendio en Sierra de Gredos (valle del Tiétar, Ávila).
@@ -121,9 +126,10 @@ Los elementos de lista añaden `data-demo-id` con el identificador de dominio:
 |---|---|
 | Token | `token-input` · `token-submit` · `token-help` |
 | Ciudadano (`/track`) | `citizen-name` · `citizen-mode`+id (`demo`/`gps`) · `citizen-consent` · `citizen-stop` |
-| Mapa | `map` (contenedor) · `basemap-standard` · `basemap-satellite` · `framing-menu` · `framing-fire` · `framing-person` · `framing-route` · `framing-all` · `map-error-dismiss` |
-| Barra de herramientas | `incident-trigger` · `tool-area` · `tool-fire` · `tool-centers` · `tool-alerts` · `tool-people` · `tool-layers` |
+| Mapa | `map` (contenedor) · `framing-menu` (botón de diana sobre el zoom; el menú sale hacia la izquierda) · `framing-fire` · `framing-person` · `framing-route` · `framing-all` · `map-error-dismiss` |
+| Barra de herramientas | `incident-trigger` · `tool-area` · `tool-fire` · `tool-centers` · `tool-alerts` · `tool-people` · `tool-layers` · `tool-happyrobot` |
 | Panel | `panel` (contenedor) · `panel-close` · `scenario`+id |
+| Tarjeta HappyRobot | `hr-card` (contenedor) · `hr-collapse` · `hr-close` · `hr-loop-step`+id (paradas del bucle) · `hr-call-node`+id (nodos de la anatomía de la llamada) · `hr-node`+id (solo los nodos pulsables) |
 | Propagación | `fire-play` · `fire-wind-shift` · `fire-reset` · `fire-wind-toggle` · `fire-zone`+id |
 | Rutas | `route-profile`+id (`driving`/`walking`) · `route-compare` · `route-option`+id |
 | Centros | `center-filter`+id · `center`+id · `center-source` · `notice-sector` · `notice-message` · `notice-create` · `notice-advance`+id |

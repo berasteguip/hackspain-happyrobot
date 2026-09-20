@@ -122,6 +122,11 @@ Encuadre agrupa centrar incendio/persona, ver ruta y ver todo. No volver a cajas
 superpuestas ni al formulario de clave abierto por defecto. Mantener foco visible, Escape,
 contraste de llamadas reales, el tablero de resultados y los bloqueados por la API.
 
+Ajuste de Pablo (2026-09-20): el encuadre pasa a un botón de diana en la columna de controles de
+Mapbox, justo encima del zoom, con el menú saliendo del icono hacia la izquierda. La barra inferior
+izquierda desaparece y con ella el mapa satélite: solo queda el estilo oscuro. La atribución de
+Mapbox se muda a la esquina inferior izquierda, junto a la escala.
+
 No cambiar `api/`, `crisisApi.ts`, escenarios, dispatch ni Railway para este rediseño.
 El envío de un medio desde una ficha cierra esa selección para mostrar Avisos y medios.
 Verificación: 41 tests, lint y build; comprobación de navegador en 1440, 1024, 390 y 320 px,
@@ -200,3 +205,16 @@ limita las llamadas a los registrados aunque la allowlist esté vacía; `/track`
 SPA desde FastAPI. En Railway hay que poner esas dos variables si se quiere el mismo ensayo.
 Incidencia real del 19-20 sep: HappyRobot devolvía «no live development version» porque nadie
 tenía la versión activa; se publicó la v7 en development desde el MCP.
+
+## 10. Tarjeta «qué hace HappyRobot detrás» — plantilla obligatoria — 2026-09-20
+
+Todo lo que enseñe en el CECOP qué está haciendo HappyRobot por detrás pasa por **una sola
+tarjeta** (`apps/command-center/src/HappyRobotCard.tsx`): mismo cabecero con la marca, mismo pill
+de estado, mismo lienzo claro. Lo único que cambia de un caso a otro es el diagrama del cuerpo y
+qué lo dispara. **No se crean tarjetas nuevas ni estilos de diagrama propios.**
+
+Antes de construir una tarjeta o un diagrama de HappyRobot, leer
+[`docs/06-producto/07-tarjeta-que-hace-happyrobot.md`](docs/06-producto/07-tarjeta-que-hace-happyrobot.md):
+§«Lenguaje visual» son las siete reglas de estilo (icono y una palabra, iconos de `HR_ICONS`,
+aristas con flujo, cadenas para lo que se dispara detrás, un solo elemento destacado, estado del
+CECOP y no inventado, `prefers-reduced-motion`) y §«Plantilla» los pasos de código.
