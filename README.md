@@ -34,7 +34,7 @@ engine/  motor de escenario: el incendio avanza y la situación cambia en runtim
 api/     estado de crisis: única fuente de verdad. Decide prioridad, rutas, convoyes,
   │      patrullas y prioridad aérea. Cada cambio deja una entrada con motivo en el decision_log.
   ├──────► web/dashboard/       puesto de mando (MapLibre + OSM): mapa, timeline, intervención
-  ├──────► apps/command-center/ CECOP (Vite + React + Mapbox), frontend de Vigía
+  ├──────► apps/command-center/ CECOP (Vite + React + Mapbox), frontend de router
   ├──────► web/gps/             la página del enlace que comparte la ubicación del vecino
   ├──────► sim/                 simula la evacuación completa y elige el plan que pierde a menos gente
   └──◄──── HappyRobot           conversaciones con los 300 vecinos, llamadas, SMS, Slack

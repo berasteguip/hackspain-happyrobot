@@ -10,6 +10,7 @@
   --safe: #8abca4;
   --warn: #d3ac78;
   --shadow: 0 8px 32px #0003, 0 1px 3px #0002;
+  --intro: 2400ms;
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
@@ -26,11 +27,28 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 
 .map-app { height: 100dvh; position: relative; overflow: hidden; }
 .map-wrap, .map-root, .mapboxgl-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Entradilla: el velo tapa la app y se abre mientras el logotipo viaja a la cabecera.
+   El clon lo coloca y lo anima CommandCenter, que mide el logotipo real; aquí solo
+   va lo que no depende de esa medida. Arranca invisible para que no parpadee en el
+   fotograma que va entre el pintado y el efecto que lanza la animación. */
+.intro-veil { position: fixed; inset: 0; z-index: 40; background: var(--bg); pointer-events: none; animation: intro-veil var(--intro) cubic-bezier(.4, 0, .2, 1) both; }
+.intro-logo { position: fixed; z-index: 41; pointer-events: none; opacity: 0; transform-origin: top left; color: var(--text); }
+.intro-logo > svg { display: block; width: 100%; height: 100%; }
+/* El separador y HappyRobot cuelgan fuera de la caja del clon para no ensancharla: la caja
+   tiene que seguir siendo la del logotipo de la cabecera o el aterrizaje deja de cuadrar.
+   Van en porcentajes del propio clon, así que escalan con él sin cuentas aparte. */
+.intro-sep { position: absolute; left: 100%; top: 19%; height: 62%; width: 1px; margin-left: 20%; background: #ffffff45; }
+.intro-partner { position: absolute; left: 100%; top: 50%; height: 74%; margin-left: 40%; transform: translateY(-50%); color: var(--text); }
+.intro-partner > svg { display: block; height: 100%; width: auto; }
+@keyframes intro-veil { 0%, 40% { opacity: 1; } 80%, 100% { opacity: 0; } }
+
 .floating-brand, .floating-actions, .map-toolbar, .campaign-dock, .floating-panel { background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
 .floating-brand { position: absolute; left: 20px; top: 20px; display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 12px; z-index: 3; width: min(390px, 35vw); height: 58px; }
-.brand-row { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.brand-symbol { width: 23px; height: 26px; display: grid; place-items: center; border: 1px solid #8ca9b6; border-radius: 6px 6px 10px 10px; color: #b4cdd5; font-size: 13px; }
-.brand-row > strong { font-size: 22px; letter-spacing: -0.9px; font-weight: 600; }
+.brand-row { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+.brand-logo { display: block; height: 42px; width: auto; flex-shrink: 0; }
+.logo-word { fill: none; stroke: currentColor; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
+.logo-accent { fill: none; stroke: var(--move); stroke-width: 12; stroke-linecap: round; }
+.logo-dot { fill: var(--move); }
 .brand-divider { width: 1px; height: 26px; background: var(--line); flex-shrink: 0; }
 .incident-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: 1; min-width: 0; background: transparent; border: 0; text-align: left; padding: 2px 0; }
 .incident-trigger > span { min-width: 0; }
@@ -215,11 +233,11 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .mapboxgl-ctrl-scale { background: #1c242999; border-color: #8297a2; color: #bdcbd1; font-size: 9px; }
 .map-app .mapboxgl-ctrl-bottom-left { left: 12px; bottom: 0; }
 .map-app .mapboxgl-ctrl-bottom-right { right: 12px; bottom: 112px; }
-.vigia-popup .mapboxgl-popup-content { background: var(--panel); border: 1px solid #ffffff20; border-radius: 9px; color: var(--text); padding: 16px; font: 12px/1.6 -apple-system, sans-serif; box-shadow: var(--shadow); }
-.vigia-popup .mapboxgl-popup-content p { color: var(--warn); margin: 6px 0; }
-.vigia-popup .mapboxgl-popup-content small { color: var(--muted); }
-.vigia-popup .mapboxgl-popup-tip { border-top-color: #1c2429; border-bottom-color: #1c2429; }
-.vigia-popup .mapboxgl-popup-close-button { padding: 5px 8px; }
+.router-popup .mapboxgl-popup-content { background: var(--panel); border: 1px solid #ffffff20; border-radius: 9px; color: var(--text); padding: 16px; font: 12px/1.6 -apple-system, sans-serif; box-shadow: var(--shadow); }
+.router-popup .mapboxgl-popup-content p { color: var(--warn); margin: 6px 0; }
+.router-popup .mapboxgl-popup-content small { color: var(--muted); }
+.router-popup .mapboxgl-popup-tip { border-top-color: #1c2429; border-bottom-color: #1c2429; }
+.router-popup .mapboxgl-popup-close-button { padding: 5px 8px; }
 .wind-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; mix-blend-mode: screen; }
 .sim-bar { padding: 16px; background: #ffffff03; border: 1px solid var(--line); border-radius: 10px; }
 .sim-readout { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 16px; }
@@ -338,9 +356,8 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   .gate-card, .citizen-card { padding: 24px; }
 }
 @media (max-width: 370px) {
-  .brand-row > strong { font-size: 20px; }
+  .brand-logo { height: 34px; }
   .floating-brand { gap: 10px; padding: 10px; }
-  .brand-symbol { display: none; }
   .campaign-dock { gap: 6px; padding: 8px; }
   .campaign-summary > span { font-size: 8px; }
 }

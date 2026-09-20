@@ -402,7 +402,7 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
  * El triaje manda sobre todo lo demás: que alguien haya descolgado dice mucho menos que lo que
  * dijo al descolgar. Si nadie ha hablado con esa persona, se cae al código de siempre —verde si
  * contestó, ámbar si está sonando, azul si no se ha intentado— que sigue siendo lo que se ve
- * cuando Vigía corre sin backend.
+ * cuando router corre sin backend.
  */
 function citizenColor(citizen: Citizen): string {
   if (citizen.triage) return TRIAGE_COLOR[citizen.triage.level]
@@ -547,7 +547,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       attributionControl: false,
     })
     mapRef.current = map
-    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'vigia-popup', maxWidth: '300px' })
+    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'router-popup', maxWidth: '300px' })
     popupRef.current = popup
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
     map.addControl(new mapboxgl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left')
