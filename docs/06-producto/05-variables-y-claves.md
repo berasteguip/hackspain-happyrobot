@@ -30,7 +30,7 @@ Si esos cuatro no coinciden, el síntoma es siempre el mismo —401— y nunca d
 |---|---|---|
 | `HR_SHARED_SECRET` | **secreto propio, solo ASCII** | La puerta de la API. `openssl rand -hex 32`. **Nunca el ejemplo de `.env.example`**: el repo es público y la API se niega a marcar si detecta uno. Sin acentos: una `ñ` funciona en el navegador y da 401 por `curl` (§4). |
 | `HR_WORKFLOW_WEBHOOK` | URL del incoming hook | La que da HappyRobot al publicar. Sin esto: «HR_WORKFLOW_WEBHOOK sin configurar». |
-| `SCENARIO` | `ucm-madrid` \| `sierra-culebra` | Sin ella cae a `sierra-culebra` y no verás al equipo. |
+| `SCENARIO` | `ucm-madrid` \| `ucm-grupo` \| `sierra-culebra` | Sin ella cae a `sierra-culebra` y no verás al equipo. Se lee **una sola vez al arrancar**: un despliegue = un escenario para todo el mundo. Cambiarlo en caliente con `POST /reset` desconecta a quien esté compartiendo GPS — ver [`03-contrato-de-datos.md` §3](03-contrato-de-datos.md#post-reset--recarga-el-escenario-y-borra-el-ensayo-en-curso) (20 sep 2026). |
 | `PHONE_OVERRIDES` | `p-001:+34…,p-002:+34…` | Los móviles reales. **No están en el repo** y por eso hacen falta aquí. Un `p-00X` que no exista se descarta con un warning. |
 | `CALL_ALLOWLIST` | los mismos números, separados por comas | Cerrojo 2. Vacía = «sin filtro» en nuestra API, pero **«no marca nadie»** en cuanto el workflow tiene su nodo de autorización. |
 | `ALLOW_REAL_CALLS` | `true` solo cuando toca | Cerrojo 1. |

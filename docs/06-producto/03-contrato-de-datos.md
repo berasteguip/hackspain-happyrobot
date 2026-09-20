@@ -3,6 +3,10 @@
 > Escrito el 19 sep 2026 como contrato compartido antes de construir en paralelo. **Ningún componente
 > inventa campos.** Si algo falta aquí, se añade aquí primero y luego se implementa.
 > Nombres de campo en inglés, explicaciones en español (convención del repo).
+>
+> **Actualizado el 20 sep 2026:** §3 documenta que `POST /reset` es **destructivo** con gente
+> conectada (personas registradas, `registered_phones`, anclaje, tablero y GPS) y cuál es el botón
+> seguro.
 
 ## 0. Arquitectura y quién escribe qué
 
@@ -302,7 +306,8 @@ compartido con HappyRobot. Sin auth no se puede aceptar webhooks de la plataform
 | POST | `/human/override` | `{subject_type, subject_id, field, value, reason, operator}` | dashboard |
 | POST | `/human/approve` | `{decision_id, approved, operator, reason}` | dashboard |
 | POST | `/sim/run` | `{variants, horizon_min}` | dashboard (botón "simular") |
-| POST | `/reset` | `{scenario: "sierra-culebra"}` | motor de escenario al arrancar |
+| POST | `/calls/reset?batch_id=&operator=` | — | **el botón seguro**: retira los intentos de llamada y **no toca nada más**. Queda en el `decision_log`. |
+| POST | `/reset` | `{scenario: "sierra-culebra"}` | motor de escenario al arrancar. ⚠️ **Destruye el ensayo en curso**: ver abajo antes de pulsarlo. |
 
 #### `POST /calls/dispatch` — el círculo del mando se convierte en N llamadas
 
@@ -402,6 +407,52 @@ Tres cosas que este endpoint **tiene** que cumplir:
 
 `GET /api/roster` expone el resultado como `triage_level` / `triage_reason` / `triage_confidence` /
 `triage_at`, que es por donde el puesto de mando lo lee y colorea.
+
+#### `POST /reset` — recarga el escenario y **borra el ensayo en curso**
+
+> **Verificado el 20 sep 2026** ejecutando la API con `TestClient`: alta desde `/track` con
+> `anchor: true`, un `POST /positions` correcto, y después `POST /reset {"scenario": "ucm-madrid"}`
+> estando cargado `ucm-grupo`. Lo de abajo es lo que se observó, no lo que se teme; lo único que
+> sale de leer el código y no de la ejecución es el borrado del `decision_log` en memoria
+> (`state.reset_entities()`).
+
+No es «recargar el mapa». `load_scenario` llama a `state.reset_entities()`, que **vacía el estado
+entero**. Con gente conectada se pierde, de golpe:
+
+- **Las personas registradas desde `/track` desaparecen.** Su `person_id` deja de existir.
+- **`registered_phones` queda vacío.** Con `REGISTER_ONLY_CALLS=true` eso deja a **nadie** llamable
+  hasta que cada uno vuelva a abrir el enlace.
+- **Se pierde el anclaje.** `GET /api/anchor` devuelve `{"anchored": false}` y el mundo del ensayo
+  salta de vuelta a su sitio original, lejos de la gente real.
+- **El tablero de llamadas, el `call_log` y el `decision_log` en memoria quedan a cero.**
+- **Quien esté compartiendo GPS empieza a recibir `404` en `POST /positions`**, porque su persona ya
+  no existe. Su pestaña marca el beacon en error y **no se recupera sola**: tiene que volver a pasar
+  por `/track`, y saldrá con un `person_id` distinto del que lleva en la URL.
+
+Dos trampas más, del mismo día:
+
+- **`settings.scenario` no cambia.** El reset mueve `state.scenario`, no la variable de entorno. Un
+  reinicio del contenedor en Railway —redeploy, crash, `restartPolicy`— **revierte el escenario sin
+  avisar a nadie**. Un cambio en caliente no es un cambio de configuración.
+- **Un escenario inexistente devuelve `200`.** `POST /reset {"scenario":"onboarding"}` responde `ok`
+  y carga en silencio el fallback embebido de 12 casas en Zamora (`loader.minimal_scenario()`). El
+  único rastro es un `WARNING` en el log. Un typo en el nombre te deja el despliegue en otro sitio.
+
+Lo que **sí** sobrevive: `state_version` no vuelve a cero, a propósito, para no romper el long-poll
+del puesto de mando (`api/state.py`); y el JSONL de auditoría es append-only, así que lo ocurrido
+sigue en disco aunque desaparezca de la pantalla.
+
+Exige `x-api-key`, así que solo lo alcanza quien tenga la clave de operador — incluido el navegador
+del puesto de mando, que la guarda en `localStorage`. La puerta está cerrada, pero la llave circula.
+
+**Entre tandas de ensayo, el botón que se pulsa es `POST /calls/reset`**, que retira los intentos de
+llamada y deja en pie el escenario, las posiciones y el historial. `scripts/reset.py` usa ese por
+defecto y reserva `/reset` para `--todo`.
+
+> HIPÓTESIS: durante el evento no hay ningún uso legítimo de `/reset` con un escenario distinto.
+> Cambiar de escenario en caliente es, en la práctica, tirar el ensayo y desconectar a todo el que
+> esté compartiendo posición. Si hace falta un segundo escenario en vivo, sale más barato un segundo
+> servicio con su propio `SCENARIO` que reutilizar el que tiene gente dentro.
 
 ### Respuesta estándar de escritura
 
