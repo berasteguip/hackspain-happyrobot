@@ -11,7 +11,6 @@ TIME_SCALE  ?= 60
 SEED        ?= 42
 HOUSES      ?= 120
 API_PORT    ?= 8000
-DASH_PORT   ?= 8080
 GPS_PORT    ?= 8081
 
 .DEFAULT_GOAL := help
@@ -48,9 +47,9 @@ engine: ## Lanza el motor de escenario contra la API
 	cd engine && .venv/bin/python -m engine.run --scenario scenarios/$(SCENARIO).yaml --time-scale $(TIME_SCALE) 2>/dev/null \
 	  || .venv/bin/python run.py --scenario scenarios/$(SCENARIO).yaml --time-scale $(TIME_SCALE)
 
-dashboard: ## Sirve el dashboard del puesto de mando (puerto 8080)
-	@echo "Dashboard en http://localhost:$(DASH_PORT)"
-	cd web/dashboard && python3 -m http.server $(DASH_PORT)
+dashboard: ## Levanta el CECOP, el puesto de mando (Vite, puerto 5173)
+	@echo "CECOP en http://localhost:5173 · necesita VITE_API_BASE si la API no está en el 8000"
+	cd apps/command-center && npm install --no-audit --no-fund && npm run dev
 
 gps: ## Sirve la pagina de ubicacion (puerto 8081)
 	@echo "GPS en http://localhost:$(GPS_PORT)?p=p-001"
@@ -79,7 +78,7 @@ test: ## Corre los tests de todos los componentes
 demo: ## Recuerda la secuencia de la demo (no arranca nada)
 	@echo "Antes:  make install && make env && make data && make test"
 	@echo "Pestana 1: make api"
-	@echo "Pestana 2: make dashboard   -> http://localhost:$(DASH_PORT)"
+	@echo "Pestana 2: make dashboard   -> http://localhost:5173"
 	@echo "Pestana 3: make gps         -> tunel HTTPS si se usa movil"
 	@echo "Pestana 4: make engine      -> empieza a moverse el escenario"
 	@echo ""
@@ -87,7 +86,7 @@ demo: ## Recuerda la secuencia de la demo (no arranca nada)
 	@echo "Ponlo a true SOLO en el momento de la demo."
 
 stop: ## Mata los procesos de los puertos de la demo
-	@for p in $(API_PORT) $(DASH_PORT) $(GPS_PORT); do \
+	@for p in $(API_PORT) 5173 $(GPS_PORT); do \
 	  pid=$$(lsof -ti tcp:$$p 2>/dev/null); \
 	  [ -n "$$pid" ] && { echo "matando $$pid en puerto $$p"; kill $$pid; } || true; \
 	done

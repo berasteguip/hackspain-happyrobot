@@ -1,6 +1,15 @@
 # 003 — Un solo frontend y un solo dataset (hoy hay dos de cada)
 
-> **Fecha:** 2026-09-19 · **Estado:** propuesta (pendiente de decidir en equipo)
+> **Fecha:** 2026-09-19 · **Estado:** la mitad del frontend, **aceptada y ejecutada** el 2026-09-20.
+> El dataset sigue sin decidir.
+>
+> **Lo hecho el 20 sep:** `web/dashboard` **borrado del repo**. El frontend es
+> `apps/command-center`. Se movieron a él el `Makefile`, el diagrama del contrato de datos y el
+> resto de referencias. Lo que el dashboard tenía y el CECOP no —timeline del `decision_log`,
+> cola de atención con `score_breakdown`, casas sin contestar, prioridad aérea, aprobaciones—
+> **no se ha portado**: está en el historial de git (último commit con el directorio vivo) y hay
+> que reconstruirlo en el CECOP. El primer panel portado es «Memoria compartida» (el log de
+> llamadas), que además es nuevo.
 
 ## Contexto
 
@@ -21,8 +30,9 @@ delante, mantener dos frontends y dos datasets es tirar la mitad del equipo.
 
 - **Frontend:** `apps/command-center` como cara (ya cumple la decisión 001) consumiendo
   `api/` como cerebro (`GET /state`, `/diff`, `/houses/no-answer`, `POST /human/approve`).
-  `web/dashboard` se queda como referencia de qué pintar y se marca obsoleto cuando el
-  command-center cubra lo mismo. `web/gps` (página del vecino) sigue.
+  `web/gps` (página del vecino) sigue. ~~`web/dashboard` se queda como referencia de qué pintar
+  y se marca obsoleto cuando el command-center cubra lo mismo.~~ El 20 sep se borró directamente,
+  sin esperar a esa cobertura: la referencia es el historial de git.
 - **Dataset:** Zamora. Motivo: `data/generate.py` ya genera 300 personas sobre edificios
   reales con semilla, hay geografía verificada
   ([`../03-dominio-crisis/05-geografia-sierra-culebra.md`](../03-dominio-crisis/05-geografia-sierra-culebra.md))

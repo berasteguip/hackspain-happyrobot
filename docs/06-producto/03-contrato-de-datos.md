@@ -11,7 +11,7 @@ motor de escenario (engine/)  ──POST /events/*──────┐
 página GPS (web/gps/)         ──POST /positions─────┤
 HappyRobot workflows          ──POST /calls/outcome─┼──►  API estado de crisis (api/)
                               ◄──GET  /instructions─┤         │  estado en memoria + JSONL append-only
-dashboard (web/dashboard/)    ◄──GET  /state,/diff──┘         │
+CECOP (apps/command-center) ◄──GET /state,/diff,/calls/log──┘         │
 simulador (sim/)              ◄──GET  /state, POST /sim/run───┘
 ```
 

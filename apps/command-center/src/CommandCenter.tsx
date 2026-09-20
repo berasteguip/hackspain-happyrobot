@@ -4,6 +4,7 @@ import { fetchFirmsSpain } from './firms'
 import { EVACUATION_CORRIDORS, INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
 import { buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
 import type { FireSettings } from './fire-model'
+import { CallLog } from './CallLog'
 import { FireControls, RefugeRoutesPanel, ResponsePanel } from './CopPanels'
 import { RESPONSE_CENTERS } from './response'
 import type { DemoNotice } from './response'
@@ -227,6 +228,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
       </nav>
+      <CallLog />
       <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point" />Personas · origen en la ficha</span><span><i className="legend-zone" />Punto de encuentro</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
       <section className="forecast-summary" aria-label="Viento y simulación rápida"><div className="wind-heading"><span><span className="eyebrow">VIENTO · DEMO</span><strong>Hacia SO · {fireSettings.windKmh} km/h</strong></span><button type="button" className="wind-toggle" role="switch" aria-label="Mostrar viento en el mapa" aria-checked={showWind} onClick={toggleWind}>{showWind ? 'ON' : 'OFF'}</button></div><button type="button" className="cop-primary" onClick={simulateFire}>Simular incendio dentro de 1 hora</button>{horizon > 0 && <button type="button" className="cop-secondary" onClick={resetFire}>Volver al incendio inicial</button>}<small role="status">{horizon ? 'Posible extensión a +1 h · no es un pronóstico' : 'Incendio inicial · viento prefijado del escenario'}</small></section>
       {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={panelTitle}>

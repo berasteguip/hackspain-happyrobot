@@ -160,9 +160,9 @@ agente ──► Write to Twin        (la fuente: es lo que leen las otras 299 i
        └─► POST /calls/log      (la copia: es lo que ve el puesto de mando)
 ```
 
-`POST /calls/log` sube `state_version`, así que la fila sale por el long-poll de `/state/diff` que
-`web/dashboard/state.js` ya hace desde hace tiempo — sin inventar ningún canal nuevo. Si el webhook
-falla, el log sigue funcionando y solo se retrasa la pantalla: ese es el lado correcto del fallo.
+El CECOP (`apps/command-center`) lo lee con `GET /calls/log` y lo pinta en el panel «Memoria
+compartida», abajo a la izquierda sobre el mapa. Si el webhook falla, el log sigue funcionando y
+solo se retrasa la pantalla: ese es el lado correcto del fallo.
 
 Dos asimetrías deliberadas entre las dos copias:
 
