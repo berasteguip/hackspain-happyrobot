@@ -4,6 +4,8 @@
 // puede leer de Twin (docs/06-producto/03-contrato-de-datos.md §0), así que el CECOP
 // lo lee del espejo que mantiene `api/`: GET /calls/log.
 
+import { readOperatorKey } from './crisisApi'
+
 export type CallLogEntry = {
   id: string
   created_at: string
@@ -73,11 +75,19 @@ export function zoneLabel(id: string | null) {
   return (id ?? '').replace(/^n-/, '').replace(/-/g, ' ')
 }
 
-// Ruta relativa, como el resto de `crisisApi.ts`: en producción la API sirve el propio
-// frontend en `/`, y en desarrollo el proxy de Vite manda `/calls` a `VITE_CRISIS_API`.
-// Una segunda variable de entorno solo para este módulo era una forma de divergir.
+// Ruta relativa y clave de operador, como el resto de `crisisApi.ts`: en producción la API
+// sirve el propio frontend en `/`, y en desarrollo el proxy de Vite manda `/calls` a
+// `VITE_CRISIS_API`. La clave es la misma que usa el tablero de llamadas — una segunda
+// forma de autenticarse solo para este panel era pedir un 401 a gritos.
 export async function fetchCallLog(signal?: AbortSignal): Promise<CallLogEntry[]> {
-  const res = await fetch('/calls/log?limit=60', { signal })
+  const key = readOperatorKey()
+  const res = await fetch('/calls/log?limit=60', {
+    signal,
+    headers: key ? { 'x-api-key': key } : undefined,
+  })
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('falta la clave de operador (la misma que el tablero de llamadas)')
+  }
   if (!res.ok) throw new Error(`GET /calls/log → ${res.status}`)
   const data = (await res.json()) as { entries?: CallLogEntry[] }
   return Array.isArray(data.entries) ? data.entries : []
