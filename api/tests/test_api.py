@@ -402,6 +402,9 @@ def test_una_observacion_de_llamada_no_contestada_no_inventa_conversacion(client
     persona = client.get("/people/p-003").json()
     assert persona["status"] == "no_answer", "sin interlocutor no hay contacto"
     assert persona["triage"]["level"] == "unknown", "un nivel vacío no se inventa"
+    # «confianza baja» sin interlocutor sonaría a que el agente dudó de algo que nadie dijo.
+    assert "nadie descolgó" in persona["triage"]["reason"]
+    assert "confianza" not in persona["triage"]["reason"]
 
 
 def test_los_campos_vacios_del_extract_no_tumban_la_peticion(client):
@@ -457,17 +460,6 @@ def test_registrarse_desde_el_enlace_crea_una_persona_llamable_y_es_idempotente(
     ).status_code == 422
 
 
-def test_el_registrado_pasa_el_cerrojo_aunque_haya_lista_blanca(client, monkeypatch):
-    import notify
-
-    client.post("/reset")
-    monkeypatch.setattr(settings, "call_allowlist", {"+34999999999"})
-    assert notify.phone_allowed("+34600990001") is False
-    client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04})
-    assert notify.phone_allowed("+34600000000") is True
-    assert "+34600000000" in notify.allowed_numbers()
-
-
 def test_anclar_el_mundo_desplaza_fuego_y_vecinos_alrededor_del_registrado(client):
     client.post("/reset")
     antes = client.get("/state").json()
@@ -498,7 +490,6 @@ def test_register_only_calls_bloquea_al_dataset_y_deja_pasar_al_registrado(clien
     import notify
 
     client.post("/reset")
-    monkeypatch.setattr(settings, "call_allowlist", set())
     monkeypatch.setattr(settings, "register_only_calls", True)
     assert notify.phone_allowed("+34600990001") is False
     client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04})
@@ -517,3 +508,75 @@ def test_con_auto_notify_apagado_registrarse_no_dispara_llamadas(client, monkeyp
     client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04, "anchor": True})
     client.post("/positions", json={"person_id": "p-001", "lat": 41.66, "lon": -6.05})
     assert llamadas == [], "sin operador no suena nadie"
+
+
+def test_una_llamada_sin_nada_resenable_tambien_deja_motivo(client):
+    """Una ficha que dice «el agente no dejó motivo» se lee como que algo falló.
+
+    Lo normal es lo contrario: la llamada fue bien y no había nada que corrigiera el mapa. Eso
+    también es información —significa no volver a mirar esta ficha— y tiene que estar escrito.
+    """
+    client.post("/reset")
+    client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-002",
+            "nivel": "verde",
+            "discrepancia": "ninguna",
+            "confianza": "alta",
+            "resultado": "completada",
+        },
+    )
+    motivo = client.get("/people/p-002").json()["triage"]["reason"]
+    assert motivo, "el motivo nunca vuelve vacío"
+    assert "confirma lo que traía el mapa" in motivo
+
+    # Y si ni siquiera hubo comparación, se dice eso otro en vez de afirmar una confirmación.
+    client.post("/calls/observation", json={"PERSONA_ID": "p-004", "nivel": "verde"})
+    otro = client.get("/people/p-004").json()["triage"]["reason"]
+    assert otro and "confirma" not in otro
+
+
+def test_un_campo_ininteligible_no_tira_toda_la_observacion(client):
+    """Caso real del 20 sep 2026: el AI Extract devolvió `"llamas": "llamas"`.
+
+    Pydantic tumbaba la petición entera con un 422 y se perdía una observación que traía nivel
+    rojo, discrepancia y una nota diciendo que la persona veía llamas. Del otro lado de este
+    endpoint hay un modelo de lenguaje: puede poner cualquier cosa en cualquier campo, y eso no
+    puede costar la única información que tenemos de alguien en peligro.
+    """
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-001",
+            "nivel": "rojo",
+            "llamas": "llamas",          # el nombre del campo en vez de un booleano
+            "duration_s": "un rato",     # y un número que no es un número
+            "discrepancia": "prior_bajo_obs_alta",
+            "confianza": "media",
+            "resultado": "cortada",
+            "nota_libre": "Afirmó ver llamas cercanas; el triaje quedó interrumpido.",
+        },
+    )
+    assert r.status_code == 200, "un campo ilegible no puede costar la observación entera"
+
+    triaje = client.get("/people/p-001").json()["triage"]
+    assert triaje["level"] == "red", "lo que SÍ se entendía se guarda"
+    assert triaje["flames"] is None, "lo que no se entendía se descarta, no se inventa"
+    assert "PEOR de lo que decía el mapa" in triaje["reason"]
+    assert "se cortó a medias" in triaje["reason"]
+
+
+def test_los_booleanos_del_extract_admiten_las_formas_razonables(client):
+    from models import CallObservation
+
+    assert CallObservation(llamas="true").flames is True
+    assert CallObservation(llamas="sí").flames is True
+    assert CallObservation(llamas=1).flames is True
+    assert CallObservation(llamas="false").flames is False
+    assert CallObservation(llamas="no").flames is False
+    assert CallObservation(llamas="cualquier cosa").flames is None
+    assert CallObservation(duration_s="96").duration_s == 96
+    assert CallObservation(duration_s="96.7").duration_s == 96
+    assert CallObservation(duration_s="un rato").duration_s is None

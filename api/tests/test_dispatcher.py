@@ -9,13 +9,14 @@ propio intento con su propio estado, y que un punto que no suena dice POR QUÉ n
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
 import dispatcher
 import notify
 from models import CallDispatch, CallState, Person
-from settings import reload_settings, settings
+from settings import settings
 from state import state
 
 # Facultad de Informática y Ciencias Matemáticas de la Complutense, a ~400 m una de la otra.
@@ -127,34 +128,31 @@ def test_el_tope_por_rafaga_corta_y_lo_dice(poblado, monkeypatch):
     assert "tope de 2 llamadas" in descartados[0]["reason"]
 
 
-# --------------------------------------------------------------------------- lista blanca
+# --------------------------------------------------------------------------- teléfonos
 
 
-def test_la_lista_blanca_para_a_quien_no_este_en_ella(poblado, monkeypatch):
-    """El cerrojo que protege los ensayos: escenario con móviles reales y vecinos sintéticos."""
+def test_sin_lista_blanca_se_marca_a_cualquiera_del_escenario(poblado, monkeypatch):
+    """Ya no hay lista blanca: quien tenga teléfono se intenta, y quien no, no.
+
+    Se quitó porque el agente llama a números que le dicta la persona en mitad de la
+    conversación —la madre que se quedó en casa— y eso no cabe en una lista escrita de
+    antemano. Lo que queda frenando una ráfaga es ALLOW_REAL_CALLS y los topes de lote.
+    """
     monkeypatch.setattr(settings, "allow_real_calls", True)
-    monkeypatch.setattr(settings, "call_allowlist", {"+34600990001"})
 
     _, intentos, _, _ = dispatcher.dispatch(
         poblado, CallDispatch(person_ids=["p-001", "p-003"])
     )
-    por_persona = {c.person_id: c for c in intentos}
 
-    assert por_persona["p-003"].state == CallState.blocked
-    assert "CALL_ALLOWLIST" in (por_persona["p-003"].detail or "")
-    # El que sí está en la lista intenta marcar de verdad; sin webhook configurado, falla.
-    assert por_persona["p-001"].state == CallState.failed
-    assert "HR_WORKFLOW_WEBHOOK" in (por_persona["p-001"].detail or "")
+    for intento in intentos:
+        assert intento.state != CallState.blocked, "ya no existe el bloqueo por lista"
+        # Sin webhook configurado no sale ninguna, pero por falta de webhook, no por filtro.
+        assert "HR_WORKFLOW_WEBHOOK" in (intento.detail or "")
 
 
-def test_la_lista_blanca_normaliza_el_formato_del_telefono():
-    """`+34 600 99 00 01` y `+34600990001` son el mismo móvil; el cerrojo no puede dudar."""
+def test_normalizar_telefono_ignora_espacios_y_guiones():
+    """`+34 600 99 00 01` y `+34600990001` son el mismo móvil."""
     assert notify.normalize_phone("+34 600-99 00 01") == "+34600990001"
-
-
-def test_con_la_lista_vacia_no_filtra_nada(monkeypatch):
-    monkeypatch.setattr(settings, "call_allowlist", set())
-    assert notify.phone_allowed("+34600990001") is True
 
 
 # --------------------------------------------------------------------------- contexto del agente
@@ -236,34 +234,19 @@ def test_el_outcome_cierra_el_intento_que_lo_origino(client):
     assert tablero[call_id]["answered"] is True
 
 
-def test_settings_lee_la_lista_blanca_del_entorno(monkeypatch):
-    monkeypatch.setenv("CALL_ALLOWLIST", "+34 600 99 00 01, +34600990002")
-    nuevos = reload_settings()
-    try:
-        assert nuevos.call_allowlist == {"+34600990001", "+34600990002"}
-    finally:
-        monkeypatch.delenv("CALL_ALLOWLIST", raising=False)
-        reload_settings()
-
-
 # --------------------------------------------------------------------------------------
 # El tercer cerrojo, el que vive dentro del workflow
 # --------------------------------------------------------------------------------------
 
 
-def test_el_payload_alimenta_el_cerrojo_del_workflow(monkeypatch):
-    """El workflow revalida el destino con un nodo Python y exige estos dos campos.
-
-    Sin ellos revienta el run con «Destino no autorizado para el simulacro» y no marca.
-    """
-    monkeypatch.setattr(settings, "call_allowlist", {"+34611000001", "+34622000002"})
+def test_el_payload_declara_el_simulacro(monkeypatch):
+    """`DEMO_MODE` es lo único que el cerrojo del workflow sigue exigiendo al disparo."""
     monkeypatch.setattr(settings, "demo_mode", True)
 
     payload = notify.trigger_payload(Person(id="p-x", phone="+34611000001"))
 
     assert payload["DEMO_MODE"] == "true"
-    # Va como JSON porque el nodo hace `json.loads` cuando llega una cadena.
-    assert json.loads(payload["ALLOWED_NUMBERS"]) == ["+34611000001", "+34622000002"]
+    assert "ALLOWED_NUMBERS" not in payload, "la lista blanca se quitó del workflow en la v9"
 
 
 def test_apagar_demo_mode_hace_que_el_workflow_rechace(monkeypatch):
@@ -273,16 +256,43 @@ def test_apagar_demo_mode_hace_que_el_workflow_rechace(monkeypatch):
     assert notify.trigger_payload(Person(id="p-x", phone="+34611000001"))["DEMO_MODE"] == "false"
 
 
-def test_una_lista_blanca_vacia_viaja_vacia_y_el_workflow_no_marcara(monkeypatch):
-    """Con `CALL_ALLOWLIST` vacía nuestro cerrojo no filtra, pero el del workflow sí.
+def _gate_principal(numero: str, demo: str) -> str:
+    """El nodo «Freno de mano del simulacro» de la v9, copiado literal.
 
-    Es un cambio de comportamiento que conviene tener escrito: antes «vacía» significaba «sin
-    filtro» de punta a punta; con el nodo de autorización publicado significa «no marca nadie».
+    Vive en HappyRobot, no aquí, y por eso puede romperse sin que ningún test se entere: el 19
+    de septiembre la rama del organismo llevaba horas muerta porque el payload no mandaba lo
+    que el nodo esperaba. Copiarlo es la única forma de que un cambio en el payload avise.
     """
-    monkeypatch.setattr(settings, "call_allowlist", set())
+    limpio = "".join(c for c in str(numero or "") if c.isdigit() or c == "+")
+    if str(demo or "").lower() != "true":
+        raise ValueError("La peticion no viene declarada como simulacro: no se marca.")
+    if not re.fullmatch(r"\+34[67]\d{8}", limpio):
+        raise ValueError("El numero de destino no es un movil espanol valido.")
+    return limpio
 
-    assert notify.phone_allowed("+34611000001") is True, "el nuestro sigue sin filtrar"
-    assert json.loads(notify.trigger_payload(Person(id="p-x")).get("ALLOWED_NUMBERS")) == []
+
+def test_el_payload_pasa_el_cerrojo_principal_de_la_v9(monkeypatch):
+    monkeypatch.setattr(settings, "demo_mode", True)
+
+    payload = notify.trigger_payload(Person(id="p-x", phone="+34611000001"))
+
+    assert _gate_principal(payload["NUMERO_TELEFONO"], payload["DEMO_MODE"]) == "+34611000001"
+
+
+def test_con_demo_mode_apagado_el_cerrojo_principal_no_marca(monkeypatch):
+    monkeypatch.setattr(settings, "demo_mode", False)
+
+    payload = notify.trigger_payload(Person(id="p-x", phone="+34611000001"))
+
+    with pytest.raises(ValueError):
+        _gate_principal(payload["NUMERO_TELEFONO"], payload["DEMO_MODE"])
+
+
+def test_el_numero_del_organismo_viaja_para_que_el_mando_sea_configurable(monkeypatch):
+    """El nodo de la v9 tiene a Nico fijo, pero deja que el disparo lo sobreescriba."""
+    monkeypatch.setattr(settings, "demo_org_phone", "+34690757371")
+
+    assert notify.trigger_payload(Person(id="p-x"))["NUMERO_ORGANISMO"] == "+34690757371"
 
 
 # --------------------------------------------------------------------------------------

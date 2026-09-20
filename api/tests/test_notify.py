@@ -197,3 +197,23 @@ def test_sin_clave_de_happyrobot_no_se_manda_cabecera_de_auth(monkeypatch):
     monkeypatch.setattr(settings, "hr_shared_secret", "")
 
     assert notify._webhook_headers() == {"Content-Type": "application/json"}
+
+
+def test_el_planner_tampoco_marca_con_la_clave_publica(state, cliente_espia, monkeypatch):
+    """El planner llama por su cuenta sin pasar por `/calls/dispatch`.
+
+    Si el cerrojo de la clave pública viviera solo en el despachador, la vía que dispara sin
+    que nadie mire —convoy roto, persona en riesgo— se lo saltaría. Sería decorativo.
+    """
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
+    monkeypatch.setattr(settings, "hr_shared_secret", "cambiame-por-algo-largo")
+
+    persona = _persona()
+    state.people[persona.id] = persona
+    resultado = notify.place_call(persona, "el planner la ve en riesgo", state, client=cliente)
+
+    assert enviadas == [], "no puede salir una petición con la clave publicada"
+    assert resultado.blocked is True
+    assert "público" in resultado.detail

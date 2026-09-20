@@ -100,24 +100,15 @@ def normalize_phone(phone: str | None) -> str:
 
 
 def phone_allowed(phone: str | None) -> bool:
-    """El segundo cerrojo. Con `CALL_ALLOWLIST` vacía no filtra nada; con lista, solo esos.
-
-    Existe porque durante los ensayos el escenario cargado tiene teléfonos REALES del equipo
-    mezclados con vecinos sintéticos, y `ALLOW_REAL_CALLS=true` a secas marcaría los 24.
-    """
-    if not settings.call_allowlist and not settings.register_only_calls:
+    """Cerrojo opcional del ensayo con el enlace: con `REGISTER_ONLY_CALLS` solo suena quien se
+    registró él mismo desde `/track`. Apagado (por defecto) no filtra nada."""
+    if not settings.register_only_calls:
         return True
-    return normalize_phone(phone) in allowed_numbers()
+    from state import state  # import tardío: state importa settings, no al revés
+
+    return normalize_phone(phone) in state.registered_phones
 
 
-def allowed_numbers() -> set[str]:
-    """`CALL_ALLOWLIST` más quien se ha apuntado él mismo desde el enlace (si el ajuste lo permite)."""
-    numeros = set(settings.call_allowlist)
-    if settings.register_auto_allow:
-        from state import state  # import tardío: state importa settings, no al revés
-
-        numeros |= state.registered_phones
-    return numeros
 
 
 def _run_id_from(resp: httpx.Response) -> str | None:
@@ -202,13 +193,15 @@ def trigger_payload(
         "PRIOR_NIVEL": nivel,
         "ORDEN_AUTORIDAD": settings.authority_order,
         # --- lo que exige el cerrojo del propio workflow ---
-        # Un nodo Python del workflow revalida el destino contra esta lista y revienta el run
-        # con «Destino no autorizado para el simulacro» si no cuadra. Es el mismo criterio que
-        # `CALL_ALLOWLIST`, pero comprobado **en el otro lado**: si alguien apunta a nuestra API
-        # desde otro sitio, o si esta lista viajara vacía, HappyRobot se niega igual. Dos
-        # cerrojos independientes valen más que uno duplicado.
-        "ALLOWED_NUMBERS": json.dumps(sorted(allowed_numbers())),
+        # `DEMO_MODE` es el freno de mano del lado de HappyRobot: su nodo de autorización se
+        # niega a marcar si la petición no viene declarada como simulacro. Ya NO viaja una
+        # lista blanca: desde la v9 el workflow no filtra por número, porque el destino de
+        # `llamar_a_persona` lo dicta el vecino durante la llamada y no puede estar en una
+        # lista escrita de antemano.
         "DEMO_MODE": "true" if settings.demo_mode else "false",
+        # El número al que llama `llamar_a_organismo_oficial`. Es fijo y lo pone la
+        # configuración: el agente no lo elige ni se lo pregunta a la persona.
+        "NUMERO_ORGANISMO": settings.demo_org_phone,
         # --- claves propias del repo ---
         "action": "call" if channel == Channel.call else "sms",
         "person_id": person.id,
@@ -273,16 +266,25 @@ def _dispatch(
         detail = "sin teléfono en la ficha"
         log.warning("no se puede contactar a %s: sin teléfono", person.id)
     elif not phone_allowed(person.phone):
-        # No es un error: es el cerrojo haciendo su trabajo. Se registra igual para que en el
-        # tablero se vea POR QUÉ ese punto del círculo no sonó.
         simulated = True
         ok = True
-        detail = f"BLOQUEADO: {person.phone} no está en CALL_ALLOWLIST"
-        log.warning(
-            "[BLOQUEADO] %s a %s (%s): fuera de la lista blanca",
+        detail = f"BLOQUEADO: {person.phone} no se registró desde el enlace (REGISTER_ONLY_CALLS)"
+        log.warning("[BLOQUEADO] llamada a %s (%s): no registrado", person.name or person.id, person.phone)
+    elif settings.secret_is_public:
+        # El cerrojo vive AQUÍ y no solo en `/calls/dispatch` porque el planner marca por su
+        # cuenta —convoy roto, persona en riesgo, instrucción que cambia— sin pasar por el
+        # despachador. Esa es precisamente la vía que dispara sin que nadie esté mirando, así
+        # que dejarla fuera del cerrojo lo convertía en decorativo.
+        simulated = True
+        ok = True
+        detail = (
+            "BLOQUEADO: HR_SHARED_SECRET es un valor de ejemplo del repo, y el repo es público. "
+            "Cámbialo (`openssl rand -hex 32`) antes de marcar de verdad."
+        )
+        log.error(
+            "[BLOQUEADO] %s a %s: la clave de esta API está publicada en el repo",
             "llamada" if channel == Channel.call else "SMS",
             person.name or person.id,
-            person.phone,
         )
     else:
         simulated = False

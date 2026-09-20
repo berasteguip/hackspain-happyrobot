@@ -62,21 +62,21 @@ export function CitizenTrack() {
         </p>
         <label>
           Nombre
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Opcional" autoComplete="name" />
+          <input data-demo="citizen-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Opcional" autoComplete="name" />
         </label>
         <label>
           Teléfono
           <span className="phone-row">
-            <select aria-label="Prefijo" value={prefix} onChange={(event) => setPrefix(event.target.value)}>
+            <select data-demo="citizen-prefix" aria-label="Prefijo" value={prefix} onChange={(event) => setPrefix(event.target.value)}>
               {PREFIXES.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
-            <input inputMode="tel" autoComplete="tel-national" placeholder="600 000 000" value={number} onChange={(event) => setNumber(event.target.value)} />
+            <input data-demo="citizen-phone" inputMode="tel" autoComplete="tel-national" placeholder="600 000 000" value={number} onChange={(event) => setNumber(event.target.value)} />
           </span>
         </label>
-        <button type="submit" disabled={!phoneOk || busy !== null}>
+        <button type="submit" data-demo="citizen-consent" disabled={!phoneOk || busy !== null}>
           {busy === 'gps' ? 'Leyendo tu ubicación…' : busy === 'register' ? 'Entrando en el mapa…' : 'Compartir mi ubicación y entrar'}
         </button>
-        <button type="button" className="secondary" disabled={!phoneOk || busy !== null} onClick={() => { setError(''); void register(ETSIT.lat, ETSIT.lng) }}>
+        <button type="button" data-demo="citizen-demo-position" className="secondary" disabled={!phoneOk || busy !== null} onClick={() => { setError(''); void register(ETSIT.lat, ETSIT.lng) }}>
           Sin GPS: usar la posición de ETSIT (demo)
         </button>
         {error && <p className="citizen-error" role="alert">{error}</p>}
