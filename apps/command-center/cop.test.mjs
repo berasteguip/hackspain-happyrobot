@@ -42,9 +42,9 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(!html.includes('class="floating-panel"'))
 })
 
-test('el recorrido es una demo en vivo: llama, escala y gira el viento de verdad, y cuenta la historia entera', async () => {
+test('el recorrido es una demo de manos: el visitante rodea, llama, escala y pinta el fuego, y el recorrido espera a cada acción', async () => {
   const { DEMO_TOUR_STEPS, TOUR_INTRO, shouldShowTourIntro, TOUR_STORAGE_KEY } = await server.ssrLoadModule('/src/demoTour.ts')
-  assert.deepEqual(DEMO_TOUR_STEPS.map((step) => step.id), ['situacion', 'personas', 'llamar', 'happyrobot', 'cola', 'ficha', 'escalada', 'viento', 'plan', 'centros', 'empieza'])
+  assert.deepEqual(DEMO_TOUR_STEPS.map((step) => step.id), ['situacion', 'grupo', 'dibuja', 'llama', 'motor', 'roja', 'escala', 'run', 'camino', 'pinta', 'rerruta', 'contraste', 'fin'])
   // Cada anclaje existe en la interfaz: un selector que no está en el código es un paso que Driver no puede señalar.
   const source = [
     readFileSync(new URL('./src/CommandCenter.tsx', import.meta.url), 'utf8'),
@@ -56,34 +56,52 @@ test('el recorrido es una demo en vivo: llama, escala y gira el viento de verdad
     const demo = step.element.match(/data-demo="([^"]+)"/)?.[1]
     assert.ok(demo, `${step.id}: anclaje data-demo`)
     assert.ok(source.includes(`data-demo="${demo}"`) || source.includes(`'${demo}'`) || source.includes(`scope="${demo}"`), `${step.id}: ${demo} existe en la interfaz`)
-    assert.ok(step.title.length <= 60 && step.description.split(' ').length <= 50, `${step.id}: se lee de un vistazo`)
+    assert.ok(step.title.length <= 60 && step.description.split(' ').length <= 60, `${step.id}: se lee de un vistazo`)
+    // Un paso de manos dice qué hacer, en imperativo; uno que solo explica, no da órdenes.
+    assert.equal(Boolean(step.task), Boolean(step.view.handsOn), `${step.id}: instrucción solo en los pasos de manos`)
   }
-  // Las tres operaciones reales, en el orden de la historia: llamar antes de escalar, escalar antes de girar el viento.
-  const runs = DEMO_TOUR_STEPS.filter((step) => step.view.run).map((step) => step.view.run)
-  assert.deepEqual(runs, ['call-risk', 'escalate', 'shift-wind'])
-  // Los pasos que explican un panel lo abren antes; los del mapa cierran todo.
+  // Los dos casos, en el orden de la historia: rodear y llamar antes de escalar, y pintar el frente al final.
+  const hands = DEMO_TOUR_STEPS.filter((step) => step.view.handsOn).map((step) => step.id)
+  assert.deepEqual(hands, ['dibuja', 'llama', 'roja', 'escala', 'pinta'])
+  // La marca azul acompaña a cada gesto sobre el mapa; los pasos de HappyRobot abren la tarjeta.
   const view = Object.fromEntries(DEMO_TOUR_STEPS.map((step) => [step.id, step.view]))
-  assert.deepEqual(view.situacion, {})
-  assert.deepEqual(view.llamar, { focus: 'risk', run: 'call-risk' })
-  assert.deepEqual(view.happyrobot, { happyRobot: true })
-  assert.deepEqual(view.cola, { panel: 'people' })
-  assert.deepEqual(view.ficha, { person: true, silent: true })
-  assert.deepEqual(view.escalada, { happyRobot: true, run: 'escalate' })
-  assert.deepEqual(view.viento, { panel: 'cop', run: 'shift-wind' })
-  assert.deepEqual(view.plan, { panel: 'alerts' })
-  assert.deepEqual(view.centros, { panel: 'centers' })
-  assert.deepEqual(view.empieza, {})
-  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'ficha').description.includes('Enviar fuerzas de seguridad'))
-  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'empieza').description.includes('Zona'))
-  assert.equal(TOUR_INTRO.checklist.length, 3)
+  assert.deepEqual(view.dibuja, { focus: 'group', hint: 'draw', handsOn: true })
+  assert.deepEqual(view.roja, { focus: 'group', hint: 'person', handsOn: true })
+  assert.deepEqual(view.escala, { person: true, handsOn: true })
+  assert.deepEqual(view.pinta, { focus: 'route', hint: 'paint', handsOn: true })
+  for (const id of ['motor', 'run', 'rerruta']) assert.deepEqual(view[id], { happyRobot: true })
+  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'escala').task.includes('Enviar fuerzas de seguridad'))
+  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'dibuja').task.includes('Zona'))
+  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'pinta').task.includes('Frente'))
+  assert.equal(TOUR_INTRO.checklist.length, 2)
   assert.equal(TOUR_STORAGE_KEY, 'vigia-tour-seen')
   assert.equal(shouldShowTourIntro(), false)
   const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
   const intro = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
-  assert.ok(intro.includes('Cómo se guía una evacuación'))
-  assert.ok(intro.includes('Empezar la demo'))
+  assert.ok(intro.includes('Guía tú la evacuación'))
+  assert.ok(intro.includes('Empezar'))
   assert.ok(intro.includes('Explorar por mi cuenta'))
   assert.ok(intro.includes('tour-intro-checklist'))
+})
+
+test('el escenario de Madrid trae el grupo guiado: veinte casas apartadas, una que no descuelga, a pie y con reloj lento', async () => {
+  const { MADRID_SCENARIO } = await server.ssrLoadModule('/src/scenario-madrid.ts')
+  const { guided } = MADRID_SCENARIO
+  assert.ok(guided)
+  const group = MADRID_SCENARIO.citizens.filter((citizen) => citizen.locality === guided.locality)
+  assert.equal(group.length, 20)
+  const silent = group.filter((citizen) => citizen.outcome === 'no_answer')
+  assert.equal(silent.length, 1)
+  assert.equal(silent[0].id, guided.silentId)
+  assert.equal(silent[0].id, group.at(-1).id, 'la que no descuelga suena la última')
+  assert.ok(group.filter((citizen) => citizen.outcome === 'tracking').length === 19, 'las demás contestan y comparten ubicación')
+  // Nadie del campus se cuela en el círculo sugerido, y todo el grupo cabe dentro.
+  const { haversineMeters } = await server.ssrLoadModule('/src/geo.ts')
+  const center = { lng: group.reduce((sum, c) => sum + c.lng, 0) / group.length, lat: group.reduce((sum, c) => sum + c.lat, 0) / group.length }
+  const inside = MADRID_SCENARIO.citizens.filter((citizen) => haversineMeters(center.lng, center.lat, citizen.lng, citizen.lat) <= guided.radiusM)
+  assert.equal(inside.length, 20)
+  assert.ok(MADRID_SCENARIO.citizens.every((citizen) => citizen.speedKmh <= 6), 'en ciudad se evacúa a pie')
+  assert.equal(MADRID_SCENARIO.clockScale, 6)
 })
 
 test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {
@@ -707,7 +725,11 @@ test('el catálogo abre en Madrid junto a ETSIT y conserva Gredos', () => {
   assert.equal(SCENARIOS.map(item => item.id).join(','), 'madrid-etsit,gredos')
   assert.equal(GREDOS_SCENARIO.citizens.length, INITIAL_CITIZENS.length)
   assert.equal(MADRID_SCENARIO.citizens.length, 110)
-  assert.ok(MADRID_SCENARIO.citizens.every(citizen => haversineMeters(ETSIT.lng, ETSIT.lat, citizen.lng, citizen.lat) < 120))
+  // El campus (90) junto a la ETSIT; el grupo guiado (20) aparte, a poco más de un kilómetro.
+  const campus = MADRID_SCENARIO.citizens.filter(citizen => citizen.locality === 'ETSIT')
+  assert.equal(campus.length, 90)
+  assert.ok(campus.every(citizen => haversineMeters(ETSIT.lng, ETSIT.lat, citizen.lng, citizen.lat) < 120))
+  assert.ok(MADRID_SCENARIO.citizens.filter(citizen => citizen.locality !== 'ETSIT').every(citizen => haversineMeters(ETSIT.lng, ETSIT.lat, citizen.lng, citizen.lat) > 900))
   assert.equal(MADRID_SCENARIO.safeZones.length, 3)
   assert.deepEqual(new Set(MADRID_SCENARIO.centers.map(center => center.kind)), new Set(['hospital', 'health', 'fire']))
   const heats = new Set(MADRID_SCENARIO.fireCells.features.map(feature => feature.properties.heat))

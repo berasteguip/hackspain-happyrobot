@@ -33,7 +33,7 @@ import { DEMO_ONLY } from './demoMode'
 import { flushSync } from 'react-dom'
 import { TourIntro } from './TourIntro'
 import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
-import type { TourView } from './demoTour'
+import type { TourHint, TourTick, TourView } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
 import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_REROUTE_RELEASE_STEP, HR_REROUTE_STEPS, HR_UNIT_RUN_STEPS } from './hrModel'
@@ -331,7 +331,11 @@ export function CommandCenter({ token }: { token: string }) {
         inFlightRef.current.add(citizen.id)
         setPlanningCount(inFlightRef.current.size)
         updatePopulation(current => current.map(item => item.id === citizen.id ? { ...item, status: 'routing', routeHoldReason: 'Consultando una ruta desde su posición…' } : item))
-        void planCitizenRoute(token, citizen, scenario.safeZones, forecast, marginM, controller.signal).then(plan => {
+        // Quien viene de una rerruta no vuelve al refugio que quedó detrás del frente, y el frente
+        // previsto cuenta como fuego en su camino aunque todavía no arda.
+        const profile = scenario.onFoot ? 'walking' as const : 'driving' as const
+        const replan = citizen.reroute && !citizen.reroute.toZoneId ? { excludeZoneIds: [citizen.reroute.fromZoneId], floorMinute: PLANNED_FIRE_MIN + 1, profile } : { profile }
+        void planCitizenRoute(token, citizen, scenario.safeZones, forecast, marginM, controller.signal, fetch, replan).then(plan => {
           if (controller.signal.aborted) return
           updatePopulation(current => current.map(item => {
             if (item.id !== citizen.id || item.live || item.call?.consent !== 'granted') return item
@@ -354,7 +358,7 @@ export function CommandCenter({ token }: { token: string }) {
     }
     const timer = window.setInterval(schedule, 250)
     return () => { window.clearInterval(timer); controller.abort() }
-  }, [protocolOn, token, forecast, marginM, updatePopulation, scenario.safeZones])
+  }, [protocolOn, token, forecast, marginM, updatePopulation, scenario.safeZones, scenario.onFoot])
   useEffect(() => {
     if (!protocolOn) return
     const started = performance.now()
@@ -368,7 +372,7 @@ export function CommandCenter({ token }: { token: string }) {
       const risk = forecastRef.current
       const advanced = advanceProtocol(citizensRef.current, nextElapsed, [], campaignRef.current, risk)
       const ready = advanced.citizens
-      const moved = moveEvacuees(ready, routesRef.current, scenario.safeZones, dt).map((next, index) => {
+      const moved = moveEvacuees(ready, routesRef.current, scenario.safeZones, dt, scenario.clockScale).map((next, index) => {
         const previous = ready[index]
         if (next === previous || previous.live) return next
         const zone = scenario.safeZones.find(item => item.id === next.safeZoneId)
@@ -385,7 +389,7 @@ export function CommandCenter({ token }: { token: string }) {
       if (advanced.events.length) setEvents((previous) => [...advanced.events.reverse(), ...previous].slice(0, 700))
     }, 100)
     return () => window.clearInterval(timer)
-  }, [protocolOn, scenario.safeZones])
+  }, [protocolOn, scenario.safeZones, scenario.clockScale])
   // El censo de la API manda sobre el de `scenario.ts` en cuanto responde, y después se
   // relee en bucle: es por donde entra el veredicto del agente cuando cuelga una llamada
   // (`POST /calls/observation` → `triage_level`). Sin este refresco el mapa se queda con la
@@ -1073,94 +1077,195 @@ export function CommandCenter({ token }: { token: string }) {
     setSelectedId(null)
     setPanel(null)
   }
+  // --- recorrido guiado -----------------------------------------------------------------------
   // El recorrido lee el estado del turno actual desde el temporizador de Driver, fuera de React:
   // las refs le dan siempre la versión más reciente sin rehacer el tour en cada render.
-  const tourStateRef = useRef({ escalation, alerts, fireSettings, selectedId, silentIds, recommended, escalationUnits })
-  tourStateRef.current = { escalation, alerts, fireSettings, selectedId, silentIds, recommended, escalationUnits }
-  const launchRecommendedRef = useRef(launchRecommended)
-  launchRecommendedRef.current = launchRecommended
-  const startEscalationRef = useRef(startEscalation)
-  startEscalationRef.current = startEscalation
-  const tourWindShiftAtRef = useRef(0)
-  /** Primera casa sin respuesta de la campaña; si aún no la hay, la primera que está sonando o en la cola. */
-  const tourSilentPerson = () => {
-    const enrolled = citizensRef.current.filter(citizen => campaignRef.current.has(citizen.id) && !citizen.live)
-    return (enrolled.find(citizen => citizen.status === 'no_answer') ?? enrolled.find(citizen => citizen.status === 'ringing') ?? enrolled[0] ?? citizensRef.current[0])?.id ?? null
+  const [tourHint, setTourHint] = useState<TourHint | null>(null)
+  const guided = scenario.guided
+  const guidedIds = useMemo(() => guided ? citizens.filter(citizen => citizen.locality === guided.locality).map(citizen => citizen.id) : [], [citizens, guided])
+  const tourStateRef = useRef({ escalation, reroute, selectedId, callArea, areaIds, paintedFires, escalationUnits, rerouteOutcome, guidedIds, drawingArea, drawingFire, tourHint })
+  tourStateRef.current = { escalation, reroute, selectedId, callArea, areaIds, paintedFires, escalationUnits, rerouteOutcome, guidedIds, drawingArea, drawingFire, tourHint }
+  /** Las casas del grupo guiado, con su estado de ahora mismo. */
+  const guidedNow = () => citizensRef.current.filter(citizen => tourStateRef.current.guidedIds.includes(citizen.id))
+  const centroid = (group: { lng: number; lat: number }[]) => group.length ? { lng: group.reduce((sum, point) => sum + point.lng, 0) / group.length, lat: group.reduce((sum, point) => sum + point.lat, 0) / group.length } : null
+  const boundsOf = (points: { lng: number; lat: number }[]) => {
+    if (!points.length) return null
+    const lngs = points.map(point => point.lng)
+    const lats = points.map(point => point.lat)
+    const bounds: [[number, number], [number, number]] = [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]]
+    return { lng: (bounds[0][0] + bounds[1][0]) / 2, lat: (bounds[0][1] + bounds[1][1]) / 2, bounds }
   }
-  const tourCallCounts = () => {
-    const enrolled = citizensRef.current.filter(citizen => campaignRef.current.has(citizen.id))
+  const silentPerson = () => citizensRef.current.find(citizen => citizen.id === guided?.silentId) ?? null
+  /** El refugio al que va la mayoría del grupo ahora mismo, y la ruta de quien va en cabeza. */
+  const guidedRoute = () => {
+    const walkers = guidedNow().filter(citizen => citizen.routeId && citizen.safeZoneId && ['tracking', 'evacuating', 'routing'].includes(citizen.status))
+    const byZone = new Map<string, number>()
+    for (const walker of walkers) byZone.set(walker.safeZoneId, (byZone.get(walker.safeZoneId) ?? 0) + 1)
+    const zoneId = [...byZone.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    const zone = scenario.safeZones.find(item => item.id === zoneId) ?? null
+    const lead = walkers.find(walker => walker.safeZoneId === zoneId)
+    const route = lead?.routeId ? routesRef.current.get(lead.routeId) ?? null : null
+    return { walkers, zone, route }
+  }
+  /**
+   * Dónde pintar el frente: por delante de quien va en cabeza (unos 350 m), sin pasarse del último
+   * tramo, para que el trazo corte el camino que les queda y no queme ni la salida ni el refugio.
+   */
+  const paintTarget = () => {
+    const { walkers, route } = guidedRoute()
+    if (!route) return null
+    const lead = Math.max(0, ...walkers.filter(walker => walker.routeId === route.id || walker.safeZoneId === route.zoneId).map(walker => walker.routeProgressM ?? 0))
+    const along = Math.min(route.lengthM * 0.8, Math.max(route.lengthM * 0.4, lead + 350))
+    const [lng, lat] = positionAt(route, along)
+    return { lng, lat }
+  }
+  const tourHintFor = (kind: TourView['hint']): TourHint | null => {
+    if (!kind || !guided) return null
+    const group = guidedNow()
+    const center = centroid(group)
+    switch (kind) {
+      case 'group':
+        return center ? { kind, ...center, radiusM: guided.radiusM, label: `${group.length} casas · ${guided.locality}` } : null
+      case 'draw':
+        return center ? { kind, ...center, radiusM: guided.radiusM, label: 'Dibuja aquí el círculo' } : null
+      case 'person': {
+        const silent = silentPerson()
+        return silent ? { kind, lng: silent.lng, lat: silent.lat, radiusM: 45, label: `${silent.name} · sin respuesta` } : null
+      }
+      case 'walkers': {
+        const { walkers, zone } = guidedRoute()
+        const spot = centroid(walkers) ?? center
+        return spot ? { kind, ...spot, radiusM: Math.max(120, guided.radiusM * 0.7), label: zone ? `${walkers.length} en camino a ${zone.code}` : `${group.length} casas` } : null
+      }
+      case 'paint': {
+        const target = paintTarget()
+        return target ? { kind, ...target, radiusM: 150, label: 'Pinta aquí el frente' } : null
+      }
+    }
+  }
+  const focusFor = (focus: TourView['focus']) => {
+    if (focus === 'fire') { setFocusTarget({ lng: scenario.incident.center[0], lat: scenario.incident.center[1], zoom: 14 }); return }
+    const group = guidedNow()
+    if (focus === 'group') {
+      const center = centroid(group)
+      if (center) setFocusTarget({ ...center, zoom: 15.4 })
+      return
+    }
+    if (focus === 'route') {
+      const { zone, route } = guidedRoute()
+      const points: { lng: number; lat: number }[] = [...group.map(citizen => ({ lng: citizen.lng, lat: citizen.lat })), ...(zone ? [zone] : []), ...(route ? route.coords.map(([lng, lat]) => ({ lng, lat })) : [])]
+      const box = boundsOf(points)
+      if (box) setFocusTarget({ ...box, maxZoom: 15.2 })
+    }
+  }
+  /** Lo que el visitante tiene hecho de cada paso, y qué le falta. */
+  const tourTick = (stepId: string): TourTick => {
+    const state = tourStateRef.current
+    const group = guidedNow()
+    const silent = silentPerson()
+    const enrolled = group.filter(citizen => campaignRef.current.has(citizen.id))
     const answered = enrolled.filter(citizen => citizen.call).length
     const ringing = enrolled.filter(citizen => citizen.status === 'ringing').length
-    const silent = enrolled.filter(citizen => citizen.status === 'no_answer').length
-    return { total: enrolled.length, answered, ringing, silent }
+    const red = enrolled.filter(citizen => citizen.status === 'no_answer').length
+    const callsLine = enrolled.length ? `${answered} de ${enrolled.length} han contestado · ${ringing} sonando · ${red} en rojo` : null
+    switch (stepId) {
+      case 'grupo':
+        return { live: `${group.length} casas · ${group.filter(citizen => citizen.vulnerable).length} con alguien que no puede salir solo` }
+      case 'dibuja': {
+        if (state.drawingArea) return { live: 'Arrastra desde el centro del grupo hacia fuera y suelta…' }
+        if (!state.callArea) return { live: 'Esperando tu círculo.' }
+        const inside = group.filter(citizen => state.areaIds.includes(citizen.id)).length
+        const silentInside = Boolean(silent && state.areaIds.includes(silent.id))
+        if (inside >= Math.min(group.length, 12) && silentInside) return { live: `${inside} de ${group.length} casas dentro del círculo.`, done: true }
+        return { live: inside ? `Solo ${inside} de ${group.length} dentro${silentInside ? '' : ', y falta la que importa'}. Pulsa «Zona» otra vez y dibuja un círculo más grande.` : 'El círculo no toca al grupo. Pulsa «Zona» otra vez y dibuja sobre la marca azul.' }
+      }
+      case 'llama':
+        if (enrolled.length) return { live: callsLine, done: true }
+        return { live: state.callArea ? `${state.areaIds.length} personas seleccionadas. Falta pulsar «Llamar · demo».` : 'Sin círculo: vuelve al paso anterior.' }
+      case 'motor':
+        return { live: callsLine ?? 'Sin llamadas en marcha: vuelve al paso 4.' }
+      case 'roja': {
+        if (!silent) return { live: null }
+        if (state.selectedId === silent.id) return { live: `${silent.name} · sin respuesta tras dos intentos`, done: true }
+        if (silent.status !== 'no_answer') return { live: callsLine ? `${callsLine}. Su teléfono aún está sonando…` : 'Aún no ha sonado su teléfono.' }
+        return { live: `${silent.name} está en rojo. Haz clic en su punto.` }
+      }
+      case 'escala': {
+        const escalated = Boolean(silent?.escalation) || Boolean(state.escalation && silent && state.escalation.citizenIds.includes(silent.id))
+        if (escalated) return { live: 'Run de escalada en marcha.', done: true }
+        return { live: state.selectedId === silent?.id ? 'El botón rojo está en su ficha, a la derecha.' : 'Abre su ficha: haz clic en el punto rojo.' }
+      }
+      case 'run': {
+        if (state.escalation) {
+          const step = HR_ESCALATION_STEPS[state.escalation.step]
+          if (step) return { live: `Paso ${state.escalation.step + 1} de ${HR_ESCALATION_STEPS.length} · ${step.label}` }
+          return { live: state.escalationUnits.length ? `Enviado · ${state.escalationUnits.map(unit => `${unit.callSign} ${unit.eta}`).join(' · ')} · mira el mapa` : 'Enviado' }
+        }
+        const done = citizensRef.current.filter(citizen => citizen.escalation).length
+        return { live: done ? `${done} ${done === 1 ? 'casa' : 'casas'} con fuerzas de seguridad en camino` : 'Sin escalada: vuelve al paso anterior.' }
+      }
+      case 'camino': {
+        const { walkers, zone } = guidedRoute()
+        const moving = walkers.filter(walker => walker.status === 'evacuating').length
+        const arrived = group.filter(citizen => citizen.status === 'safe').length
+        if (!walkers.length) return { live: arrived ? `${arrived} ya han llegado a su refugio.` : 'Calculando las rutas desde cada puerta…' }
+        return { live: `${moving} en tránsito · ${walkers.length - moving} saliendo · destino ${zone?.code ?? '?'} ${zone?.name ?? ''}` }
+      }
+      case 'pinta': {
+        if (group.some(citizen => citizen.reroute)) return { live: 'Frente en su camino. HappyRobot recalcula.', done: true }
+        // La marca de dónde pintar depende de las rutas, que pueden llegar después de abrir el paso.
+        if (state.tourHint?.kind !== 'paint') {
+          const spot = tourHintFor('paint')
+          if (spot) setTourHint(spot)
+          else return { live: 'Nadie del grupo está de camino: no hay camino que cortar.' }
+        }
+        if (state.drawingFire) return { live: 'Dibuja un círculo sobre la zona azul y suelta.' }
+        if (state.paintedFires.length) return { live: 'Ese trazo no corta el camino de nadie. Borra los frentes en Propagación y pinta sobre la zona azul.' }
+        return { live: 'Esperando tu frente.' }
+      }
+      case 'rerruta': {
+        if (state.reroute) {
+          const step = HR_REROUTE_STEPS[state.reroute.step]
+          if (step) return { live: `Paso ${state.reroute.step + 1} de ${HR_REROUTE_STEPS.length} · ${step.label}` }
+          const outcomes = state.rerouteOutcome?.outcomes ?? []
+          return { live: outcomes.length ? `Destino nuevo · ${outcomes.map(item => `${item.code} · ${item.count}`).join(' · ')}` : 'Enviado · Directions calculando' }
+        }
+        const rerouted = group.filter(citizen => citizen.reroute?.toZoneId)
+        const to = scenario.safeZones.find(zone => zone.id === rerouted[0]?.reroute?.toZoneId)
+        return { live: rerouted.length ? `${rerouted.length} van ahora a ${to?.code ?? '?'} ${to?.name ?? ''}` : 'Sin rerruta: vuelve al paso anterior.' }
+      }
+      default:
+        return { live: null }
+    }
   }
+  const tourTickRef = useRef(tourTick)
+  tourTickRef.current = tourTick
+  const tourOpen = (view: TourView) => {
+    setDrawingArea(false)
+    setDrawingFire(false)
+    setFireStroke(null)
+    setHrCard(view.happyRobot ? 'open' : 'hidden')
+    setSelectedId(view.person ? guided?.silentId ?? null : null)
+    setPanel(view.person ? 'people' : view.panel ?? null)
+    if (view.panel === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
+    setTourHint(tourHintFor(view.hint))
+    focusFor(view.focus)
+  }
+  const tourOpenRef = useRef(tourOpen)
+  tourOpenRef.current = tourOpen
   const launchTour = () => {
     setShowTourIntro(false)
-    // Al terminar, el visitante vuelve a encontrarse lo que tenía abierto. Lo que la demo ha
-    // puesto en marcha (llamadas, medios, viento) se queda: es el punto de partida para explorar.
+    // Al terminar, el visitante vuelve a encontrarse lo que tenía abierto. Lo que ha puesto en
+    // marcha (llamadas, medios, frentes) se queda: es el punto de partida para explorar.
     const previous = { panel, selectedId, hrCard }
-    const personId = selectedId ?? filtered[0]?.id ?? citizens[0]?.id ?? null
     setTouring(true)
     void startDemoTour({
       // flushSync: Driver mide el anclaje justo después, así que la vista tiene que estar ya en el DOM.
-      open: (view: TourView) => flushSync(() => {
-        setDrawingArea(false)
-        if (view.focus === 'risk' && tourStateRef.current.recommended) setFocusTarget({ lng: tourStateRef.current.recommended.risk.lng, lat: tourStateRef.current.recommended.risk.lat, zoom: 13.6 })
-        if (view.run === 'call-risk' && !campaignRef.current.size) launchRecommendedRef.current('risk')
-        if (view.run === 'shift-wind' && tourStateRef.current.fireSettings.windTowardDeg === INITIAL_WIND) {
-          tourWindShiftAtRef.current = Date.now()
-          shiftWind()
-        }
-        if (view.run === 'escalate' && !tourStateRef.current.escalation && tourStateRef.current.silentIds.length) startEscalationRef.current(tourStateRef.current.silentIds, 'recorrido')
-        setHrCard(view.happyRobot ? 'open' : 'hidden')
-        setSelectedId(view.person ? (view.silent ? tourSilentPerson() : personId) : null)
-        setPanel(view.person ? 'people' : view.panel ?? null)
-        if (view.panel === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
-      }),
-      tick: (stepId) => {
-        const state = tourStateRef.current
-        const calls = tourCallCounts()
-        const callsLine = calls.total ? `${calls.answered} de ${calls.total} han contestado · ${calls.ringing} sonando · ${calls.silent} sin respuesta` : null
-        switch (stepId) {
-          case 'personas':
-            return state.recommended ? `${selectAreaIds(citizensRef.current, state.recommended.risk).length} casas en la zona de riesgo recomendada` : null
-          case 'llamar':
-          case 'happyrobot':
-          case 'cola':
-            return callsLine ?? 'Lanzando las llamadas…'
-          case 'ficha': {
-            // Si la ficha abierta aún no es una casa sin respuesta y ya hay una, cambiamos a ella una vez.
-            const current = citizensRef.current.find(citizen => citizen.id === state.selectedId)
-            if (current?.status !== 'no_answer') {
-              const silent = citizensRef.current.find(citizen => campaignRef.current.has(citizen.id) && citizen.status === 'no_answer')
-              if (silent) { setSelectedId(silent.id); return `${silent.name} · sin respuesta tras dos intentos` }
-              return calls.total ? 'Esperando a la primera casa que no descuelgue…' : null
-            }
-            return `${current.name} · sin respuesta tras dos intentos · ${calls.silent} casas en rojo`
-          }
-          case 'escalada': {
-            if (!state.escalation) {
-              if (state.silentIds.length) { startEscalationRef.current(state.silentIds, 'recorrido'); return 'Arrancando el run…' }
-              const escalated = citizensRef.current.filter(citizen => citizen.escalation).length
-              return escalated ? `${escalated} casas con fuerzas de seguridad en camino` : (calls.total ? 'Aún no hay casas sin respuesta: espera a que acaben de sonar.' : 'Sin llamadas en marcha: vuelve al paso 3.')
-            }
-            const step = HR_ESCALATION_STEPS[state.escalation.step]
-            if (step) return `Paso ${state.escalation.step + 1} de ${HR_ESCALATION_STEPS.length} · ${step.label}`
-            return state.escalationUnits.length ? `Enviado · ${state.escalationUnits.map(unit => `${unit.callSign} ${unit.eta}`).join(' · ')}` : 'Enviado'
-          }
-          case 'viento': {
-            const since = tourWindShiftAtRef.current
-            const fresh = state.alerts.filter(alert => alert.ts >= since).length
-            return since ? `Viento hacia ${state.fireSettings.windTowardDeg}° · ${fresh} ${fresh === 1 ? 'aviso nuevo' : 'avisos nuevos'} desde el giro` : 'El viento ya estaba girado'
-          }
-          case 'plan':
-            return `${state.alerts.length} avisos · ${unitsRef.current.filter(unit => unit.mission !== 'patrol').length} medios con misión`
-          default:
-            return null
-        }
-      },
+      open: (view: TourView) => flushSync(() => tourOpenRef.current(view)),
+      tick: (stepId) => tourTickRef.current(stepId),
       close: () => {
         setTouring(false)
+        setTourHint(null)
         setPanel(previous.panel)
         setSelectedId(previous.selectedId)
         setHrCard(previous.hrCard)
@@ -1180,7 +1285,7 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className={`map-app${panel || selected ? ' has-panel' : ''}${hrCard !== 'hidden' ? ' has-hr' : ''}`}>
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} plannedFires={paintedFires} fireStroke={fireStroke} drawingFire={drawingFire} onFireStroke={setFireStroke} onFireComplete={finishFireStroke} recommended={recommended} units={units} selectedUnitId={selectedUnitId} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
+        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} plannedFires={paintedFires} fireStroke={fireStroke} drawingFire={drawingFire} onFireStroke={setFireStroke} onFireComplete={finishFireStroke} recommended={recommended} units={units} selectedUnitId={selectedUnitId} tourHint={tourHint} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
       <Intro brand={brandRef} />
       <header className="floating-brand">
@@ -1267,7 +1372,7 @@ export function CommandCenter({ token }: { token: string }) {
         {dispatchError && <p className="fine" role="alert">{dispatchError}</p>}
         {liveBatch && <CallBoard calls={liveCalls} skipped={liveBatch.skipped} onSelect={selectCitizen} />}
         {!liveMode && campaignIds.length > 0 && <div className="campaign-stats" role="status"><span><strong>{counts.answered}</strong>/{campaignIds.length} respondidas</span><span>{counts.moving} en movimiento</span><span>{counts.silent} sin respuesta</span>{counts.waiting > 0 && <span>{counts.waiting} sin ruta</span>}</div>}
-        {silentIds.length > 0 && <div className="escalate-section"><button type="button" data-demo="campaign-escalate-panel" className="escalate-button" disabled={Boolean(escalation)} onClick={() => startEscalation(silentIds, `${silentIds.length} ${silentIds.length === 1 ? 'casa' : 'casas'} sin respuesta`)}><Icon name="alerts" /><span>{escalation ? escalation.step >= HR_ESCALATION_STEPS.length ? 'Enviado' : 'Escalada en curso…' : `Enviar fuerzas de seguridad · ${silentIds.length} sin respuesta`}</span></button><p className="fine">Nadie descolgó en esas casas. HappyRobot rellama, avisa a Guardia Civil y 1-1-2 y manda helicóptero y ambulancia.</p></div>}
+        {silentIds.length > 0 && <div className="escalate-section"><button type="button" data-demo="campaign-escalate-panel" className="escalate-button" disabled={Boolean(escalation)} onClick={() => startEscalation(silentIds, `${silentIds.length} ${silentIds.length === 1 ? 'casa' : 'casas'} sin respuesta`)}><Icon name="alerts" /><span>{escalation ? escalation.step >= HR_ESCALATION_STEPS.length ? 'Enviado' : 'Escalada en curso…' : `Enviar fuerzas de seguridad · ${silentIds.length} sin respuesta`}</span></button><p className="fine">Nadie descolgó en esas casas. HappyRobot lee quién vive ahí y qué flota queda, arma las rutas, llama a cada conductor con su manifiesto y avisa por SMS a quien va a recoger.</p></div>}
         {!liveMode && planningCount > 0 && <p className="fine" role="status">Calculando {planningCount} rutas individuales desde la posición de los contactos…</p>}
         {!liveMode && counts.waiting > 0 && <><p className="fine" role="status">{citizens.find(citizen => campaignSet.has(citizen.id) && citizen.status === 'assistance')?.routeHoldReason}</p><button type="button" data-demo="campaign-retry-routes" className="cop-secondary" onClick={retryRoutes}>Reintentar rutas pendientes</button></>}
         {areaIds.length > 0 && !drawingArea && <DispatchActions scope="dispatch-area" kinds={['ambulance', 'police', 'fire']} disabled={units.length >= MAX_UNITS} onDispatch={kind => {
@@ -1444,7 +1549,7 @@ function PersonDetail({ citizen, events, now, onClose, onDispatch, onEscalate, e
             ? <div className="escalate-done"><strong>Fuerzas de seguridad en camino</strong><span>{citizen.escalation.unitIds.map(id => units.find(unit => unit.id === id)).filter((unit): unit is DispatchUnit => Boolean(unit)).map(unit => `${unit.callSign} · ${UNIT_LABEL[unit.kind]}${unitEta(unit) ? ` · ${unitEta(unit)}` : ''}`).join('  ·  ') || 'Escalado · sin medios libres'}</span><small>Desde {formatClock(new Date(citizen.escalation.at))} · HappyRobot avisó a Guardia Civil y 1-1-2</small></div>
             : <>
               <button type="button" data-demo="escalate-person" className="escalate-button" disabled={escalating} onClick={onEscalate}><Icon name="alerts" /><span>{escalating ? 'Escalada en curso…' : 'Enviar fuerzas de seguridad'}</span></button>
-              <p className="fine">Nadie ha descolgado. HappyRobot rellama, avisa a Guardia Civil y 1-1-2 y manda helicóptero y ambulancia a la puerta.</p>
+              <p className="fine">Nadie ha descolgado. HappyRobot busca un vehículo con plazas libres, llama al conductor con el manifiesto y manda un medio a su puerta.</p>
             </>}
         </section>
       )}

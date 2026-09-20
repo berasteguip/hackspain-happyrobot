@@ -129,12 +129,13 @@ export async function fetchRefugeRoutes(
   return { routes: results.flatMap(result => result.routes), failed: results.reduce((sum, result) => sum + result.failed, 0), unsuitable: results.reduce((sum, result) => sum + result.unsuitable, 0), errors: [...new Set(results.flatMap(result => result.errors))] }
 }
 
-function blockedDuringTravel(route: RefugeRoute, forecast: FireForecast, marginM: number) {
+function blockedDuringTravel(route: RefugeRoute, forecast: FireForecast, marginM: number, floorMinute = 0) {
   if (route.coordinates.length < 2 || !Number.isFinite(route.durationSec) || route.durationSec < 0 || !route.coordinates.every(point => point.every(Number.isFinite))) return true
   const lengths = route.coordinates.slice(1).map((point, index) => haversineMeters(...route.coordinates[index], ...point))
   const total = lengths.reduce((sum, value) => sum + value, 0)
   const times = route.segmentSeconds?.length === lengths.length && route.segmentSeconds.every(value => Number.isFinite(value) && value >= 0) ? route.segmentSeconds : lengths.map(length => total ? route.durationSec * length / total : 0)
   let elapsedMin = 0
+  let traveledM = 0
   for (let i = 0; i < lengths.length; i += 1) {
     const start = route.coordinates[i]
     const end = route.coordinates[i + 1]
@@ -143,20 +144,29 @@ function blockedDuringTravel(route: RefugeRoute, forecast: FireForecast, marginM
     for (let step = 1; step <= steps; step += 1) {
       const next: [number, number] = [start[0] + (end[0] - start[0]) * step / steps, start[1] + (end[1] - start[1]) * step / steps]
       elapsedMin += times[i] / steps / 60
+      traveledM += lengths[i] / steps
       if (elapsedMin + 2 > MAX_FORECAST_MIN || routeBlocked(forecast, [previous, next], elapsedMin + 2, marginM)) return true
+      // El frente previsto: el camino no puede METERSE en él (margen corto, es el trazo del mando, no
+      // una proyección), y el suelo bajo sus pies no se evalúa, que ahí ya están.
+      if (floorMinute > 0 && traveledM > marginM * 1.5 && routeBlocked(forecast, [previous, next], floorMinute, Math.min(marginM, 40))) return true
       previous = next
     }
   }
   return false
 }
 
-export function rankRefugeRoutes(routes: RefugeRoute[], zones: SafeZone[], forecast: FireForecast, horizon: number, marginM: number) {
+/**
+ * `floorMinute` es el minuto mínimo al que se evalúa cada tramo. Por defecto es el reloj del
+ * trayecto (lo que tarda en llegar ahí); al rerrutar por un frente previsto se sube a ese frente,
+ * porque a nadie se le manda por donde el mando acaba de decir que va a arder.
+ */
+export function rankRefugeRoutes(routes: RefugeRoute[], zones: SafeZone[], forecast: FireForecast, horizon: number, marginM: number, floorMinute = 0) {
   const admitted = routes.filter(route => {
     const zone = zones.find(item => item.id === route.zoneId)
     const throughMinute = Math.max(60, horizon, Math.ceil(route.durationSec / 60) + 2)
     return zone && throughMinute <= MAX_FORECAST_MIN
       && exposureAt(forecast, zone.lng, zone.lat, throughMinute, marginM + zone.radiusM).level === 'clear'
-      && !blockedDuringTravel(route, forecast, marginM)
+      && !blockedDuringTravel(route, forecast, marginM, floorMinute)
   }).sort((a, b) => a.durationSec - b.durationSec)
   return { routes: admitted, rejected: routes.length - admitted.length }
 }
@@ -197,17 +207,28 @@ export async function fetchDrivingRoute(
   }
 }
 
+/** Cómo se replanifica a quien ya iba de camino y un frente previsto le ha cortado el paso. */
+export type ReplanOptions = {
+  /** El refugio al que iba: queda detrás del frente y deja de ser opción. */
+  excludeZoneIds?: string[]
+  /** Minuto al que se evalúa el camino: el del frente previsto, para que cuente como fuego. */
+  floorMinute?: number
+  /** A pie o en coche. A pie no hay sentidos únicos: quien se da la vuelta, se da la vuelta. */
+  profile?: 'walking' | 'driving'
+}
+
 export async function planCitizenRoute(
   token: string, citizen: Citizen, zones: SafeZone[], forecast: FireForecast, marginM: number,
-  signal?: AbortSignal, request: typeof fetch = fetch,
+  signal?: AbortSignal, request: typeof fetch = fetch, replan: ReplanOptions = {},
 ): Promise<{ citizen: Citizen; route?: Route }> {
   if (citizen.live || citizen.call?.consent !== 'granted') return { citizen }
-  const eligible = zones.filter(zone => exposureAt(forecast, zone.lng, zone.lat, 60, marginM + zone.radiusM).level === 'clear')
+  const excluded = new Set(replan.excludeZoneIds ?? [])
+  const eligible = zones.filter(zone => !excluded.has(zone.id) && exposureAt(forecast, zone.lng, zone.lat, 60, marginM + zone.radiusM).level === 'clear')
   const hold = (reason: string): { citizen: Citizen } => ({ citizen: { ...citizen, status: 'assistance', safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: reason } })
   if (!eligible.length) return hold('No hay refugios fuera de la zona expuesta en la próxima hora. Requiere revisión del mando.')
   const origin: [number, number] = [citizen.lng, citizen.lat]
-  const result = await fetchRefugeRoutes(token, origin, eligible, 'driving', signal, request)
-  const selected = rankRefugeRoutes(result.routes, eligible, forecast, 60, marginM).routes.sort((a, b) => a.distanceM - b.distanceM)[0]
+  const result = await fetchRefugeRoutes(token, origin, eligible, replan.profile ?? 'driving', signal, request)
+  const selected = rankRefugeRoutes(result.routes, eligible, forecast, 60, marginM, replan.floorMinute ?? 0).routes.sort((a, b) => a.distanceM - b.distanceM)[0]
   if (!selected) return hold(result.errors.length ? result.errors.join(' · ') : result.unsuitable ? 'Directions devuelve accesos de más de 100 m o geometrías no válidas. Requiere revisión.' : result.routes.length ? 'Los recorridos desde esta persona intersectan la zona expuesta. Requiere otra salida.' : 'Directions no ha devuelto una carretera hacia los refugios disponibles.')
   const zone = eligible.find(item => item.id === selected.zoneId)!
   const route = buildRoute({ id: `individual-${citizen.id}-${zone.id}`, group: citizen.locality ?? '', zoneId: zone.id }, selected.coordinates, selected.durationSec)

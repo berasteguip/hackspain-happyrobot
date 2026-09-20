@@ -1,16 +1,18 @@
 /**
- * Recorrido guiado del puesto de mando, pensado para que alguien que no ha visto la
- * plataforma (un jurado, un mando de Protección Civil) entienda en tres minutos qué hace
- * router y por qué. No es una visita a la interfaz: es una demo en vivo. Los pasos que
- * llevan `run` ejecutan la operación de verdad (lanzan las llamadas, escalan a fuerzas de
- * seguridad, giran el viento) y el visitante ve el mapa moverse mientras lee. Cada paso
- * abre la vista que explica antes de que Driver mida el anclaje y lleva, si procede, una
- * línea en directo con lo que está ocurriendo (cuántos han contestado, en qué nodo va el
- * run, cuántas alertas ha generado el giro del viento).
+ * Recorrido guiado del puesto de mando para quien no ha visto la plataforma: un jurado, un mando
+ * de Protección Civil. No es una visita a la interfaz ni una demo que se ve pasar: es una demo
+ * que el visitante HACE con su mano. El recorrido le dice qué hacer, le marca en el mapa dónde
+ * (un círculo azul), espera a que lo haga y avanza solo cuando el sistema registra la acción.
  *
- * El orden es la historia del producto y la escalera de la rúbrica del reto: situación,
- * la gente que nadie ve, actuar (llamar), el motor, priorizar, seguir a una casa, escalar,
- * adaptarse al cambio, tirar el plan, coordinar, y el turno del visitante.
+ * Dos casos, seguidos, sobre el mismo grupo de veinte casas:
+ *   1. Rodearlas, llamarlas, encontrar a la que no descuelga, y escalar a fuerzas de seguridad
+ *      (HappyRobot ejecuta el run y despega el helicóptero).
+ *   2. Mientras las demás van andando a su refugio, pintar un frente sobre su camino y ver cómo
+ *      HappyRobot las para, recalcula y las gira hacia otro refugio.
+ *
+ * Los pasos `handsOn` dejan pasar el puntero a través del velo: el visitante dibuja, hace clic y
+ * pulsa botones de la interfaz real. Su botón «Siguiente» se desbloquea cuando la acción está
+ * hecha; hasta entonces la línea en directo le dice qué falta.
  */
 import type { DriveStep, PopoverDOM } from 'driver.js'
 
@@ -18,31 +20,38 @@ export const TOUR_STORAGE_KEY = 'vigia-tour-seen'
 
 export type TourPanel = 'people' | 'cop' | 'centers' | 'alerts' | 'campaign' | null
 
-/** Operación real que el paso dispara al abrirse. */
-export type TourRun = 'call-risk' | 'escalate' | 'shift-wind'
+/** Qué marca azul se pinta sobre el mapa mientras el paso está en pantalla. */
+export type TourHintKind = 'group' | 'draw' | 'person' | 'walkers' | 'paint'
+
+/** La marca resuelta sobre el mapa: dónde, qué tamaño y qué dice. La calcula el puesto de mando. */
+export type TourHint = { kind: TourHintKind; lng: number; lat: number; radiusM: number; label: string }
 
 /** Lo que tiene que estar a la vista para que el paso tenga anclaje. */
 export type TourView = {
   panel?: TourPanel
-  /** Abre la ficha de una persona: la primera sin respuesta si `silent`, o la seleccionada / primera de la cola. */
+  /** Abre la ficha de la casa que no descuelga. */
   person?: boolean
-  silent?: boolean
   /** Abre la tarjeta «Qué hace HappyRobot». */
   happyRobot?: boolean
-  /** Encuadra el mapa sobre la zona de riesgo recomendada para que se vean los puntos. */
-  focus?: 'risk'
-  run?: TourRun
+  /** Encuadra el mapa: el fuego, el grupo guiado, o el grupo con su refugio y su camino. */
+  focus?: 'fire' | 'group' | 'route'
+  hint?: TourHintKind
+  /** El visitante tiene que hacer algo: el velo deja pasar el puntero y «Siguiente» espera a que lo haga. */
+  handsOn?: boolean
+}
+
+/** Lo que el recorrido lee del puesto de mando cada medio segundo. */
+export type TourTick = {
+  /** Línea en directo bajo el texto: qué está pasando o qué falta. */
+  live: string | null
+  /** La acción del paso está hecha (solo tiene sentido en pasos `handsOn`). */
+  done?: boolean
 }
 
 export type DemoTourActions = {
   open: (view: TourView) => void
   close: () => void
-  /**
-   * Se llama cada medio segundo mientras el paso está en pantalla. Devuelve la línea en
-   * directo del paso (o nada) y puede completar una operación aplazada: por ejemplo,
-   * escalar cuando aparece la primera casa sin respuesta si aún no la había.
-   */
-  tick: (stepId: string) => string | null
+  tick: (stepId: string) => TourTick
 }
 
 export type DemoTourStep = {
@@ -53,82 +62,99 @@ export type DemoTourStep = {
   side: 'top' | 'right' | 'bottom' | 'left'
   title: string
   description: string
-  actions?: string[]
+  /** Lo que el visitante tiene que hacer, en imperativo. Se pinta como instrucción destacada. */
+  task?: string
   view: TourView
 }
 
 export const DEMO_TOUR_STEPS: DemoTourStep[] = [
   {
-    id: 'situacion', kicker: 'Situación', element: '[data-demo="tour-fire"]', side: 'left', view: {},
+    id: 'situacion', kicker: 'Situación', element: '[data-demo="tour-fire"]', side: 'left', view: { focus: 'fire' },
     title: 'El fuego, y hacia dónde va',
-    description: 'La mancha es el frente activo. Los anillos, hasta dónde puede llegar en una hora con este viento. router decide con esa proyección; no espera al perímetro oficial, que llega tarde.',
+    description: 'La mancha es el frente activo en la Dehesa de la Villa. Los anillos, hasta dónde puede llegar en una hora con este viento. router decide con esa proyección; no espera al perímetro oficial, que llega tarde.',
   },
   {
-    id: 'personas', kicker: 'Lo que el mando no ve', element: '[data-demo="tour-people"]', side: 'left', view: { focus: 'risk' },
-    title: 'Cada punto es una casa con teléfono',
-    description: 'Hoy el CECOP ve el fuego, no a la gente. Aquí está cada persona del censo dentro del anillo de riesgo. Cuando contesta, el punto cambia de color según cómo está.',
+    id: 'grupo', kicker: 'Lo que el mando no ve', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'group', hint: 'group' },
+    title: 'Veinte casas a favor del viento',
+    description: 'La Colonia de Francos Rodríguez: veinte casas con teléfono y ninguna avisada. Su salida natural es el refugio PE-02, al sureste. Hoy el CECOP ve el fuego; a esta gente no. Vas a llamarla tú.',
   },
   {
-    id: 'llamar', kicker: 'Actuar, no proponer', element: '[data-demo="campaign-dock"]', side: 'top', view: { focus: 'risk', run: 'call-risk' },
-    title: 'Acabamos de llamar a toda la zona',
-    description: 'HappyRobot está hablando con todas las casas a la vez, cuatro agentes en paralelo. Mira los puntos: se encienden al sonar, cambian al contestar y se ponen en rojo si nadie descuelga.',
+    id: 'dibuja', kicker: 'Hazlo tú', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'group', hint: 'draw', handsOn: true },
+    title: 'Rodea el grupo',
+    description: 'El círculo es la orden: todo el que caiga dentro recibe la llamada.',
+    task: 'Pulsa «Zona» (arriba a la derecha). En el mapa, arrastra desde el centro del grupo hacia fuera hasta cubrir el círculo azul, y suelta.',
   },
   {
-    id: 'happyrobot', kicker: 'El motor', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
+    id: 'llama', kicker: 'Actuar, no proponer', element: '[data-demo="campaign-primary"]', side: 'top', view: { handsOn: true },
+    title: 'Llama a las veinte a la vez',
+    description: 'Cuatro agentes de HappyRobot marcan en paralelo. Cada punto suena, contesta y cambia de color. El que no descuelga se queda en rojo.',
+    task: 'Pulsa «Llamar · demo».',
+  },
+  {
+    id: 'motor', kicker: 'El motor', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
     title: 'Esto pasa dentro de cada llamada',
-    description: 'Voz, extracción de datos (cuántos son, si alguien no puede andar), SMS con la ruta y enlace de ubicación, y el webhook que lo devuelve al mapa. El nodo encendido es lo que ocurre ahora mismo.',
+    description: 'Voz, extracción de datos (cuántos son, si alguien no puede andar), SMS con la ruta y el enlace de ubicación, y el webhook que lo devuelve al mapa. El nodo encendido es lo que ocurre ahora mismo.',
   },
   {
-    id: 'cola', kicker: 'Priorizar', element: '[data-demo="panel"]', side: 'left', view: { panel: 'people' },
-    title: 'Cuando todo es urgente, esto va primero',
-    description: 'La cola ordena por lo que importa: fuera del núcleo, sin respuesta, ruta en revisión. Nadie repasa cien fichas; se ven las tres que cambian algo.',
+    id: 'roja', kicker: 'La que no descuelga', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'group', hint: 'person', handsOn: true },
+    title: 'Una casa en rojo',
+    description: 'Angustias Herrera, 84 años, vive sola. Dos intentos, nadie contesta, sin ubicación. router no la deja en una lista.',
+    task: 'Haz clic en su punto rojo para abrir su ficha.',
   },
   {
-    id: 'ficha', kicker: 'Seguimiento', element: '[data-demo="panel"]', side: 'left', view: { person: true, silent: true },
-    title: 'Una casa que no ha descolgado',
-    description: 'Dos intentos, nadie contesta, sin ubicación. Ficha en rojo. router no la deja en una lista: abajo aparece «Enviar fuerzas de seguridad». Lo pulsamos en el siguiente paso.',
+    id: 'escala', kicker: 'Escalar', element: '[data-demo="escalate-person"]', side: 'left', view: { person: true, handsOn: true },
+    title: 'Manda a alguien a su puerta',
+    description: 'Tú apruebas; HappyRobot hace el resto. Sin este clic el run no arranca: el sistema propone, el mando decide.',
+    task: 'Pulsa «Enviar fuerzas de seguridad».',
   },
   {
-    id: 'escalada', kicker: 'Escalar', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true, run: 'escalate' },
-    title: 'Fuerzas de seguridad, sin esperar',
-    description: 'Es el run real de HappyRobot: consulta el registro, rellama, ordena por riesgo, llama a Guardia Civil y 1-1-2, manda el parte y lo anota. Al acabar despega el helicóptero. Un operador aprueba; siempre.',
+    id: 'run', kicker: 'HappyRobot ejecuta', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
+    title: 'Once nodos y un helicóptero',
+    description: 'Es el workflow real: lee las personas en rojo del sector y la flota libre, arma rutas por plazas y camillas, y en un bucle paralelo llama a cada conductor con su manifiesto, extrae si confirma y avisa por SMS a quien va a recoger. Al acabar, mira el mapa: despega el helicóptero desde Bomberos y sale una ambulancia.',
   },
   {
-    id: 'viento', kicker: 'Adaptarse al cambio', element: '[data-demo="fire-wind-shift"]', side: 'left', view: { panel: 'cop', run: 'shift-wind' },
-    title: 'El viento acaba de girar',
-    description: 'Los anillos se mueven. router vuelve a evaluar quién está ahora en peligro, qué rutas cruzan el fuego y qué refugio ya no sirve. El plan de hace cinco minutos deja de valer.',
+    id: 'camino', kicker: 'Segundo caso', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'route', hint: 'walkers' },
+    title: 'Las otras diecinueve van andando',
+    description: 'Salen de casa al ritmo del más lento hacia el PE-02. Cada punto lleva su propia ruta desde su puerta. Ahora vas a cambiarles el fuego debajo de los pies.',
   },
   {
-    id: 'plan', kicker: 'Cuándo tirar el plan', element: '[data-demo="panel"]', side: 'left', view: { panel: 'alerts' },
-    title: 'Plan desactualizado: siguiente acción',
-    description: 'Aquí está lo que ha cambiado, la siguiente acción concreta y los medios en marcha. Nada se ejecuta sin que alguien lo adopte: el sistema propone, el mando decide.',
+    id: 'pinta', kicker: 'Hazlo tú', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'route', hint: 'paint', handsOn: true },
+    title: 'Pinta un frente sobre su camino',
+    description: 'Es fuego que aún no arde: el mando dice «dentro de quince minutos esto está en llamas». El sistema lo trata como si ya lo estuviera.',
+    task: 'Pulsa «Frente» (arriba a la derecha) y, con el ratón, dibuja un círculo que cubra la zona azul.',
   },
   {
-    id: 'centros', kicker: 'Coordinar', element: '[data-demo="panel"]', side: 'left', view: { panel: 'centers' },
-    title: 'Vecino, bombero y mando no reciben lo mismo',
-    description: 'Hospitales, centros de salud y parques con su ficha. Preaviso sanitario o petición de apoyo en dos clics, con el mensaje que necesita cada uno.',
+    id: 'rerruta', kicker: 'HappyRobot rerruta', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
+    title: 'Se paran, y giran',
+    description: 'Cruza las rutas con el frente, consulta el registro, recalcula el destino desde donde están ahora (no desde casa), pide aprobación y avisa a cada vecino. En el aviso, los puntos giran hacia el refugio nuevo.',
   },
   {
-    id: 'empieza', kicker: 'Tu turno', element: '[data-demo="tool-area"]', side: 'bottom', view: {},
-    title: 'Ahora tú',
-    description: 'Dibuja tu propia zona con «Zona» y llámala. Abre una ficha y envía un medio. Avanza el fuego en Propagación y mira qué pasa con el plan.',
-    actions: ['La demo sigue viva: las llamadas, el helicóptero y el viento que has visto siguen ahí.', 'Puedes repetir el recorrido desde «Ver recorrido».'],
+    id: 'contraste', kicker: 'Contrastado con la realidad', element: '[data-demo="tour-fire"]', side: 'left', view: { focus: 'fire' },
+    title: 'Un problema que sí ocurre',
+    description: 'Hemos hablado con Inés Galindo Jiménez, una de las principales responsables del Departamento de Riesgos Geológicos y Cambio Climático del CSIC-IGME, que coordinó la respuesta científica a la erupción de La Palma. Con ella hemos contrastado que el problema es real y cuál es la idea indicada: saber quién hay en cada casa y guiar persona a persona.',
+  },
+  {
+    id: 'fin', kicker: 'Tu turno', element: '[data-demo="tool-area"]', side: 'bottom', view: {},
+    title: 'Ahora sin guía',
+    description: 'Rodea la ETSIT con «Zona» (noventa casas). Gira el viento en Propagación. Abre una ficha y envía un medio. Todo lo que has puesto en marcha sigue vivo.',
   },
 ]
 
 export const TOUR_INTRO = {
   kicker: 'router · puesto de mando',
-  title: 'Cómo se guía una evacuación, persona a persona',
-  lede: 'router junta las llamadas de HappyRobot, la posición de cada vecino y la evolución del incendio en una sola pantalla. Esta demo es en vivo: lo que ves pasar, está pasando.',
+  title: 'Guía tú la evacuación',
+  lede: 'router junta las llamadas de HappyRobot, la posición de cada vecino y el avance del fuego en una pantalla. En esta demo no miras: dibujas, llamas y pintas tú. El recorrido te dice dónde.',
   checklist: [
-    'Llamar a todas las casas de una zona a la vez',
-    'Ver quién no contesta y escalar a las fuerzas de seguridad',
-    'Girar el viento y ver cómo cambia el plan',
+    'Rodea veinte casas y llámalas. Una no descuelga: mándale un helicóptero.',
+    'Pinta fuego sobre el camino de las demás y mira cómo giran.',
   ],
-  primary: 'Empezar la demo · 3 min',
+  primary: 'Empezar · 4 min',
   secondary: 'Explorar por mi cuenta',
   replay: 'Ver recorrido',
 }
+
+/** Cuánto espera el recorrido, con la acción ya hecha, antes de pasar solo al paso siguiente. */
+const ADVANCE_DELAY_MS = 1400
 
 let activeTour: { isActive: () => boolean; destroy: () => void } | null = null
 let tourGeneration = 0
@@ -149,11 +175,12 @@ export function stopDemoTour() {
   tourGeneration += 1
   if (activeTour?.isActive()) activeTour.destroy()
   activeTour = null
+  document.body.classList.remove('tour-hands-on')
 }
 
-function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number, total: number, live: string | null) {
+function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number, total: number, tick: TourTick) {
   popover.closeButton.setAttribute('aria-label', 'Cerrar recorrido')
-  for (const selector of ['.tour-kicker', '.tour-actions', '.tour-live', '.tour-progress', '.tour-keys']) popover.wrapper.querySelector(selector)?.remove()
+  for (const selector of ['.tour-kicker', '.tour-task', '.tour-live', '.tour-progress', '.tour-keys']) popover.wrapper.querySelector(selector)?.remove()
 
   const progress = document.createElement('div')
   progress.className = 'tour-progress'
@@ -166,36 +193,43 @@ function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number,
   const kicker = document.createElement('p')
   kicker.className = 'tour-kicker'
   kicker.textContent = `${index + 1} · ${step.kicker}`
-  if (step.view.run) {
+  if (step.view.handsOn) {
     const pill = document.createElement('span')
-    pill.className = 'tour-live-pill'
-    pill.textContent = 'En directo'
+    pill.className = 'tour-live-pill hands'
+    pill.textContent = 'Tú'
     kicker.appendChild(pill)
   }
   popover.title.before(kicker)
 
+  if (step.task) {
+    const task = document.createElement('p')
+    task.className = 'tour-task'
+    task.textContent = step.task
+    popover.description.after(task)
+  }
+
   const liveLine = document.createElement('p')
   liveLine.className = 'tour-live'
   liveLine.setAttribute('role', 'status')
-  liveLine.hidden = !live
-  liveLine.textContent = live ?? ''
-  popover.description.after(liveLine)
-
-  if (step.actions?.length) {
-    const list = document.createElement('ul')
-    list.className = 'tour-actions'
-    for (const item of step.actions) {
-      const li = document.createElement('li')
-      li.textContent = item
-      list.appendChild(li)
-    }
-    liveLine.after(list)
-  }
+  applyTick(liveLine, popover, step, tick)
+  ;(popover.wrapper.querySelector('.tour-task') ?? popover.description).after(liveLine)
 
   const keys = document.createElement('small')
   keys.className = 'tour-keys'
   keys.textContent = '→ siguiente · ← atrás · Esc salir'
   popover.footer.appendChild(keys)
+}
+
+/** Refresca la línea en directo y el botón «Siguiente» con lo último que dice el puesto de mando. */
+function applyTick(line: HTMLElement, popover: PopoverDOM, step: DemoTourStep, tick: TourTick) {
+  const text = tick.done && step.view.handsOn ? `Hecho. ${tick.live ?? ''}`.trim() : tick.live ?? ''
+  line.hidden = !text
+  if (line.textContent !== text) line.textContent = text
+  line.classList.toggle('is-done', Boolean(tick.done))
+  if (step.view.handsOn) {
+    popover.nextButton.disabled = !tick.done
+    popover.nextButton.title = tick.done ? '' : 'Haz lo que dice el paso para seguir'
+  }
 }
 
 export async function startDemoTour(actions: DemoTourActions) {
@@ -209,7 +243,13 @@ export async function startDemoTour(actions: DemoTourActions) {
   const total = DEMO_TOUR_STEPS.length
   const last = total - 1
   let liveTimer = 0
-  const stopLive = () => { if (liveTimer) window.clearInterval(liveTimer); liveTimer = 0 }
+  let advanceTimer = 0
+  const stopLive = () => {
+    if (liveTimer) window.clearInterval(liveTimer)
+    if (advanceTimer) window.clearTimeout(advanceTimer)
+    liveTimer = 0
+    advanceTimer = 0
+  }
 
   const tour = driver({
     animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -222,7 +262,8 @@ export async function startDemoTour(actions: DemoTourActions) {
     allowClose: true,
     // El clic fuera no avanza: en el mapa se pulsa sin querer y el visitante pierde el hilo.
     overlayClickBehavior: () => undefined,
-    disableActiveInteraction: true,
+    // El visitante tiene que poder pulsar lo que el recorrido señala.
+    disableActiveInteraction: false,
     // Cada paso prepara su propia vista, así que un anclaje que falte es un error nuestro,
     // no algo que saltar en silencio. Driver espera a que React lo pinte.
     skipMissingElement: false,
@@ -234,7 +275,10 @@ export async function startDemoTour(actions: DemoTourActions) {
     doneBtnText: 'Explorar',
     popoverClass: 'vigia-tour',
     onNextClick: (_element, _step, { state }) => {
-      const next = (state.activeIndex ?? 0) + 1
+      const index = state.activeIndex ?? 0
+      // En un paso de manos, «Siguiente» solo vale con la acción hecha (el botón va deshabilitado, pero la flecha del teclado no).
+      if (DEMO_TOUR_STEPS[index]?.view.handsOn && !actions.tick(DEMO_TOUR_STEPS[index].id).done) return
+      const next = index + 1
       if (next > last) tour.destroy()
       else showStep(next)
     },
@@ -246,6 +290,7 @@ export async function startDemoTour(actions: DemoTourActions) {
     },
     onDestroyed: () => {
       stopLive()
+      document.body.classList.remove('tour-hands-on')
       if (generation !== tourGeneration) return
       markTourSeen()
       actions.close()
@@ -261,21 +306,25 @@ export async function startDemoTour(actions: DemoTourActions) {
   function showStep(index: number) {
     stopLive()
     const step = DEMO_TOUR_STEPS[index]
+    document.body.classList.toggle('tour-hands-on', Boolean(step.view.handsOn))
     actions.open(step.view)
     // Los anclajes de dentro de un panel pueden estar al final de una lista con scroll.
     document.querySelector(step.element)?.scrollIntoView({ block: 'center', behavior: 'instant' })
     tour.drive(index)
-    // Mientras el paso está en pantalla, la línea en directo se refresca y, si el anclaje
-    // ha cambiado de sitio o de tamaño (la tarjeta crece con el run, el panel cambia de
-    // alto), el foco se recoloca.
+    // Mientras el paso está en pantalla: la línea en directo se refresca, el foco se recoloca si el
+    // anclaje se mueve (el mapa se desplaza, la tarjeta crece) y, hecha la acción, se avanza solo.
     let lastRect = ''
+    let advancing = false
     liveTimer = window.setInterval(() => {
       if (!tour.isActive() || tour.getActiveIndex() !== index) { stopLive(); return }
-      const live = actions.tick(step.id)
-      const line = document.querySelector<HTMLElement>('.vigia-tour .tour-live')
-      if (line) {
-        line.hidden = !live
-        if (line.textContent !== (live ?? '')) line.textContent = live ?? ''
+      const tick = actions.tick(step.id)
+      const popover = tour.getActiveStep() && document.querySelector<HTMLElement>('.vigia-tour')
+      const line = popover?.querySelector<HTMLElement>('.tour-live')
+      const next = popover?.querySelector<HTMLButtonElement>('.driver-popover-next-btn')
+      if (line && next) applyTick(line, { nextButton: next } as PopoverDOM, step, tick)
+      if (step.view.handsOn && tick.done && !advancing && index < last) {
+        advancing = true
+        advanceTimer = window.setTimeout(() => { if (tour.isActive() && tour.getActiveIndex() === index) showStep(index + 1) }, ADVANCE_DELAY_MS)
       }
       const box = document.querySelector(step.element)?.getBoundingClientRect()
       const rect = box ? [box.x, box.y, box.width, box.height].map(Math.round).join(',') : ''

@@ -265,6 +265,7 @@ export function moveEvacuees(
   routes: RouteIndex,
   zones: SafeZone[],
   dtSec: number,
+  timeScale = TIME_SCALE,
 ): Citizen[] {
   if (dtSec <= 0) return citizens
   return citizens.map((citizen): Citizen => {
@@ -293,7 +294,7 @@ export function moveEvacuees(
     if (phase === 'access') {
       const [targetLng, targetLat] = positionAt(route, progressM)
       const gap = haversineMeters(citizen.lng, citizen.lat, targetLng, targetLat)
-      const step = (ACCESS_SPEED_KMH * 1000 * dtSec * TIME_SCALE) / 3600
+      const step = (ACCESS_SPEED_KMH * 1000 * dtSec * timeScale) / 3600
       const reached = step >= gap
       const [lng, lat] = reached
         ? [targetLng, targetLat]
@@ -308,7 +309,7 @@ export function moveEvacuees(
       }
     }
 
-    const nextProgress = progressM + (citizen.speedKmh * 1000 * dtSec * TIME_SCALE) / 3600
+    const nextProgress = progressM + (citizen.speedKmh * 1000 * dtSec * timeScale) / 3600
     if (nextProgress >= route.lengthM) {
       const [lng, lat] = parkingSpot(zone, citizen.id)
       return {

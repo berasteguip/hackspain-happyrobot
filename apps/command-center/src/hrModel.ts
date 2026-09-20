@@ -38,9 +38,9 @@ export type HrNodeKind = 'trigger' | 'lock' | 'voice' | 'extract' | 'webhook' | 
 export type HrNodeState = 'idle' | 'active' | 'done' | 'error' | 'mock'
 
 /** Dónde corre el nodo. Cruzar de carril es lo que el diagrama tiene que dejar claro. */
-export type HrLane = 'happyrobot' | 'api' | 'mando' | 'vecino'
+export type HrLane = 'happyrobot' | 'api' | 'mando' | 'vecino' | 'medios'
 
-export const HR_LANE_LABEL: Record<HrLane, string> = { happyrobot: 'HappyRobot', api: 'API router', mando: 'Mando', vecino: 'Vecino' }
+export const HR_LANE_LABEL: Record<HrLane, string> = { happyrobot: 'HappyRobot', api: 'API router', mando: 'Mando', vecino: 'Vecino', medios: 'Medios' }
 export const HR_STATE_LABEL: Record<HrNodeState, string> = { idle: '', active: 'en curso', done: 'hecho', error: 'sin resultado', mock: 'previsto' }
 
 export const HR_ICONS: Record<HrNodeKind, string> = {
@@ -289,28 +289,33 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   cop: { title: 'Propagación y viento', summary: 'Un giro de viento reasigna salidas y la API dispararía rellamadas con la instrucción nueva. Hoy no conecta.', coverage: 'planned' },
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },
   layers: { title: 'Capas y leyenda', summary: 'Las capas son geometría del mapa. HappyRobot no interviene.', coverage: 'none' },
-  escalation: { title: 'Escalada · sin respuesta', summary: 'Nadie descolgó. El mando aprueba y HappyRobot rellama, ordena por riesgo, avisa a Guardia Civil y 1-1-2 y deja constancia en Vigía.', coverage: 'partial' },
+  escalation: { title: 'Escalada · sin respuesta', summary: 'Nadie descolgó. El mando aprueba y HappyRobot lee las personas en rojo del sector y la flota libre, arma rutas por plazas y camillas, llama a cada conductor con su manifiesto y avisa por SMS a quien va a recoger.', coverage: 'partial' },
   reroute: { title: 'Rerruta · frente previsto', summary: 'El mando pinta un frente que aún no existe. HappyRobot detecta a quién le corta el camino, le busca otra salida desde donde está y se lo dice.', coverage: 'partial' },
 }
 
 // --------------------------------------------------------------------------- escalada a fuerzas de seguridad
 
 /**
- * Un paso del run de escalada. Cada uno es un nodo real de la plataforma (el `hint` lleva su
- * nombre en el editor) encadenado como lo montaría el workflow «Escalada · hogar sin respuesta».
- * `ms` es cuánto tarda en la demo: la suma ronda los diez segundos.
+ * Un paso del run de escalada. Cada uno es un nodo real del workflow «Transporte asistido · sin
+ * respuesta» tal y como está montado en el editor de HappyRobot (el `hint` lleva su nombre allí):
+ * lo invoca otro workflow, lee personas y flota del Twin, reparte en el Sandbox, bifurca, y dentro
+ * de un Loop paralelo llama a cada conductor, extrae el desenlace y avisa por SMS a la ruta.
+ * `ms` es cuánto tarda en la demo: la suma ronda los once segundos.
  */
 export type HrEscalationStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; ms: number; outcome?: 'done' | 'error' }
 
 export const HR_ESCALATION_STEPS: HrEscalationStep[] = [
-  { id: 'hook', kind: 'trigger', lane: 'api', label: 'Disparo desde Vigía', detail: 'La API manda los hogares con dos intentos sin respuesta: id, teléfono, coordenadas y minutos hasta el frente.', hint: 'Incoming hook · POST /hooks/escalada', ms: 1100 },
-  { id: 'approval', kind: 'human', lane: 'mando', label: 'Aprobado por operador', detail: 'El mando ha pedido la escalada. Sin este paso el run no sigue.', hint: 'Approval Process del workflow', ms: 800 },
-  { id: 'lookup', kind: 'db', lane: 'happyrobot', label: 'Consultar el registro', detail: 'Qué se sabe ya de esas casas: acompañantes, movilidad, quién contestó al lado.', hint: 'Query Twin with SQL · call_log', ms: 1300 },
-  { id: 'recall', kind: 'voice', lane: 'vecino', label: 'Último intento de llamada', detail: 'Rellamada corta al hogar y a la persona de contacto si consta.', hint: 'Outbound Voice Agent · «Rellamada»', ms: 1900, outcome: 'error' },
-  { id: 'rank', kind: 'route', lane: 'happyrobot', label: 'Ordenar por riesgo y acceso', detail: 'A quién le llega antes el fuego, y por dónde se entra: carretera para la ambulancia, a vista para el helicóptero.', hint: 'Google Maps · Distance Matrix + Python Sandbox', ms: 1400 },
-  { id: 'organism', kind: 'building', lane: 'happyrobot', label: 'Llamada a Guardia Civil y 1-1-2', detail: 'Coordenadas, cuántos viven y quién corre más peligro. Pide helicóptero y ambulancia.', hint: 'Outbound Voice Agent · «Llamada a organismo»', ms: 2100 },
-  { id: 'brief', kind: 'sms', lane: 'happyrobot', label: 'Parte escrito a los medios', detail: 'Lista de casas ordenada, acceso y punto de encuentro. Copia al CECOPI.', hint: 'Send SMS + Slack · canal del CECOPI', ms: 1000 },
-  { id: 'vigia', kind: 'webhook', lane: 'api', label: 'Anotar y devolver a Vigía', detail: 'La escalada queda escrita y el mapa marca a esas casas como «fuerzas en camino».', hint: 'Write to Twin + POST «Escalada → Vigía»', ms: 800 },
+  { id: 'request', kind: 'trigger', lane: 'mando', label: 'Petición desde el mando', detail: 'Tu clic aprueba la escalada. Vigía invoca este workflow y le pasa el incidente, el sector y el punto de encuentro.', hint: 'Workflow Function Request (trigger) · incidente, sector, punto de encuentro', ms: 1000 },
+  { id: 'people', kind: 'db', lane: 'happyrobot', label: 'Personas en rojo del sector', detail: 'Lee del Twin las personas sin respuesta pendientes de ese sector: dónde viven, cuántos son, quién necesita camilla.', hint: 'Query Twin with SQL · v_person_support', ms: 900 },
+  { id: 'fleet', kind: 'db', lane: 'happyrobot', label: 'Vehículos disponibles', detail: 'Lee la flota libre, priorizando la del municipio del incidente: plazas, camillas y dónde está cada uno.', hint: 'Query Twin with SQL · v_available_transport', ms: 900 },
+  { id: 'assign', kind: 'code', lane: 'happyrobot', label: 'Agrupar en rutas y asignar vehículo', detail: 'Agrupa a las personas en rutas y asigna un vehículo a cada grupo, respetando plazas y camillas.', hint: 'Python Sandbox · reparto por plazas y camillas', ms: 1200 },
+  { id: 'feasible', kind: 'paths', lane: 'happyrobot', label: '¿Hay plan ejecutable?', detail: 'Si no queda flota, corta por la rama «Sin flota disponible» y lo devuelve al mando. Hoy hay: sigue.', hint: 'Paths · rama «Sin flota disponible»', ms: 800 },
+  { id: 'loop', kind: 'loop', lane: 'happyrobot', label: 'Una iteración por asignación', detail: 'Loop en modo colección, en paralelo: cada vehículo con su grupo corre en su propia rama a la vez.', hint: 'Loop · colección, paralelo', ms: 800 },
+  { id: 'driver', kind: 'voice', lane: 'medios', label: 'Llamada al conductor', detail: 'Le lee el manifiesto: personas, paradas, recogida y destino. Puede confirmar, rechazar, reportar un bloqueo o escalar al mando.', hint: 'Outbound Voice Agent · confirmar_asignacion, rechazar_asignacion, reportar_bloqueo, escalar_a_mando', ms: 1900 },
+  { id: 'outcome', kind: 'extract', lane: 'happyrobot', label: 'Desenlace y ETA', detail: 'De la transcripción saca si acepta la asignación y cuándo llega.', hint: 'Extract · desenlace + ETA', ms: 900 },
+  { id: 'branch', kind: 'paths', lane: 'happyrobot', label: '¿Confirmado o reasignar?', detail: 'Confirmado: se avisa a las personas. Rechazo o bloqueo: rama «Necesita reasignación» y vuelta al reparto.', hint: 'Paths · rama «Necesita reasignación»', ms: 800 },
+  { id: 'sms', kind: 'sms', lane: 'vecino', label: 'SMS a las personas de la ruta', detail: 'Quién viene a buscarlas, en cuánto tiempo y dónde esperar.', hint: 'Outbound Text Agent · SMS a la ruta', ms: 1000 },
+  { id: 'loopEnd', kind: 'loop', lane: 'happyrobot', label: 'Cierre del bucle', detail: 'Termina cuando todas las asignaciones han acabado. El mapa marca los medios en camino.', hint: 'Loop End', ms: 800 },
 ]
 
 /** Lo que se lanza al terminar el run, en este orden. */

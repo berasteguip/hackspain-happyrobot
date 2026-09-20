@@ -15,6 +15,19 @@ export type Incident = {
   zoom: number
 }
 
+/**
+ * El grupo que el recorrido guiado hace rodear al visitante: una localidad del censo, apartada del
+ * resto para que el círculo se dibuje sin dudar, con una casa que no descuelga y un refugio claro.
+ * El recorrido lee de aquí a quién señalar; el escenario decide quién es.
+ */
+export type GuidedGroup = {
+  locality: string
+  /** La casa que no descuelga: la que el visitante tiene que encontrar en rojo. */
+  silentId: string
+  /** Radio del círculo sugerido alrededor del grupo, en metros. */
+  radiusM: number
+}
+
 export type FireScenario = {
   id: string
   incident: Incident
@@ -27,6 +40,15 @@ export type FireScenario = {
   police: { id: string; name: string; lng: number; lat: number }
   /** Punto del escenario que se hace coincidir con la persona real al anclar el mundo del ensayo. */
   anchorRef: { lng: number; lat: number }
+  /**
+   * Cuánto corre el reloj de la evacuación respecto al real. Gredos tiene trayectos de 7-11 km y
+   * necesita 12x para que quepan en una presentación; en una ciudad, con salidas a 1-2 km a pie,
+   * 12x vacía el mapa en un minuto y no da tiempo a pintar nada delante de nadie.
+   */
+  clockScale?: number
+  /** La gente evacúa a pie: las rutas se piden andando y no hay sentidos únicos que obliguen a seguir recto. */
+  onFoot?: boolean
+  guided?: GuidedGroup
 }
 
 /**

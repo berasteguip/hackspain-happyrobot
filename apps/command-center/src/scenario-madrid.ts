@@ -1,7 +1,7 @@
 import type { ResponseCenter } from './response'
 import { buildCitizens, buildFireCells } from './scenario'
 import type { FireScenario, Settlement } from './scenario'
-import type { FireSpot, SafeZone } from './types'
+import type { Citizen, FireSpot, SafeZone } from './types'
 
 /** ETSIT-UPM, Avenida Complutense 30. Fuente: etsit.upm.es, 2026-09-19. */
 export const ETSIT = { lng: -3.725842, lat: 40.452776 }
@@ -9,8 +9,15 @@ export const ETSIT = { lng: -3.725842, lat: 40.452776 }
 const FIRE_CENTER = { lng: -3.7238, lat: 40.4602 }
 const FIRE_SCALE = 0.03
 
+/** Entorno del metro Francos Rodríguez, al este de la Dehesa. Fuente: OSM, 2026-09-20. */
+const GUIDED = { lng: -3.7120, lat: 40.4535 }
+const GUIDED_LOCALITY = 'Colonia de Francos Rodríguez'
+
 const SETTLEMENTS: Settlement[] = [
-  { name: 'ETSIT', lng: ETSIT.lng, lat: ETSIT.lat, count: 110, radiusM: 80 },
+  { name: 'ETSIT', lng: ETSIT.lng, lat: ETSIT.lat, count: 90, radiusM: 80 },
+  // El grupo del recorrido guiado: veinte casas, a favor del viento, apartadas del campus para
+  // que el círculo se dibuje sin dudar. Su salida natural es PE-02 (sureste); PE-01 queda al sur.
+  { name: 'Colonia de Francos Rodríguez', lng: GUIDED.lng, lat: GUIDED.lat, count: 20, radiusM: 110 },
 ]
 
 const SAFE_ZONES: SafeZone[] = [
@@ -44,6 +51,26 @@ const FIRES: FireSpot[] = [
 ]
 
 const OUTSIDE: [number, number, string][] = []
+
+/**
+ * El censo de Madrid, ajustado a ciudad: aquí se evacúa a pie (4-5,5 km/h), no en coche. En el
+ * grupo guiado contestan todas las casas menos una, Angustias Herrera, 84 años, que vive sola y no
+ * descuelga: es la que el visitante tiene que encontrar en rojo. Va la última de su grupo para que
+ * el rojo aparezca cuando ya se han visto contestar las demás.
+ */
+function madridCitizens(): Citizen[] {
+  const base = buildCitizens(SETTLEMENTS, OUTSIDE)
+  const guided = base.filter(citizen => citizen.locality === GUIDED_LOCALITY)
+  const silentId = guided[guided.length - 1]?.id
+  return base.map((citizen, index): Citizen => {
+    const walker: Citizen = { ...citizen, speedKmh: 4 + (index % 4) * 0.5 }
+    if (citizen.locality !== GUIDED_LOCALITY) return walker
+    if (citizen.id === silentId) return { ...walker, name: 'Angustias Herrera', vulnerable: true, outcome: 'no_answer' }
+    return { ...walker, outcome: 'tracking', vulnerable: false }
+  })
+}
+
+const MADRID_CITIZENS = madridCitizens()
 
 const CENTERS: ResponseCenter[] = [
   {
@@ -93,8 +120,12 @@ export const MADRID_SCENARIO: FireScenario = {
   safeZones: SAFE_ZONES,
   fires: FIRES,
   fireCells: buildFireCells(FIRE_CENTER, FIRE_SCALE),
-  citizens: buildCitizens(SETTLEMENTS, OUTSIDE),
+  citizens: MADRID_CITIZENS,
   centers: CENTERS,
   police: { id: 'comisaria-moncloa', name: 'Comisaría Moncloa-Aravaca', lng: -3.7164075, lat: 40.4269639 },
   anchorRef: ETSIT,
+  // Salidas a un kilómetro y a pie: a 12x el grupo llega antes de que nadie pueda pintarle nada delante.
+  clockScale: 6,
+  onFoot: true,
+  guided: { locality: GUIDED_LOCALITY, silentId: MADRID_CITIZENS.filter(citizen => citizen.locality === GUIDED_LOCALITY).at(-1)?.id ?? '', radiusM: 230 },
 }

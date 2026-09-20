@@ -8,6 +8,7 @@ import { FIRE_CELL_SIZE_M } from './scenario'
 import type { Incident } from './scenario'
 import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, PaintedFire, SafeZone } from './types'
+import type { TourHint } from './demoTour'
 import { TRIAGE_COLOR, TRIAGE_ORDER } from './crisisApi'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints } from './fire-model'
 import type { Exposure, FireForecast } from './fire-model'
@@ -415,6 +416,8 @@ type Props = {
   fireCells: FeatureCollection<Polygon>
   centers: ResponseCenter[]
   incident: Incident
+  /** Marca del recorrido guiado: dónde mirar, dibujar o pintar. */
+  tourHint: TourHint | null
 }
 
 function sampleHeat(feature: FeatureCollection<Polygon>['features'][number], heat: number, count = 1): FeatureCollection<Point>['features'] {
@@ -664,7 +667,7 @@ function fireAnchor(fires: FireSpot[]): { lng: number; lat: number } | null {
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, plannedFires, fireStroke, drawingFire, onFireStroke, onFireComplete, recommended, units, selectedUnitId, onUnitSelect, fireCells, centers, incident }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, plannedFires, fireStroke, drawingFire, onFireStroke, onFireComplete, recommended, units, selectedUnitId, onUnitSelect, fireCells, centers, incident, tourHint }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -1159,6 +1162,35 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   }, [loaded, zones, centers, citizens, selectedId, fires])
 
   useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
+
+  // La marca azul del recorrido guiado: un círculo a escala del mapa (crece y encoge con el zoom)
+  // con su etiqueta, sobre el sitio donde el visitante tiene que mirar, dibujar o pintar. Es un
+  // nodo DOM real para que Driver pueda anclarle el bocadillo; no captura el puntero, porque
+  // debajo está el mapa con el que hay que interactuar.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !loaded || !tourHint) return
+    const element = document.createElement('div')
+    element.className = `tour-hint is-${tourHint.kind}`
+    element.dataset.demo = 'tour-hint'
+    element.setAttribute('aria-hidden', 'true')
+    const ring = document.createElement('i')
+    ring.className = 'tour-hint-ring'
+    const label = document.createElement('span')
+    label.className = 'tour-hint-label'
+    label.textContent = tourHint.label
+    element.append(ring, label)
+    const marker = new mapboxgl.Marker({ element, anchor: 'center' }).setLngLat([tourHint.lng, tourHint.lat]).addTo(map)
+    const resize = () => {
+      const metersPerPixel = 156543.03392 * Math.cos(tourHint.lat * Math.PI / 180) / 2 ** map.getZoom()
+      const px = Math.max(28, Math.round(2 * tourHint.radiusM / metersPerPixel))
+      element.style.width = `${px}px`
+      element.style.height = `${px}px`
+    }
+    resize()
+    map.on('move', resize)
+    return () => { map.off('move', resize); marker.remove() }
+  }, [loaded, tourHint])
 
   useEffect(() => {
     if (!loaded || !focusTarget) return

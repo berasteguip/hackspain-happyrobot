@@ -10,7 +10,7 @@
  * `HappyRobot.tsx`. Aquí solo componentes.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { HappyRobotLogo } from './HappyRobot'
 import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ESCALATION_STEPS, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_REROUTE_STEPS, HR_STATE_LABEL, HR_UNIT_RUN_STEPS, HR_UNIT_SCRIPT, HR_UNIT_TOOLS, HR_VIEWS } from './hrModel'
@@ -177,6 +177,11 @@ export function CallDiagram({ calls }: HrDiagramProps) {
   )
 }
 
+// --------------------------------------------------------------------------- el escenario del run
+
+/** Un paso cualquiera de un run (escalada, rerruta): lo que el escenario necesita para pintarlo. */
+type StageStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; outcome?: 'done' | 'error' }
+
 /**
  * El despacho de un medio: el workflow «Despacho de medio» nodo a nodo, en el formato del run de
  * escalada. Con un run en marcha (`unitRun`) los pasos avanzan con reloj: el que corre late, los
@@ -289,35 +294,74 @@ function UnitContext({ unit, run }: { unit?: HrUnitPulse; run?: HrUnitRun | null
 }
 
 /**
- * El run de escalada, paso a paso. Es la misma anatomía que la llamada, pero en vertical y con
- * reloj: el nodo en curso late, los hechos quedan marcados, la rellamada termina «sin resultado»
- * a propósito (nadie descolgó, por eso estamos aquí) y al final se anuncia qué medios salieron.
- * Lo que pasa en el mapa (los medios moviéndose) lo dispara el CECOP cuando `run.step` llega
- * al final; aquí solo se dibuja.
+ * El run como escenario: un paso protagonista a la vez, grande, que entra con un golpe cuando le
+ * toca y se retira hacia arriba cuando termina; encima, la hilera de todos los pasos con los hechos
+ * marcados y el que viene en gris. Al acabar, el protagonista es el resultado (qué medios salen, a
+ * dónde va cada grupo). Es la misma información que la lista vertical, contada como secuencia:
+ * pum, pum, pum. Lo que pasa en el mapa lo dispara el CECOP; aquí solo se dibuja.
  */
-export function EscalationDiagram({ run, units }: { run: HrEscalationRun; units: { callSign: string; label: string; eta: string }[] }) {
-  const finished = run.step >= HR_ESCALATION_STEPS.length
-  const stateAt = (index: number, outcome?: 'done' | 'error'): HrNodeState => index < run.step ? (outcome ?? 'done') : index === run.step ? 'active' : 'idle'
+function RunStage({ steps, step, label, result, demoId }: { steps: StageStep[]; step: number; label: string; result: ReactNode; demoId: string }) {
+  const finished = step >= steps.length
+  // El paso que se retira: se conserva un instante para animar su salida mientras entra el nuevo.
+  const [leaving, setLeaving] = useState<number | null>(null)
+  const shownRef = useRef(step)
+  useEffect(() => {
+    if (shownRef.current === step) return
+    setLeaving(shownRef.current)
+    shownRef.current = step
+    const timer = window.setTimeout(() => setLeaving(null), 420)
+    return () => window.clearTimeout(timer)
+  }, [step])
+  const stateAt = (index: number): HrNodeState => index < step ? (steps[index].outcome ?? 'done') : index === step ? 'active' : 'idle'
+  const card = (index: number, phase: 'in' | 'out') => {
+    const item = steps[index]
+    if (!item) return null
+    const state = phase === 'out' ? (item.outcome ?? 'done') : 'active'
+    return (
+      <article key={`${item.id}-${phase}`} className={`hr-stage-card is-${phase}`} data-state={state} data-lane={item.lane} aria-hidden={phase === 'out'}>
+        <span className="hr-stage-icon"><HrIcon kind={item.kind} />{state === 'active' && <i className="hr-node-pulse" aria-hidden="true" />}</span>
+        <div className="hr-stage-copy">
+          <em>{HR_LANE_LABEL[item.lane]}<b>{index + 1}/{steps.length}</b></em>
+          <strong>{item.label}</strong>
+          <p>{state === 'error' ? 'Sin respuesta. Se escala.' : item.detail}</p>
+          <small title={item.hint}>{item.hint.split(' · ')[0]}</small>
+        </div>
+      </article>
+    )
+  }
   return (
-    <div className="hr-run" data-demo="hr-escalation" data-finished={finished}>
+    <div className="hr-run hr-stage" data-demo={demoId} data-finished={finished}>
       <div className="hr-run-head">
         <span className={`hr-run-state ${finished ? 'done' : 'active'}`}><i aria-hidden="true" />{finished ? 'Enviado' : 'Ejecutando run'}</span>
-        <small>{run.label}</small>
+        <small>{label}</small>
       </div>
-      {finished && (
-        <div className="hr-run-result" role="status">
-          <strong>Medios en camino</strong>
-          <ul>{units.map(unit => <li key={unit.callSign}><b>{unit.callSign}</b><span>{unit.label}</span><em>{unit.eta || 'calculando'}</em></li>)}</ul>
-          <small>Las casas quedan marcadas en el mapa hasta que alguien llame a la puerta.</small>
-        </div>
-      )}
-      <HrFlow label="Pasos de la escalada">
-        {HR_ESCALATION_STEPS.map((step, index) => {
-          const state = stateAt(index, step.outcome)
-          return <HrNode key={step.id} kind={step.kind} lane={step.lane} state={state} label={step.label} detail={state === 'idle' ? undefined : <span title={step.hint}>{state === 'error' ? 'Sin respuesta. Se escala.' : step.detail}</span>} demoId={step.id} />
+      <ol className="hr-stage-trail" aria-label="Pasos del run">
+        {steps.map((item, index) => {
+          const state = stateAt(index)
+          return <li key={item.id} data-state={state} title={`${item.label} · ${HR_STATE_LABEL[state] || 'pendiente'}`} data-demo="hr-node" data-demo-id={item.id}><span><HrIcon kind={item.kind} /></span></li>
         })}
-      </HrFlow>
+      </ol>
+      <div className="hr-stage-focus" aria-live="polite">
+        {leaving !== null && leaving < steps.length && card(leaving, 'out')}
+        {finished
+          ? <div key="result" className="hr-run-result hr-stage-card is-in" role="status">{result}</div>
+          : card(step, 'in')}
+      </div>
     </div>
+  )
+}
+
+/**
+ * El run de escalada, paso a paso, calcado del workflow «Transporte asistido»: lee personas y
+ * flota, reparte, llama a cada conductor y avisa a la ruta. Al final se anuncia qué medios salieron.
+ */
+export function EscalationDiagram({ run, units }: { run: HrEscalationRun; units: { callSign: string; label: string; eta: string }[] }) {
+  return (
+    <RunStage steps={HR_ESCALATION_STEPS} step={run.step} label={run.label} demoId="hr-escalation" result={<>
+      <strong>Asignaciones confirmadas · medios en camino</strong>
+      <ul>{units.map(unit => <li key={unit.callSign}><b>{unit.callSign}</b><span>{unit.label}</span><em>{unit.eta || 'calculando'}</em></li>)}</ul>
+      <small>Cada conductor ha confirmado su manifiesto. Las casas quedan marcadas en el mapa hasta que alguien llame a la puerta.</small>
+    </>} />
   )
 }
 
@@ -326,31 +370,15 @@ export function EscalationDiagram({ run, units }: { run: HrEscalationRun; units:
  * no ha contestado para alguien, se ve «calculando» en vez de un destino inventado.
  */
 export function RerouteDiagram({ run, outcomes, pending }: { run: HrRerouteRun; outcomes: HrRerouteOutcome[]; pending: number }) {
-  const finished = run.step >= HR_REROUTE_STEPS.length
-  const stateAt = (index: number): HrNodeState => index < run.step ? 'done' : index === run.step ? 'active' : 'idle'
   return (
-    <div className="hr-run" data-demo="hr-reroute" data-finished={finished}>
-      <div className="hr-run-head">
-        <span className={`hr-run-state ${finished ? 'done' : 'active'}`}><i aria-hidden="true" />{finished ? 'Enviado' : 'Ejecutando run'}</span>
-        <small>{run.label}</small>
-      </div>
-      {finished && (
-        <div className="hr-run-result" role="status">
-          <strong>Destino nuevo</strong>
-          <ul>
-            {outcomes.map(item => <li key={item.zoneId}><b>{item.code}</b><span>{item.name}</span><em>{item.count} {item.count === 1 ? 'persona' : 'personas'}</em></li>)}
-            {pending > 0 && <li key="pending"><b>…</b><span>Directions calculando la salida</span><em>{pending}</em></li>}
-          </ul>
-          <small>Cada persona recibe su ruta desde donde está ahora. Nadie vuelve a casa a empezar.</small>
-        </div>
-      )}
-      <HrFlow label="Pasos de la rerruta">
-        {HR_REROUTE_STEPS.map((step, index) => {
-          const state = stateAt(index)
-          return <HrNode key={step.id} kind={step.kind} lane={step.lane} state={state} label={step.label} detail={state === 'idle' ? undefined : <span title={step.hint}>{step.detail}</span>} demoId={`reroute-${step.id}`} />
-        })}
-      </HrFlow>
-    </div>
+    <RunStage steps={HR_REROUTE_STEPS} step={run.step} label={run.label} demoId="hr-reroute" result={<>
+      <strong>Destino nuevo</strong>
+      <ul>
+        {outcomes.map(item => <li key={item.zoneId}><b>{item.code}</b><span>{item.name}</span><em>{item.count} {item.count === 1 ? 'persona' : 'personas'}</em></li>)}
+        {pending > 0 && <li key="pending"><b>…</b><span>Directions calculando la salida</span><em>{pending}</em></li>}
+      </ul>
+      <small>Cada persona recibe su ruta desde donde está ahora. Nadie vuelve a casa a empezar.</small>
+    </>} />
   )
 }
 
