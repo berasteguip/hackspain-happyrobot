@@ -196,6 +196,89 @@ export function moveUnits(units: DispatchUnit[], dtSec: number): DispatchUnit[] 
   })
 }
 
+/** Una parada por delante del medio: dónde, a cuánto por su ruta y en cuánto llega a ella. */
+export type UnitStop = { label: string; lng: number; lat: number; distanceM?: number; etaSec?: number }
+
+/** Índice del punto de la ruta más cercano a una coordenada. */
+function nearestIndex(route: Route, lng: number, lat: number): number {
+  let best = 0
+  let bestM = Infinity
+  route.coords.forEach(([x, y], index) => {
+    const d = haversineMeters(x, y, lng, lat)
+    if (d < bestM) { bestM = d; best = index }
+  })
+  return best
+}
+
+/** A menos de esto de una parada, el medio «está» en ella: cuenta como pasada y vuelve al final de la vuelta. */
+const AT_STOP_M = 25
+
+/** Distancia por delante desde `fromM` hasta `toM`, dando la vuelta si el circuito es cerrado. */
+function aheadM(route: Route, fromM: number, toM: number, loop: boolean) {
+  if (!loop) return Math.max(0, toM - fromM)
+  const ahead = ((toM - fromM) % route.lengthM + route.lengthM) % route.lengthM
+  return ahead < AT_STOP_M || ahead > route.lengthM - AT_STOP_M ? route.lengthM : ahead
+}
+
+/**
+ * Las próximas paradas del medio, en el orden en que va a pasar por ellas. Un despacho tiene una,
+ * el destino; una patrulla tiene su circuito, empezando por la parada que viene ahora. Sin ruta
+ * validada no hay distancias: solo el orden.
+ */
+export function unitStops(unit: DispatchUnit): UnitStop[] {
+  const route = unit.route
+  if (unit.mission === 'dispatch') {
+    const remaining = route ? Math.max(0, route.lengthM - unit.progressM) : undefined
+    return [{ label: unit.target.label, lng: unit.target.lng, lat: unit.target.lat, distanceM: remaining, etaSec: unit.status === 'en_route' && route ? unit.etaSec ?? remaining! / routeSpeed(route) : unit.status === 'on_scene' ? 0 : undefined }]
+  }
+  const stops = unit.patrol?.stops ?? []
+  if (!route || route.lengthM <= 0) return stops.map(stop => ({ label: stop.label, lng: stop.lng, lat: stop.lat }))
+  const speed = routeSpeed(route)
+  const progress = unit.progressM % route.lengthM
+  return stops
+    .map(stop => {
+      const distanceM = aheadM(route, progress, route.cumulative[nearestIndex(route, stop.lng, stop.lat)], true)
+      return { label: stop.label, lng: stop.lng, lat: stop.lat, distanceM, etaSec: distanceM / speed }
+    })
+    .sort((a, b) => a.distanceM - b.distanceM)
+}
+
+/** Los puntos de la ruta entre dos distancias, con la posición exacta en cada extremo. Da la vuelta en un circuito. */
+export function sliceRoute(route: Route, fromM: number, toM: number, loop = false): [number, number][] {
+  if (route.lengthM <= 0) return []
+  const clamp = (value: number) => Math.max(0, Math.min(route.lengthM, value))
+  const segment = (a: number, b: number): [number, number][] => {
+    const out: [number, number][] = [positionAt(route, a)]
+    route.cumulative.forEach((m, index) => { if (m > a && m < b) out.push(route.coords[index]) })
+    out.push(positionAt(route, b))
+    return out
+  }
+  if (!loop) return fromM >= toM ? [] : segment(clamp(fromM), clamp(toM))
+  const from = ((fromM % route.lengthM) + route.lengthM) % route.lengthM
+  const to = ((toM % route.lengthM) + route.lengthM) % route.lengthM
+  if (to > from) return segment(from, to)
+  if (to === from) return segment(0, route.lengthM)
+  return [...segment(from, route.lengthM), ...segment(0, to).slice(1)]
+}
+
+/**
+ * La estela del medio sobre su ruta: lo que ya ha recorrido, el tramo hasta la siguiente parada y el
+ * resto. En un despacho el resto está vacío (solo hay una parada); en un circuito el recorrido no se
+ * pinta, porque a la segunda vuelta ya lo es todo.
+ */
+export function unitTrail(unit: DispatchUnit): { done: [number, number][]; ahead: [number, number][]; rest: [number, number][] } {
+  const route = unit.route
+  if (!route || route.lengthM <= 0) return { done: [], ahead: [], rest: [] }
+  if (unit.mission === 'dispatch') {
+    const at = Math.min(unit.progressM, route.lengthM)
+    return { done: sliceRoute(route, 0, at), ahead: sliceRoute(route, at, route.lengthM), rest: [] }
+  }
+  const progress = unit.progressM % route.lengthM
+  const next = unitStops(unit)[0]
+  const nextM = next ? (progress + (next.distanceM ?? 0)) % route.lengthM : progress
+  return { done: [], ahead: sliceRoute(route, progress, nextM, true), rest: sliceRoute(route, nextM, progress, true) }
+}
+
 export function unitEta(unit: DispatchUnit) {
   if (unit.status !== 'en_route' || !unit.route) return ''
   const seconds = unit.etaSec ?? unit.route.durationSec

@@ -510,6 +510,10 @@ button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
 .hr-run-state.idle { color: var(--hr-muted); }
 .hr-run-state.error { color: var(--hr-warn); border-color: #9a6a2455; background: #9a6a240a; }
 .hr-run-result.error { border-color: #9a6a2455; background: #9a6a240a; }
+/* Las paradas del medio: informativo, sin color de éxito. */
+.hr-run-result.plain { border-color: var(--hr-line); background: var(--hr-panel); animation: none; }
+.hr-run-result.plain strong { color: var(--hr-soft); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.hr-run-result.plain li b { min-width: 16px; color: var(--hr-move); }
 .hr-run-result.error strong { color: var(--hr-warn); }
 .hr-run .hr-node[data-state="idle"] .hr-node-copy strong { color: var(--hr-muted); font-weight: 400; }
 .hr-run .hr-node[data-state="idle"] .hr-node-icon { opacity: 0.55; }
@@ -571,6 +575,13 @@ button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
 .hr-node[data-state="mock"] .hr-tools::before, .hr-node[data-state="mock"] .hr-tools > li::before, .hr-node[data-state="mock"] .hr-tools > li::after { animation: none; }
 /* Las tools que cuelgan de un paso del run: misma rama compacta que en la anatomía de la llamada. */
 .hr-node .hr-tools { margin: 6px 0 6px 37px; }
+/* El cuerpo de un Loop: los pasos de cada iteración, sangrados y con el corchete del bucle a la izquierda. */
+.hr-flow-nested { margin: 6px 0 8px 15px; padding: 4px 0 0 21px; border-left: 1px dashed var(--hr-line); }
+.hr-flow-nested .hr-node-icon { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 8px; }
+.hr-flow-nested .hr-icon { width: 14px; height: 14px; }
+.hr-flow-nested .hr-node::before { left: 13px; top: 30px; }
+.hr-flow-nested .hr-node-copy strong { font-size: 11.5px; }
+.hr-flow-nested .hr-node .hr-tools { margin-left: 33px; }
 .hr-node-copy small .hr-chain { display: inline-flex; vertical-align: middle; margin-left: 6px; }
 .hr-node-copy small .hr-chain .hr-icon { width: 12px; height: 12px; }
 .hr-pulse-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; border: 1px solid #2c738744; background: #2c73870d; color: var(--hr-move); font-size: 10.5px; font-weight: 550; font-variant-numeric: tabular-nums; }

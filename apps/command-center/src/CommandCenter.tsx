@@ -22,7 +22,7 @@ import { planCitizenRoute } from './routing'
 import type { RouteIndex } from './routing'
 import { detectAlerts, initialWatch, mergeAlerts } from './alerts'
 import type { AlertAction, AlertWatch, CommandAlert } from './alerts'
-import { UNIT_LABEL, UNIT_STATUS_LABEL, applyUnitPlan, createDispatch, createPatrolFleet, moveUnits, originsFrom, pickAvailableUnit, planUnitRoute, redirectUnit, retryUnitRoute, unitEta } from './units'
+import { UNIT_LABEL, UNIT_STATUS_LABEL, applyUnitPlan, createDispatch, createPatrolFleet, moveUnits, originsFrom, pickAvailableUnit, planUnitRoute, redirectUnit, retryUnitRoute, unitEta, unitStops } from './units'
 import type { DispatchTarget, DispatchUnit, UnitKind } from './units'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
 import {
@@ -35,8 +35,8 @@ import { TourIntro } from './TourIntro'
 import { markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
-import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS } from './hrModel'
-import type { HrCallsPulse, HrEscalationRun, HrUnitPulse, HrView } from './hrModel'
+import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_UNIT_RUN_STEPS } from './hrModel'
+import type { HrCallsPulse, HrEscalationRun, HrUnitPulse, HrUnitRun, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
@@ -199,7 +199,7 @@ export function CommandCenter({ token }: { token: string }) {
   const [showWind, setShowWind] = useState(false)
   const marginM = 150
   const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null)
-  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]] } | null>(null)
+  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]]; maxZoom?: number } | null>(null)
   const [mapRoute, setMapRoute] = useState<RefugeRoute | null>(null)
   const [notices, setNotices] = useState<DemoNotice[]>([])
   const forecast = useMemo(() => buildFireForecast(scenario.fireCells, fireSettings), [scenario.fireCells, fireSettings])
@@ -684,18 +684,44 @@ export function CommandCenter({ token }: { token: string }) {
       return null // destino inválido: no se crea el medio
     }
   }
-  // Enviar un medio a mano es pulsarlo: la tarjeta de HappyRobot se abre en su despacho y se ve
-  // la ruta calcularse y el medio salir. El plan operativo queda a un clic.
+  // Enviar un medio a mano arranca el run «Despacho de medio» en la tarjeta de HappyRobot: los pasos
+  // avanzan con reloj y el vehículo sale en el paso de Vigía, como en la escalada. Un run a la vez.
+  const [unitRun, setUnitRun] = useState<HrUnitRun | null>(null)
   const dispatchUnit = (kind: UnitKind, target: DispatchTarget) => {
-    const unit = spawnUnit(kind, target)
-    if (!unit) return
-    setSelectedUnitId(unit.id)
-    setFocusTarget({ lng: unit.lng, lat: unit.lat, bounds: [[unit.lng, unit.lat], [target.lng, target.lat]] })
+    if (unitRun && unitRun.step < HR_UNIT_RUN_STEPS.length) return
+    if (!pickAvailableUnit(unitsRef.current, kind, target) && unitsRef.current.length >= MAX_UNITS) return
+    setUnitRun({ id: crypto.randomUUID(), kind, target: { ...target }, agent: 'Operador · demo', label: 'Petición del mando', step: 0, startedAt: Date.now() })
+    setSelectedUnitId(null)
     setSelectedId(null)
     setDrawingArea(false)
     setPanel(null)
     setHrCard('open')
+    setFocusTarget({ lng: target.lng, lat: target.lat, zoom: 14 })
   }
+  const spawnUnitRef = useRef(spawnUnit)
+  spawnUnitRef.current = spawnUnit
+  useEffect(() => {
+    if (!unitRun) return
+    const step = HR_UNIT_RUN_STEPS[unitRun.step]
+    if (!step) {
+      // Terminado: el guion se queda unos segundos y después el vehículo manda solo.
+      const timer = window.setTimeout(() => setUnitRun(current => current?.id === unitRun.id ? null : current), 4000)
+      return () => window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(() => {
+      let unitId = unitRun.unitId
+      if (step.id === 'vigia' && !unitId) {
+        const unit = spawnUnitRef.current(unitRun.kind, unitRun.target, unitRun.agent)
+        if (unit) {
+          unitId = unit.id
+          setSelectedUnitId(unit.id)
+          setFocusTarget({ lng: unit.lng, lat: unit.lat, bounds: [[unit.lng, unit.lat], [unitRun.target.lng, unitRun.target.lat]] })
+        }
+      }
+      setUnitRun(current => current?.id === unitRun.id ? { ...current, step: current.step + 1, unitId } : current)
+    }, step.ms)
+    return () => window.clearTimeout(timer)
+  }, [unitRun])
   const targetFromCitizens = (ids: string[], fallback?: { lng: number; lat: number }, label = 'zona seleccionada'): DispatchTarget | null => {
     const group = ids.map(id => citizensRef.current.find(citizen => citizen.id === id)).filter((citizen): citizen is Citizen => Boolean(citizen))
     if (group.length) {
@@ -783,7 +809,13 @@ export function CommandCenter({ token }: { token: string }) {
     setDrawingArea(false)
     setPanel(null)
     setHrCard('open')
-    setFocusTarget({ lng: unit.lng, lat: unit.lat, zoom: 14 })
+    // Con ruta, se encuadra entera: el vehículo, la estela y las paradas a la vez.
+    const coords = unit.route?.coords
+    if (coords && coords.length > 1) {
+      const lngs = coords.map(([lng]) => lng)
+      const lats = coords.map(([, lat]) => lat)
+      setFocusTarget({ lng: unit.lng, lat: unit.lat, bounds: [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]], maxZoom: 15 })
+    } else setFocusTarget({ lng: unit.lng, lat: unit.lat, zoom: 14 })
   }
   const selectCitizen = (id: string | null) => {
     setSelectedId(id)
@@ -886,11 +918,12 @@ export function CommandCenter({ token }: { token: string }) {
       distanceKm: unit.route && unit.mission === 'dispatch' ? unit.route.lengthM / 1000 : undefined,
       hold: unit.hold,
       escalated: citizens.some(citizen => citizen.escalation?.unitIds.includes(unit.id)),
+      stops: unitStops(unit).map(stop => ({ label: stop.label, km: stop.distanceM === undefined ? undefined : stop.distanceM / 1000, etaMin: stop.etaSec === undefined ? undefined : Math.max(1, Math.ceil(stop.etaSec / 60)) })),
     }
   }, [units, selectedUnitId, citizens])
   // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
   // Con un vehículo pulsado y ninguna ficha abierta, manda su despacho.
-  const hrView: HrView = escalation ? 'escalation' : selected ? 'person' : panel ?? (hrUnit ? 'unit' : hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
+  const hrView: HrView = escalation ? 'escalation' : selected ? 'person' : panel ?? (hrUnit || unitRun ? 'unit' : hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
   const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Plan operativo' : 'Personas'
   const panelKicker = selected ? 'Censo' : panel === 'incidents' ? 'Escenario' : panel === 'layers' ? 'Mapa' : panel === 'cop' ? 'Modelo' : panel === 'centers' ? 'Coordinación' : panel === 'alerts' ? 'Operación' : 'Censo'
   const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
@@ -940,7 +973,7 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className={`map-app${panel || selected ? ' has-panel' : ''}${hrCard !== 'hidden' ? ' has-hr' : ''}`}>
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} recommended={recommended} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
+        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} recommended={recommended} units={units} selectedUnitId={selectedUnitId} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
       <Intro brand={brandRef} />
       <header className="floating-brand">
@@ -983,7 +1016,7 @@ export function CommandCenter({ token }: { token: string }) {
           )}
         </div>
       </aside>}
-      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} unit={hrUnit} escalation={escalation ? { run: escalation, units: escalationUnits } : null} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => { setHrCard('hidden'); setSelectedUnitId(null) }} />}
+      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} unit={hrUnit} unitRun={unitRun} escalation={escalation ? { run: escalation, units: escalationUnits } : null} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => { setHrCard('hidden'); setSelectedUnitId(null) }} />}
       <section className={`campaign-dock ${liveMode && !DEMO_ONLY ? 'is-live' : ''}`} data-demo="campaign-dock" aria-label="Campaña de llamadas por zona">
         <button ref={campaignButtonRef} type="button" data-demo="campaign-settings" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
         <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{DEMO_ONLY || !liveMode ? 'Simulación local' : 'Llamadas reales · HappyRobot'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>
