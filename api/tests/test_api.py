@@ -437,6 +437,79 @@ def test_una_observacion_de_alguien_desconocido_crea_la_ficha(client):
     assert client.get("/people/p-nueva").json()["triage"]["level"] == "green"
 
 
+def test_registrarse_desde_el_enlace_crea_una_persona_llamable_y_es_idempotente(client):
+    """Quien abre el enlace entra en el censo con su GPS y su teléfono pasa a la lista blanca."""
+    client.post("/reset")
+    r = client.post(
+        "/people/register",
+        json={"name": "Mateo", "phone": "+34 600 00 00 00", "lat": 41.7, "lon": -6.04},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["created"] is True and body["map_url"].endswith(f"/?p={body['person_id']}")
+    fila = next(p for p in client.get("/api/roster").json() if p["id"] == body["person_id"])
+    assert fila["dialable"] is True and fila["location_source"] == "gps"
+    assert any(p["id"] == body["person_id"] for p in client.get("/api/locations").json())
+
+    otra = client.post(
+        "/people/register", json={"phone": "+34600000000", "lat": 41.71, "lon": -6.05}
+    ).json()
+    assert otra["created"] is False and otra["person_id"] == body["person_id"]
+    assert client.post(
+        "/people/register", json={"phone": "600000000", "lat": 41.7, "lon": -6.04}
+    ).status_code == 422
+
+
+def test_anclar_el_mundo_desplaza_fuego_y_vecinos_alrededor_del_registrado(client):
+    client.post("/reset")
+    antes = client.get("/state").json()
+    casa_antes = next(p for p in antes["people"] if p["id"] == "p-001")
+    fuego_antes = antes["fire"]["perimeter"]["coordinates"][0][0]
+    # Muy lejos del escenario (1 grado al norte): todo debe seguirle.
+    centro = client.get("/api/roster").json()
+    ref_lat = sum(p["lat"] for p in centro) / len(centro)
+    ref_lon = sum(p["lng"] for p in centro) / len(centro)
+    r = client.post(
+        "/people/register",
+        json={"phone": "+34600000001", "lat": ref_lat + 1.0, "lon": ref_lon, "anchor": True},
+    )
+    assert r.status_code == 200 and r.json()["anchor"]["lat"] == ref_lat + 1.0
+    despues = client.get("/state").json()
+    casa_despues = next(p for p in despues["people"] if p["id"] == "p-001")
+    assert casa_despues["lat"] > casa_antes["lat"] + 0.9, "el vecino sintético se desplaza con el mundo"
+    assert despues["fire"]["perimeter"]["coordinates"][0][0][1] > fuego_antes[1] + 0.9
+    yo = next(p for p in despues["people"] if p["id"] == r.json()["person_id"])
+    assert yo["lat"] == ref_lat + 1.0, "la persona real no se mueve"
+    assert client.get("/api/anchor").json()["anchored"] is True
+    # Registrarse otra vez en el mismo sitio no vuelve a mover nada.
+    client.post("/people/register", json={"phone": "+34600000002", "lat": ref_lat + 1.0, "lon": ref_lon, "anchor": True})
+    assert next(p for p in client.get("/state").json()["people"] if p["id"] == "p-001")["lat"] == casa_despues["lat"]
+
+
+def test_register_only_calls_bloquea_al_dataset_y_deja_pasar_al_registrado(client, monkeypatch):
+    import notify
+
+    client.post("/reset")
+    monkeypatch.setattr(settings, "register_only_calls", True)
+    assert notify.phone_allowed("+34600990001") is False
+    client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04})
+    assert notify.phone_allowed("+34600000000") is True
+
+
+def test_con_auto_notify_apagado_registrarse_no_dispara_llamadas(client, monkeypatch):
+    import notify
+
+    client.post("/reset")
+    monkeypatch.setattr(settings, "auto_notify", False)
+    llamadas = []
+    monkeypatch.setattr(notify, "_post_to_happyrobot", lambda payload, client=None: llamadas.append(payload) or (True, "ok", "run-x"))
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_shared_secret", "x" * 40)
+    client.post("/people/register", json={"phone": "+34600000000", "lat": 41.7, "lon": -6.04, "anchor": True})
+    client.post("/positions", json={"person_id": "p-001", "lat": 41.66, "lon": -6.05})
+    assert llamadas == [], "sin operador no suena nadie"
+
+
 def test_una_llamada_sin_nada_resenable_tambien_deja_motivo(client):
     """Una ficha que dice «el agente no dejó motivo» se lee como que algo falló.
 
@@ -462,3 +535,48 @@ def test_una_llamada_sin_nada_resenable_tambien_deja_motivo(client):
     client.post("/calls/observation", json={"PERSONA_ID": "p-004", "nivel": "verde"})
     otro = client.get("/people/p-004").json()["triage"]["reason"]
     assert otro and "confirma" not in otro
+
+
+def test_un_campo_ininteligible_no_tira_toda_la_observacion(client):
+    """Caso real del 20 sep 2026: el AI Extract devolvió `"llamas": "llamas"`.
+
+    Pydantic tumbaba la petición entera con un 422 y se perdía una observación que traía nivel
+    rojo, discrepancia y una nota diciendo que la persona veía llamas. Del otro lado de este
+    endpoint hay un modelo de lenguaje: puede poner cualquier cosa en cualquier campo, y eso no
+    puede costar la única información que tenemos de alguien en peligro.
+    """
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-001",
+            "nivel": "rojo",
+            "llamas": "llamas",          # el nombre del campo en vez de un booleano
+            "duration_s": "un rato",     # y un número que no es un número
+            "discrepancia": "prior_bajo_obs_alta",
+            "confianza": "media",
+            "resultado": "cortada",
+            "nota_libre": "Afirmó ver llamas cercanas; el triaje quedó interrumpido.",
+        },
+    )
+    assert r.status_code == 200, "un campo ilegible no puede costar la observación entera"
+
+    triaje = client.get("/people/p-001").json()["triage"]
+    assert triaje["level"] == "red", "lo que SÍ se entendía se guarda"
+    assert triaje["flames"] is None, "lo que no se entendía se descarta, no se inventa"
+    assert "PEOR de lo que decía el mapa" in triaje["reason"]
+    assert "se cortó a medias" in triaje["reason"]
+
+
+def test_los_booleanos_del_extract_admiten_las_formas_razonables(client):
+    from models import CallObservation
+
+    assert CallObservation(llamas="true").flames is True
+    assert CallObservation(llamas="sí").flames is True
+    assert CallObservation(llamas=1).flames is True
+    assert CallObservation(llamas="false").flames is False
+    assert CallObservation(llamas="no").flames is False
+    assert CallObservation(llamas="cualquier cosa").flames is None
+    assert CallObservation(duration_s="96").duration_s == 96
+    assert CallObservation(duration_s="96.7").duration_s == 96
+    assert CallObservation(duration_s="un rato").duration_s is None

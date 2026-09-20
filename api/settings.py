@@ -71,6 +71,12 @@ def _phone_set(name: str) -> set[str]:
     return {t for t in limpio if t}
 
 
+def _phone(name: str) -> str:
+    """Un teléfono suelto del entorno → E.164 sin espacios ni guiones."""
+    raw = os.getenv(name, "") or ""
+    return "".join(ch for ch in raw if ch.isdigit() or ch == "+")
+
+
 # Secretos que están escritos en un fichero versionado de un repo PÚBLICO. Quien lea el repo
 # los tiene. Si alguno de estos es la clave de un despliegue, ese despliegue está abierto.
 SECRETOS_PUBLICOS = frozenset(
@@ -104,16 +110,23 @@ class Settings:
     allow_real_calls: bool = field(default_factory=lambda: _bool("ALLOW_REAL_CALLS", False))
 
     # --- Reparto de llamadas ------------------------------------------------------------
-    # Segundo cerrojo, y el que de verdad protege durante los ensayos: aunque
-    # `ALLOW_REAL_CALLS` esté en true, solo se marcan los teléfonos de esta lista. Vacía =
-    # sin lista blanca, se marca lo que diga el escenario (que es lo que hace falta el día
-    # de la demo, con el dataset sintético cargado).
-    call_allowlist: set[str] = field(default_factory=lambda: _phone_set("CALL_ALLOWLIST"))
+    # Aquí vivía `CALL_ALLOWLIST`, una lista blanca de teléfonos. Se quitó: el agente llama a
+    # números que le dicta la persona durante la conversación (la madre que se quedó en casa),
+    # y eso es incompatible con una lista escrita de antemano. Lo que frena ahora una ráfaga
+    # mal dibujada es `ALLOW_REAL_CALLS`, `CALL_MAX_BATCH` y `CALL_MAX_RADIUS_M`, más el hecho
+    # de que los teléfonos del escenario son del rango reservado.
     # `p-001:+34...,p-002:+34...` — sustituye el teléfono de esas personas al cargar el
     # escenario. Los móviles reales de los ensayos viven aquí, nunca en un fichero versionado.
     phone_overrides: dict[str, str] = field(
         default_factory=lambda: _phone_map("PHONE_OVERRIDES")
     )
+    # Ensayo con el enlace (`POST /people/register`): con `true`, solo suenan los teléfonos que
+    # se registraron ellos mismos desde `/track`. Los del dataset quedan bloqueados aunque
+    # `ALLOW_REAL_CALLS` esté encendido. No sustituye a la lista blanca que se quitó: es opt-in.
+    register_only_calls: bool = field(default_factory=lambda: _bool("REGISTER_ONLY_CALLS", False))
+    # `false`: el planner no llama ni manda SMS por su cuenta (rutas nuevas, convoyes, riesgo);
+    # solo suena lo que el operador rodea en el mapa. Para ensayos donde el mando decide.
+    auto_notify: bool = field(default_factory=lambda: _bool("AUTO_NOTIFY", True))
     # Llamadas simultáneas que se lanzan al rodear un círculo en Vigía.
     call_parallelism: int = field(default_factory=lambda: _int("CALL_PARALLELISM", 8))
     # Radio máximo que se acepta en /calls/dispatch: un círculo de 200 km no es una zona.
@@ -140,6 +153,11 @@ class Settings:
     # marcar) y exige que la petición se declare como simulacro. Ponerlo a false hace que el
     # workflow rechace todas las llamadas: es el freno de mano del lado de HappyRobot.
     demo_mode: bool = field(default_factory=lambda: _bool("DEMO_MODE", True))
+    # El móvil que hace de «organismo oficial» cuando el agente usa `llamar_a_organismo_oficial`
+    # en mitad de una llamada. El workflow NO lo elige ni se lo pregunta a nadie. Desde la v9 el
+    # nodo lleva un número fijo y usa este solo si llega: sirve para cambiar el mando de la
+    # demo sin tocar el workflow. Vacío = se queda el fijo del nodo.
+    demo_org_phone: str = field(default_factory=lambda: _phone("DEMO_ORG_PHONE"))
 
     # --- Escenario y persistencia -----------------------------------------
     scenario: str = field(default_factory=lambda: os.getenv("SCENARIO", "sierra-culebra"))
@@ -201,10 +219,10 @@ class Settings:
                 if self.phone_overrides
                 else "ninguno (se usan los del escenario)"
             ),
-            "call_allowlist": (
-                f"{len(self.call_allowlist)} teléfono(s)"
-                if self.call_allowlist
-                else "VACÍA (se marca lo que diga el escenario)"
+            "demo_org_phone": (
+                self.demo_org_phone
+                if self.demo_org_phone
+                else "VACÍO (el agente no podrá consultar a ningún organismo)"
             ),
             "auth": (
                 "⚠️  CLAVE PÚBLICA (está en el repo: cámbiala)"

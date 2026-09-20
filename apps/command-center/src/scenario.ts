@@ -25,6 +25,38 @@ export type FireScenario = {
   citizens: Citizen[]
   centers: ResponseCenter[]
   police: { id: string; name: string; lng: number; lat: number }
+  /** Punto del escenario que se hace coincidir con la persona real al anclar el mundo del ensayo. */
+  anchorRef: { lng: number; lat: number }
+}
+
+/**
+ * Desplaza el escenario entero (fuego, vecinos, salidas, centros, comisaría) para que
+ * `anchorRef` caiga sobre `target`. Es el "mundo" del ensayo rodeando a una persona real: los
+ * lugares dejan de ser los reales y se marcan como reubicados.
+ */
+export function anchorScenario(scenario: FireScenario, target: { lng: number; lat: number }): FireScenario {
+  const dLng = target.lng - scenario.anchorRef.lng
+  const dLat = target.lat - scenario.anchorRef.lat
+  if (Math.abs(dLng) < 1e-7 && Math.abs(dLat) < 1e-7) return scenario
+  const move = <T extends { lng: number; lat: number }>(item: T): T => ({ ...item, lng: item.lng + dLng, lat: item.lat + dLat })
+  return {
+    ...scenario,
+    incident: { ...scenario.incident, area: 'Escenario reubicado para el ensayo', center: [scenario.incident.center[0] + dLng, scenario.incident.center[1] + dLat] },
+    settlements: scenario.settlements.map(move),
+    safeZones: scenario.safeZones.map(zone => ({ ...move(zone), description: `${zone.description} Reubicado para el ensayo.` })),
+    fires: scenario.fires.map(move),
+    fireCells: {
+      ...scenario.fireCells,
+      features: scenario.fireCells.features.map(feature => ({
+        ...feature,
+        geometry: { ...feature.geometry, coordinates: feature.geometry.coordinates.map(ring => ring.map(([lng, lat]) => [lng + dLng, lat + dLat])) },
+      })),
+    },
+    citizens: scenario.citizens.map(move),
+    centers: scenario.centers.map(center => ({ ...move(center), note: `Reubicado para el ensayo; no es su posición real. ${center.note}` })),
+    police: move(scenario.police),
+    anchorRef: { ...target },
+  }
 }
 
 export const INCIDENT = {
@@ -288,4 +320,5 @@ export const GREDOS_SCENARIO: FireScenario = {
   citizens: INITIAL_CITIZENS,
   centers: RESPONSE_CENTERS,
   police: { id: 'arenas-sur', name: 'Sur de Arenas', lng: -5.088, lat: 40.198 },
+  anchorRef: { lng: INCIDENT.center[0], lat: INCIDENT.center[1] },
 }

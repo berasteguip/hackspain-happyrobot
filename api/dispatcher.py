@@ -6,14 +6,15 @@ llamada**, con su propio contexto (nombre, zona, nivel estimado) y su propio est
 tablero. No es una campaña con una lista: son N conversaciones simultáneas e independientes,
 que es lo que hace que una se pueda caer sin arrastrar a las otras.
 
-Dos cerrojos, y los dos tienen que estar abiertos para que suene un teléfono:
+El cerrojo es `ALLOW_REAL_CALLS=true`, el interruptor general del contrato §6.3. Hubo un
+segundo, `CALL_ALLOWLIST`, y se quitó: el agente llama a números que le dicta la persona en
+mitad de la conversación —la madre que se quedó en casa— y eso no cabe en una lista escrita de
+antemano. Lo que evita que un círculo mal dibujado lance una ráfaga son los topes
+(`CALL_MAX_BATCH`, `CALL_MAX_RADIUS_M`) y que los teléfonos del escenario sean del rango
+reservado: los reales entran uno a uno por `PHONE_OVERRIDES`.
 
-1. `ALLOW_REAL_CALLS=true` — el interruptor general del contrato §6.3.
-2. `CALL_ALLOWLIST` — la lista blanca de teléfonos. Es la que protege durante los ensayos,
-   cuando el escenario cargado mezcla los móviles reales del equipo con vecinos sintéticos.
-
-Un intento bloqueado por el cerrojo **no se esconde**: aparece en el tablero como `blocked`
-con el motivo. Un círculo en el que no suena nada tiene que poder explicarse en la demo.
+Un intento bloqueado **no se esconde**: aparece en el tablero como `blocked` con el motivo. Un
+círculo en el que no suena nada tiene que poder explicarse en la demo.
 """
 
 from __future__ import annotations
@@ -160,6 +161,9 @@ def dispatch(state, body: CallDispatch) -> tuple[str, list[CallRun], list[dict[s
         else:
             llamables.append(person)
 
+    # Quien se registró desde el enlace con su propio teléfono va primero: el tope de la ráfaga
+    # no puede dejar fuera a la única persona real del círculo por culpa de los vecinos sintéticos.
+    llamables.sort(key=lambda p: notify.normalize_phone(p.phone) not in state.registered_phones)
     if len(llamables) > settings.call_max_batch:
         sobran = llamables[settings.call_max_batch :]
         llamables = llamables[: settings.call_max_batch]

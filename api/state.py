@@ -137,6 +137,13 @@ class CrisisState:
         # que el planner pueda formar convoyes sin inventar campos en la entidad.
         self.seats_free: dict[str, int] = {}
 
+        # Teléfonos que se han registrado ellos mismos desde el enlace (`POST /people/register`).
+        # Quien se apunta consiente que le llamen: entran en la lista blanca sin tocar `.env`.
+        self.registered_phones: set[str] = set()
+        # Dónde está anclado el "mundo" del ensayo (lat, lon) tras `POST /people/register` con
+        # `anchor`: el escenario entero se desplaza para rodear a la persona real.
+        self.anchor: tuple[float, float] | None = None
+
         # Intentos de llamada vivos e históricos, por id de intento. Separado de `Person`
         # a propósito: el estado del teléfono no es el estado de la persona (ver `CallState`),
         # y una persona puede acumular varios intentos a lo largo de la crisis.

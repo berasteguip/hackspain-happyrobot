@@ -96,4 +96,5 @@ export const MADRID_SCENARIO: FireScenario = {
   citizens: buildCitizens(SETTLEMENTS, OUTSIDE),
   centers: CENTERS,
   police: { id: 'comisaria-moncloa', name: 'Comisaría Moncloa-Aravaca', lng: -3.7164075, lat: 40.4269639 },
+  anchorRef: ETSIT,
 }

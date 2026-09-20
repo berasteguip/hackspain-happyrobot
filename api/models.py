@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+import logging
+from typing import Annotated, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+log = logging.getLogger("crisis.models")
 
 # --------------------------------------------------------------------------------------
 # Utilidades de tiempo
@@ -465,6 +468,29 @@ class PositionEvent(Base):
     t: str | None = None
 
 
+class RegisterPerson(Base):
+    """Alguien que abre el enlace y se apunta él mismo: teléfono con prefijo y su GPS."""
+
+    name: str | None = None
+    phone: str
+    lat: float
+    lon: float
+    accuracy_m: float | None = None
+    # Desplazar el escenario entero (fuego, vecinos, salidas, patrullas) alrededor de esta persona.
+    anchor: bool = False
+
+
+class RegisterResponse(Base):
+    ok: bool = True
+    person_id: str
+    name: str | None = None
+    phone: str | None = None
+    created: bool
+    map_url: str
+    gps_url: str
+    anchor: dict[str, float] | None = None
+
+
 class CallExtracted(Base):
     people_at_home: int | None = None
     declared_location: str | None = None
@@ -497,6 +523,43 @@ class CallStarted(Base):
     direction: str | None = None  # inbound | outbound
 
 
+def _booleano_tolerante(valor: Any) -> Any:
+    """`"true"`, `"sí"`, `1` → bool. Lo que no se reconoce vale `None`, nunca un 422.
+
+    Existe por un caso real (20 sep 2026): el AI Extract devolvió `"llamas": "llamas"` —rellenó
+    el campo booleano con el nombre del campo— y Pydantic tumbó la petición entera. Con ella se
+    perdió una observación que traía `nivel: rojo`, `discrepancia: prior_bajo_obs_alta` y una
+    nota que decía que la persona veía llamas y que la llamada se había cortado. O sea: se tiró
+    lo único que sabíamos de alguien en peligro por un campo que no decidía nada.
+
+    Un modelo de lenguaje puede devolver cualquier cosa en cualquier campo. Del otro lado de
+    este endpoint hay uno, así que aquí no se valida: se interpreta lo que se entiende y se
+    descarta lo demás **dejando rastro en el log**, que no es lo mismo que fingir que no pasó.
+    """
+    if valor is None or isinstance(valor, bool):
+        return valor
+    texto = str(valor).strip().lower()
+    if texto in {"true", "1", "si", "sí", "yes", "y", "verdadero"}:
+        return True
+    if texto in {"false", "0", "no", "n", "falso"}:
+        return False
+    log.warning("valor booleano ininteligible en la observación: %r — se ignora ese campo", valor)
+    return None
+
+
+def _entero_tolerante(valor: Any) -> Any:
+    """Mismo criterio para los números: una duración que no se entiende no tumba la llamada."""
+    if valor is None or isinstance(valor, bool):
+        return None if isinstance(valor, bool) else valor
+    if isinstance(valor, int):
+        return valor
+    try:
+        return int(float(str(valor).strip()))
+    except (TypeError, ValueError):
+        log.warning("valor numérico ininteligible en la observación: %r — se ignora", valor)
+        return None
+
+
 # `no_contactado` en el extract del agente, y sus variantes razonables. Un `resultado` que no
 # esté aquí se lee como "hubo conversación": preferimos dar por contestada una llamada que no
 # lo fue antes que dar por perdida a alguien con quien sí se habló.
@@ -524,20 +587,24 @@ class CallObservation(Base):
     phone: str | None = Field(default=None, validation_alias=AliasChoices("phone", "NUMERO_TELEFONO", "telefono"))
     run_id: str | None = None
     run_url: str | None = None
-    duration_s: int | None = Field(default=None, validation_alias=AliasChoices("duration_s", "duration", "duracion_s"))
+    duration_s: Annotated[int | None, BeforeValidator(_entero_tolerante)] = Field(
+        default=None, validation_alias=AliasChoices("duration_s", "duration", "duracion_s")
+    )
     # El color al que concluyó el agente y el que llevaba de partida. La pareja es lo que hace
     # legible la discrepancia: «iba como naranja y resultó rojo» dice más que cualquiera de los dos.
     level: str | None = Field(default=None, validation_alias=AliasChoices("level", "nivel"))
     prior_level: str | None = Field(default=None, validation_alias=AliasChoices("prior_level", "PRIOR_NIVEL", "nivel_previo"))
     declared_zone: str | None = Field(default=None, validation_alias=AliasChoices("declared_zone", "zona_declarada"))
     place_type: str | None = Field(default=None, validation_alias=AliasChoices("place_type", "tipo_lugar"))
-    flames: bool | None = Field(default=None, validation_alias=AliasChoices("flames", "llamas"))
+    flames: Annotated[bool | None, BeforeValidator(_booleano_tolerante)] = Field(
+        default=None, validation_alias=AliasChoices("flames", "llamas")
+    )
     discrepancy: str | None = Field(default=None, validation_alias=AliasChoices("discrepancy", "discrepancia"))
     confidence: str | None = Field(default=None, validation_alias=AliasChoices("confidence", "confianza"))
     call_result: str | None = Field(default=None, validation_alias=AliasChoices("call_result", "resultado"))
     notes: str | None = Field(default=None, validation_alias=AliasChoices("notes", "nota_libre", "agent_notes"))
     # Si el workflow lo manda explícito, manda sobre lo que se deduzca de `call_result`.
-    answered: bool | None = None
+    answered: Annotated[bool | None, BeforeValidator(_booleano_tolerante)] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -583,7 +650,7 @@ class CallState(str, Enum):
     answered = "answered"  # contestó (llega por /calls/outcome)
     no_answer = "no_answer"  # no contestó (llega por /calls/outcome)
     failed = "failed"  # ni siquiera se pudo marcar (sin teléfono, 4xx, red)
-    blocked = "blocked"  # el cerrojo lo paró: fuera de CALL_ALLOWLIST
+    blocked = "blocked"  # un cerrojo lo paró (hoy: la clave pública sin cambiar)
     simulated = "simulated"  # ALLOW_REAL_CALLS=false: nadie ha recibido nada
     # Se lanzó, pero nunca llegó el resultado. NO es `no_answer`: no sabemos si contestó o no,
     # y decir que no contestó sería inventarse un dato. Pasa siempre que HappyRobot no puede

@@ -169,3 +169,34 @@ permanece sobre la ruta. Ambulancias y bomberos móviles conservan su pin. No us
 ni volver a implementar decisiones de agente como parte de este ajuste. 49 tests, lint y build.
 Navegador verificado con `/tmp/vigia-police-car-ui.mjs`: 24 vistas, cambios de rumbo,
 compensación de cámara y clic sobre el coche; proveedores externos controlados.
+
+Experimento del enlace (Mateo, mismo día): `/track` pide teléfono con prefijo y GPS, llama a
+`POST /people/register` (público, idempotente por teléfono, mete el número en la lista blanca
+si `REGISTER_AUTO_ALLOW`, default true) y salta a `/?p=<id>`: el mapa arranca centrado en esa
+persona y, si `localStorage.router.me` coincide, la pestaña emite `POST /positions` cada 5 s.
+Con la API conectada, "Llamar de verdad" arranca marcado y el círculo hace dos cosas a la vez:
+`/calls/dispatch` (reales para los registrados, bloqueados los +3460099xxxx del dataset) y la
+simulación local de los vecinos demo del círculo. Quien comparte GPS es `live` y nunca se anima.
+El dispatcher pone a los registrados primero para que el tope por ráfaga no los excluya.
+Local: `api/.venv` (uv, Python 3.12), `uvicorn main:app --port 8000`, `api/.env` con
+`SCENARIO=ucm-madrid`; Vite en 5176 proxea `/api/roster`, `/api/locations`, `/calls`,
+`/positions`, `/people`, `/instructions`, `/health`, `/state`, `/gps`, `/events` a la API.
+Los callbacks de HappyRobot (`/calls/started|outcome|observation`) no llegan a localhost sin
+túnel (`cloudflared` instalado). Prueba de navegador: `/tmp/router-enlace-ui.mjs`.
+"Mundo" anclado: el registro desde `/track` manda `anchor: true` y la API desplaza el escenario
+entero (casas, vecinos sintéticos, salidas, sectores, patrullas, perímetro e historial del fuego)
+para que `ANCHOR_REF` (ETSIT en ucm-madrid) caiga sobre la persona; las personas con GPS no se
+mueven. `GET /api/anchor` (público) lo expone y el mapa aplica `anchorScenario()` al escenario
+visual (`anchorRef` por escenario) y recrea la flota. Lugares reubicados quedan etiquetados como
+ficticios en `note`/`description`. Verificado con el registrado a 5 km (Retiro): 25 demos a
+<1,5 km, fuego a ~800 m, unidades en la zona. El proxy de Vite manda todo `/api` a la API.
+Zonas recomendadas (`src/risk.ts`): del fuego y la previsión salen dos círculos, «zona de
+riesgo» (envuelve el fuego, desplazada a favor del viento, mínimo 1 km) y «posible afectación
++60 min» (previsión de propagación). Se pintan siempre (capa `callArea`) y el dock permite
+llamar a cualquiera de las dos sin dibujar; el panel de campaña las ofrece como selección.
+Son recomendación del modelo de demo, no perímetro oficial. Backend: `AUTO_NOTIFY=false`
+silencia las llamadas/SMS automáticos del planner (solo llama el operador); `REGISTER_ONLY_CALLS`
+limita las llamadas a los registrados aunque la allowlist esté vacía; `/track` se sirve como
+SPA desde FastAPI. En Railway hay que poner esas dos variables si se quiere el mismo ensayo.
+Incidencia real del 19-20 sep: HappyRobot devolvía «no live development version» porque nadie
+tenía la versión activa; se publicó la v7 en development desde el MCP.

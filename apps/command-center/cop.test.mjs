@@ -658,3 +658,20 @@ test('el catálogo abre en Madrid junto a ETSIT y conserva Gredos', () => {
   assert.equal(ambulance.origin.id, hospital.id)
   assert.ok(haversineMeters(ETSIT.lng, ETSIT.lat, ambulance.origin.lng, ambulance.origin.lat) < 2000)
 })
+
+test('la zona recomendada envuelve el fuego a favor del viento y la afectada la amplía a una hora', async () => {
+  const { recommendAreas } = await server.ssrLoadModule('/src/risk.ts')
+  const { anchorScenario } = await server.ssrLoadModule('/src/scenario.ts')
+  const live = buildFireForecast(MADRID_SCENARIO.fireCells, { windTowardDeg: 180, windKmh: 20, spreadMPerMin: 8 })
+  const areas = recommendAreas(MADRID_SCENARIO.fireCells, live, 180)
+  const corners = MADRID_SCENARIO.fireCells.features.flatMap(f => f.geometry.coordinates[0])
+  assert.ok(corners.every(([lng, lat]) => haversineMeters(areas.risk.lng, areas.risk.lat, lng, lat) <= areas.risk.radiusM), 'todo el fuego cabe en la zona de riesgo')
+  const centroidLat = corners.reduce((s, [, lat]) => s + lat, 0) / corners.length
+  assert.ok(areas.risk.lat < centroidLat, 'con viento hacia el sur, el círculo se desplaza al sur')
+  assert.ok(areas.affected.radiusM > areas.risk.radiusM && areas.affectedMinutes === 60)
+  assert.ok(areas.affected.radiusM <= 20000 && areas.risk.radiusM <= 20000)
+  assert.equal(recommendAreas({ type: 'FeatureCollection', features: [] }, live, 180), null)
+  const moved = anchorScenario(MADRID_SCENARIO, { lng: -3.6844, lat: 40.4153 })
+  const movedAreas = recommendAreas(moved.fireCells, buildFireForecast(moved.fireCells, { windTowardDeg: 180, windKmh: 20, spreadMPerMin: 8 }), 180)
+  assert.ok(haversineMeters(movedAreas.risk.lng, movedAreas.risk.lat, -3.6844, 40.4153) < 2000, 'anclado, la recomendación sigue al mundo')
+})
