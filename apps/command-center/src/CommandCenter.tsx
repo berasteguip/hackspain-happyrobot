@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import { CommandMap } from './CommandMap'
+import { HappyRobotLogo, HappyRobotSymbol } from './HappyRobot'
+import { Wordmark } from './Logo'
+
+/** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
+const INTRO_MS = 4800
 import { fetchFirmsSpain } from './firms'
 import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
 import { anchorScenario } from './scenario'
@@ -25,13 +31,15 @@ import {
   postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
 import { focusPersonFromUrl, readMe } from './me'
+import { HappyRobotCard } from './HappyRobotCard'
+import type { HrCallsPulse, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
 /**
  * El censo que sirve la API (`/api/roster`) sustituye al de `scenario.ts` en cuanto responde.
  *
- * Sin backend, Vigía sigue pintando su población de Gredos y su campaña sigue siendo local:
+ * Sin backend, router sigue pintando su población de Gredos y su campaña sigue siendo local:
  * eso es lo que se enseña cuando no hay API levantada. Con backend, los puntos del mapa son
  * las personas que la API puede llamar de verdad, y rodearlas significa marcar sus teléfonos.
  */
@@ -113,6 +121,17 @@ function layerOptions(scenario: FireScenario): { key: keyof MapLayers; name: str
 const INITIAL_WIND = 225
 const SHIFTED_WIND = 45
 const MAX_UNITS = 12
+/** Cómo dejó el operador la tarjeta de HappyRobot: se recuerda por navegador, como el token. */
+const HR_CARD_KEY = 'router.hrCard'
+type HrCardState = 'open' | 'collapsed' | 'hidden'
+function readHrCardState(): HrCardState {
+  try {
+    const saved = localStorage.getItem(HR_CARD_KEY)
+    return saved === 'collapsed' || saved === 'hidden' ? saved : 'open'
+  } catch {
+    return 'open'
+  }
+}
 function formatClock(date: Date) {
   return date.toLocaleTimeString('es-ES', { hour12: false })
 }
@@ -159,6 +178,11 @@ export function CommandCenter({ token }: { token: string }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [panel, setPanel] = useState<'people' | 'layers' | 'cop' | 'centers' | 'alerts' | 'campaign' | 'incidents' | null>(null)
+  // La tarjeta «qué hace HappyRobot detrás»: abierta, plegada al cabecero u oculta.
+  const [hrCard, setHrCard] = useState<HrCardState>(readHrCardState)
+  useEffect(() => {
+    try { localStorage.setItem(HR_CARD_KEY, hrCard) } catch { /* sin almacenamiento: no se recuerda */ }
+  }, [hrCard])
   const [fireSettings, setFireSettings] = useState<FireSettings>({ windTowardDeg: INITIAL_WIND, windKmh: 20, spreadMPerMin: 8 })
   const [horizon, setHorizon] = useState(0)
   const [firePlaying, setFirePlaying] = useState(false)
@@ -725,6 +749,15 @@ export function CommandCenter({ token }: { token: string }) {
     setFocusTarget({ lng: center.lng, lat: center.lat })
     setLayers(previous => ({ ...previous, [center.kind === 'hospital' ? 'hospitals' : center.kind === 'health' ? 'healthCenters' : 'fireStations']: true }))
   }
+  // El pulso de la campaña para la tarjeta de HappyRobot: con la ráfaga viva manda el tablero de la
+  // API; en simulación local, los vecinos del círculo. Sin campaña, no hay pulso.
+  const hrCalls: HrCallsPulse | undefined = useMemo(() => {
+    if (liveBatch) return { total: liveCalls.length, open: liveCalls.filter(call => CALL_STATE_OPEN.includes(call.state)).length, answered: liveCalls.filter(call => call.state === 'answered').length }
+    if (!campaignIds.length) return undefined
+    return { total: campaignIds.length, open: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.status === 'ringing').length, answered: counts.answered }
+  }, [liveBatch, liveCalls, campaignIds.length, citizens, campaignSet, counts.answered])
+  // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
+  const hrView: HrView = selected ? 'person' : panel ?? (hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
   const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Avisos y medios' : 'Personas'
   const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
   const playFire = () => {
@@ -757,13 +790,16 @@ export function CommandCenter({ token }: { token: string }) {
   const toasts = unreadAlerts.slice(0, 3)
   const windShifted = fireSettings.windTowardDeg !== INITIAL_WIND
 
+  const brandRef = useRef<HTMLDivElement>(null)
+
   return (
-    <div className="map-app">
+    <div className={`map-app${panel || selected ? ' has-panel' : ''}${hrCard !== 'hidden' ? ' has-hr' : ''}`}>
       <main className="map-wrap" aria-label="Mapa de situación">
         <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} recommended={recommended} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
+      <Intro brand={brandRef} />
       <header className="floating-brand">
-        <div className="brand-row"><span className="brand-symbol" aria-hidden="true">R</span><strong>router</strong></div>
+        <div className="brand-row" ref={brandRef}><Wordmark className="brand-logo" /></div>
         <span className="brand-divider" aria-hidden="true" />
         <button ref={incidentButtonRef} type="button" data-demo="incident-trigger" className="incident-trigger" aria-label="Cambiar escenario" aria-expanded={panel === 'incidents'} aria-controls="map-panel" onClick={() => togglePanel('incidents')}>
           <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${apiRoster ? 'connected' : ''}`} aria-hidden="true" />{apiRoster ? 'API conectada' : 'Escenario de demo'} · {apiRoster ? placeName : scenario.incident.area}</small></span><Icon name="chevron" />
@@ -777,6 +813,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={alertsButtonRef} type="button" data-demo="tool-alerts" aria-label={`Avisos ${unreadAlerts.length}`} className={panel === 'alerts' ? 'active' : ''} aria-expanded={panel === 'alerts'} aria-controls="map-panel" onClick={() => togglePanel('alerts')}><Icon name="alerts" /><span>Avisos</span>{unreadAlerts.length > 0 && <small>{unreadAlerts.length}</small>}</button>
         <button ref={peopleButtonRef} type="button" data-demo="tool-people" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" data-demo="tool-layers" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
+        <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={() => setHrCard(value => value === 'hidden' ? 'open' : 'hidden')}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
       <CallLog />
       {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
@@ -801,6 +838,7 @@ export function CommandCenter({ token }: { token: string }) {
           )}
         </div>
       </aside>}
+      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode} calls={hrCalls} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => setHrCard('hidden')} />}
       <section className={`campaign-dock ${liveMode ? 'is-live' : ''}`} aria-label="Campaña de llamadas por zona">
         <button ref={campaignButtonRef} type="button" data-demo="campaign-settings" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
         <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{liveMode ? 'Llamadas reales · HappyRobot' : 'Simulación local'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>
@@ -904,6 +942,83 @@ const LAYER_MARK: Partial<Record<keyof MapLayers, keyof typeof SITE_EMOJI>> = {
   healthCenters: 'health',
   fireStations: 'fire',
   zones: 'meeting',
+}
+
+/**
+ * Entradilla de apertura: al abrir, el conjunto —nuestro logotipo, un separador y el de
+ * HappyRobot— aparece grande en el centro. Después el separador y HappyRobot se retiran,
+ * y el nuestro sigue solo hasta su sitio en la cabecera mientras el mapa se descubre.
+ *
+ * Lo que se mueve es un clon medido contra el logotipo real, así que aterriza encima de
+ * él sea cual sea el tamaño de la pantalla —sin repetir posiciones en el CSS ni
+ * desincronizarse con los puntos de ruptura— y se desvanece al final para que el relevo
+ * entre el clon y el de verdad no se note.
+ *
+ * La caja del clon es EXACTAMENTE la del logotipo de la cabecera: el separador y
+ * HappyRobot cuelgan fuera, en posición absoluta, para no ensancharla. Así el aterrizaje
+ * sigue siendo el mismo cálculo de antes, con ellos o sin ellos.
+ */
+function Intro({ brand }: { brand: RefObject<HTMLDivElement | null> }) {
+  // Quien pide menos movimiento entra directo al mapa: la entradilla ni se monta.
+  const [done, setDone] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true)
+  const clone = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const home = brand.current?.getBoundingClientRect()
+    const box = clone.current
+    if (!home || !box || !home.height) return setDone(true)
+
+    box.style.left = `${home.left}px`
+    box.style.top = `${home.top}px`
+    box.style.width = `${home.width}px`
+    box.style.height = `${home.height}px`
+
+    // El conjunto es más ancho que su caja porque HappyRobot cuelga fuera: hay que medirlo
+    // ya colocado para centrarlo entero y que no se salga por la derecha.
+    const fin = box.lastElementChild?.getBoundingClientRect()
+    const ancho = fin ? fin.right - home.left : home.width
+
+    // Grande sin desbordar: 80 % del ancho, o el 24 % del alto si la pantalla es apaisada.
+    // El conjunto mide casi el triple que el logotipo solo, así que manda casi siempre el ancho.
+    const scale = Math.min(window.innerWidth * 0.8 / ancho, window.innerHeight * 0.24 / home.height)
+    const start = `translate(${(window.innerWidth - ancho * scale) / 2 - home.left}px, ${(window.innerHeight - home.height * scale) / 2 - home.top}px) scale(${scale})`
+    // Se planta, viaja, descansa ya colocado y se retira: ese descanso es el que deja
+    // ver que ha aterrizado, y el fundido final tapa el relevo con el logotipo real.
+    const travel = box.animate([
+      { opacity: 1, transform: start, easing: 'linear', offset: 0 },
+      { opacity: 1, transform: start, easing: 'cubic-bezier(.45,0,.15,1)', offset: 0.36 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.78 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.92 },
+      { opacity: 0, transform: 'none', offset: 1 },
+    ], { duration: INTRO_MS, fill: 'both' })
+
+    // El separador y HappyRobot se van justo antes de que el nuestro arranque, con un
+    // desplazamiento mínimo a la izquierda para que parezca que le ceden el paso.
+    const salida = [
+      { opacity: 1, transform: 'none', offset: 0 },
+      { opacity: 1, transform: 'none', offset: 0.24 },
+      { opacity: 0, transform: 'translateX(-8px)', offset: 0.38 },
+      { opacity: 0, transform: 'translateX(-8px)', offset: 1 },
+    ]
+    const acompanan = [...box.querySelectorAll('[data-sale]')].map((el) =>
+      el.animate(salida, { duration: INTRO_MS, fill: 'both', easing: 'ease' }),
+    )
+
+    travel.finished.then(() => setDone(true), () => {})
+    return () => [travel, ...acompanan].forEach((a) => a.cancel())
+  }, [brand])
+
+  if (done) return null
+  return (
+    <>
+      <div className="intro-veil" aria-hidden="true" />
+      <div className="intro-logo" ref={clone} aria-hidden="true">
+        <Wordmark />
+        <span className="intro-sep" data-sale />
+        <span className="intro-partner" data-sale><HappyRobotLogo /></span>
+      </div>
+    </>
+  )
 }
 
 function LayerMark({ layer, symbol }: { layer: keyof MapLayers; symbol: keyof typeof ICONS }) {

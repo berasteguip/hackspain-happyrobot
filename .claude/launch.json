@@ -4,27 +4,15 @@
     {
       "name": "api",
       "runtimeExecutable": "api/.venv/bin/python",
-      "runtimeArgs": [
-        "-m",
-        "uvicorn",
-        "main:app",
-        "--port",
-        "8000",
-        "--app-dir",
-        "api"
-      ],
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--port", "8000", "--app-dir", "api"],
       "port": 8000
     },
     {
-      "name": "cecop",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev",
-        "--prefix",
-        "apps/command-center"
-      ],
-      "port": 5173
+      "name": "command-center",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd apps/command-center && npx vite --port \"${PORT:-5173}\" --strictPort"],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

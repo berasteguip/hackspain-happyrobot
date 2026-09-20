@@ -73,10 +73,11 @@ export function zoneLabel(id: string | null) {
   return (id ?? '').replace(/^n-/, '').replace(/-/g, ' ')
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ?? 'http://localhost:8000'
-
+// Ruta relativa, como el resto de `crisisApi.ts`: en producción la API sirve el propio
+// frontend en `/`, y en desarrollo el proxy de Vite manda `/calls` a `VITE_CRISIS_API`.
+// Una segunda variable de entorno solo para este módulo era una forma de divergir.
 export async function fetchCallLog(signal?: AbortSignal): Promise<CallLogEntry[]> {
-  const res = await fetch(`${API_BASE}/calls/log?limit=60`, { signal })
+  const res = await fetch('/calls/log?limit=60', { signal })
   if (!res.ok) throw new Error(`GET /calls/log → ${res.status}`)
   const data = (await res.json()) as { entries?: CallLogEntry[] }
   return Array.isArray(data.entries) ? data.entries : []

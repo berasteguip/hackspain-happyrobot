@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import type { GeoJSONSource } from 'mapbox-gl'
@@ -15,7 +16,7 @@ import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
 import type { RecommendedAreas } from './risk'
 import { UNIT_STATUS_LABEL } from './units'
-import type { DispatchUnit, UnitKind } from './units'
+import type { DispatchUnit } from './units'
 import { DEMO_PEOPLE } from './demo-points'
 import { WindOverlay } from './WindOverlay'
 
@@ -109,7 +110,100 @@ function policeCarImage(cameraBearing: number): mapboxgl.ExpressionSpecification
   return ['concat', 'police-car-', ['to-string', ['%', ['round', ['/', ['+', ['-', ['get', 'heading'], cameraBearing], 360], 360 / POLICE_VIEWS]], POLICE_VIEWS]]]
 }
 
-function unitPinMarker(kind: UnitKind) {
+function ambulanceMarker() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const context = canvas.getContext('2d')!
+
+  context.save()
+  context.shadowColor = '#00000080'
+  context.shadowBlur = 9
+  context.fillStyle = '#101820'
+  context.beginPath()
+  context.roundRect(31, 12, 66, 105, 17)
+  context.fill()
+  context.restore()
+
+  context.fillStyle = '#17232b'
+  for (const y of [34, 88]) {
+    context.beginPath()
+    context.roundRect(25, y, 12, 24, 5)
+    context.fill()
+    context.beginPath()
+    context.roundRect(91, y, 12, 24, 5)
+    context.fill()
+  }
+
+  const body = context.createLinearGradient(34, 0, 94, 0)
+  body.addColorStop(0, '#d6e0e4')
+  body.addColorStop(0.2, '#ffffff')
+  body.addColorStop(0.76, '#f4f7f8')
+  body.addColorStop(1, '#aebdc3')
+  context.fillStyle = body
+  context.beginPath()
+  context.roundRect(34, 9, 60, 110, 17)
+  context.fill()
+
+  context.fillStyle = '#c92f3d'
+  context.fillRect(34, 48, 60, 7)
+  context.fillRect(39, 55, 4, 50)
+  context.fillRect(85, 55, 4, 50)
+
+  context.fillStyle = '#1b3340'
+  context.beginPath()
+  context.moveTo(42, 34)
+  context.quadraticCurveTo(43, 18, 50, 14)
+  context.quadraticCurveTo(64, 9, 78, 14)
+  context.quadraticCurveTo(85, 18, 86, 34)
+  context.closePath()
+  context.fill()
+  context.strokeStyle = '#6f8c99'
+  context.lineWidth = 2
+  context.beginPath()
+  context.moveTo(64, 12)
+  context.lineTo(64, 34)
+  context.stroke()
+
+  context.fillStyle = '#162731'
+  context.fillRect(42, 98, 44, 13)
+  context.strokeStyle = '#72858d'
+  context.lineWidth = 2
+  context.beginPath()
+  context.moveTo(64, 98)
+  context.lineTo(64, 111)
+  context.stroke()
+
+  context.fillStyle = '#c92f3d'
+  context.fillRect(59, 64, 10, 30)
+  context.fillRect(49, 74, 30, 10)
+
+  context.fillStyle = '#15252e'
+  context.beginPath()
+  context.roundRect(45, 39, 38, 9, 3)
+  context.fill()
+  context.fillStyle = '#4aa8ff'
+  context.fillRect(48, 41, 14, 5)
+  context.fillStyle = '#ff525d'
+  context.fillRect(66, 41, 14, 5)
+
+  context.fillStyle = '#f4dca0'
+  for (const x of [43, 76]) {
+    context.beginPath()
+    context.roundRect(x, 14, 9, 5, 2)
+    context.fill()
+  }
+  context.fillStyle = '#c92f3d'
+  for (const x of [43, 76]) {
+    context.beginPath()
+    context.roundRect(x, 109, 9, 5, 2)
+    context.fill()
+  }
+
+  return context.getImageData(0, 0, 128, 128)
+}
+
+function fireUnitPinMarker() {
   const canvas = document.createElement('canvas')
   canvas.width = 96
   canvas.height = 136
@@ -118,7 +212,7 @@ function unitPinMarker(kind: UnitKind) {
   context.beginPath()
   context.ellipse(48, 131, 14, 4, 0, 0, Math.PI * 2)
   context.fill()
-  context.fillStyle = kind === 'fire' ? '#c96535' : '#d83840'
+  context.fillStyle = '#c96535'
   context.beginPath()
   context.moveTo(48, 132)
   context.bezierCurveTo(39, 98, 7, 75, 7, 44)
@@ -131,47 +225,41 @@ function unitPinMarker(kind: UnitKind) {
   context.arc(48, 44, 32, 0, Math.PI * 2)
   context.fill()
   context.fillStyle = '#101820'
-  if (kind === 'police') {
-    context.fill(new Path2D('M29 43 33 33Q35 29 39 29H57Q61 29 63 33L67 43Q74 43 74 51V57Q74 60 70 60H26Q22 60 22 57V51Q22 44 29 43Z'))
-    context.fillRect(27, 57, 9, 10)
-    context.fillRect(60, 57, 9, 10)
-    context.fillRect(31, 19, 34, 9)
-    context.fillStyle = '#eef5f8'
-    context.fill(new Path2D('M33 41 37 33H59L63 41Z'))
-    context.fillRect(27, 48, 9, 4)
-    context.fillRect(60, 48, 9, 4)
-    context.fillStyle = '#276cdb'
-    context.fillRect(33, 21, 13, 5)
-    context.fillStyle = '#e83c46'
-    context.fillRect(50, 21, 13, 5)
-  } else {
-    context.fillRect(21, 25, 33, 33)
-    context.fill(new Path2D('M54 36H66L76 47V58H54Z'))
+  context.fillRect(21, 25, 33, 33)
+  context.fill(new Path2D('M54 36H66L76 47V58H54Z'))
+  context.fillStyle = '#ffffff'
+  context.fillRect(24, 28, 27, 25)
+  context.fill(new Path2D('M58 39H64L70 46H58Z'))
+  context.fillStyle = '#d83840'
+  context.fillRect(27, 32, 21, 4)
+  context.fillRect(27, 43, 21, 4)
+  for (const x of [29, 37, 45]) context.fillRect(x, 30, 2, 19)
+  context.fillRect(56, 31, 10, 4)
+  for (const x of [32, 65]) {
+    context.fillStyle = '#101820'
+    context.beginPath()
+    context.arc(x, 59, 7, 0, Math.PI * 2)
+    context.fill()
     context.fillStyle = '#ffffff'
-    context.fillRect(24, 28, 27, 25)
-    context.fill(new Path2D('M58 39H64L70 46H58Z'))
-    context.fillStyle = '#d83840'
-    if (kind === 'ambulance') {
-      context.fillRect(35, 32, 6, 17)
-      context.fillRect(30, 37, 16, 6)
-    } else {
-      context.fillRect(27, 32, 21, 4)
-      context.fillRect(27, 43, 21, 4)
-      for (const x of [29, 37, 45]) context.fillRect(x, 30, 2, 19)
-    }
-    context.fillRect(56, 31, 10, 4)
-    for (const x of [32, 65]) {
-      context.fillStyle = '#101820'
-      context.beginPath()
-      context.arc(x, 59, 7, 0, Math.PI * 2)
-      context.fill()
-      context.fillStyle = '#ffffff'
-      context.beginPath()
-      context.arc(x, 59, 3, 0, Math.PI * 2)
-      context.fill()
-    }
+    context.beginPath()
+    context.arc(x, 59, 3, 0, Math.PI * 2)
+    context.fill()
   }
   return context.getImageData(0, 0, 96, 136)
+}
+
+/** Un control de Mapbox vacío: reserva su hueco en la esquina y React pinta dentro por portal. */
+class PortalControl implements mapboxgl.IControl {
+  container = document.createElement('div')
+  constructor(className: string) {
+    this.container.className = `mapboxgl-ctrl mapboxgl-ctrl-group ${className}`
+  }
+  onAdd() {
+    return this.container
+  }
+  onRemove() {
+    this.container.remove()
+  }
 }
 
 function overviewBounds(cells: FeatureCollection<Polygon>, centers: ResponseCenter[], zones: SafeZone[], fires: FireSpot[]) {
@@ -217,7 +305,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   fireStations: ['center-fire', 'center-fire-label'],
   routes: ['refuge-route-casing', 'refuge-route-line'],
   callArea: ['call-area-fill', 'call-area-edge', 'recommended-fill', 'recommended-edge', 'recommended-label'],
-  units: ['unit-point', 'police-car', 'unit-label'],
+  units: ['unit-point', 'ambulance-vehicle', 'police-car', 'unit-label'],
 }
 
 type Props = {
@@ -329,7 +417,7 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
  * El triaje manda sobre todo lo demás: que alguien haya descolgado dice mucho menos que lo que
  * dijo al descolgar. Si nadie ha hablado con esa persona, se cae al código de siempre —verde si
  * contestó, ámbar si está sonando, azul si no se ha intentado— que sigue siendo lo que se ve
- * cuando Vigía corre sin backend.
+ * cuando router corre sin backend.
  */
 function citizenColor(citizen: Citizen): string {
   if (citizen.triage) return TRIAGE_COLOR[citizen.triage.level]
@@ -456,7 +544,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     return () => { markers.forEach(marker => marker.remove()); markers.clear() }
   }, [])
   const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended })
-  const [satellite, setSatellite] = useState(false)
+  // El menú de encuadre vive dentro de un control de Mapbox (encima del zoom); React lo pinta ahí por portal.
+  const [framingHost, setFramingHost] = useState<HTMLElement | null>(null)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
@@ -474,11 +563,16 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       attributionControl: false,
     })
     mapRef.current = map
-    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'vigia-popup', maxWidth: '300px' })
+    const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'router-popup', maxWidth: '300px' })
     popupRef.current = popup
+    // En las posiciones «bottom» Mapbox inserta cada control nuevo por encima del anterior:
+    // el encuadre se añade después del zoom para quedar justo encima de él.
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
+    const framing = new PortalControl('framing-control')
+    map.addControl(framing, 'bottom-right')
+    setFramingHost(framing.container)
     map.addControl(new mapboxgl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left')
-    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-left')
     map.on('error', (event) => setMapError(event.error.message || 'No se ha podido cargar la cartografía.'))
     let flame = 0
     const rotatePolice = () => { if (map.getLayer('police-car')) map.setLayoutProperty('police-car', 'icon-image', policeCarImage(map.getBearing())) }
@@ -486,10 +580,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
 
     const onLoad = () => {
       const current = dataRef.current
+      // Las capas propias se insertan bajo la primera capa de rótulos del estilo: los nombres de calle quedan encima.
       const firstLabel = map.getStyle().layers.find((layer) => layer.type === 'symbol')?.id
-      map.addSource('satellite-base', { type: 'raster', url: 'mapbox://mapbox.satellite', tileSize: 256 })
-      map.addLayer({ id: 'satellite-base', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.12, 'raster-brightness-max': 0.95 } }, firstLabel)
-
       map.addSource('fire-heat', { type: 'geojson', data: fireHeatPoints(fireCells, current.forecast, current.horizon) })
       map.addLayer({
         id: 'fire-smoke', type: 'heatmap', source: 'fire-heat',
@@ -587,20 +679,20 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       map.addSource('units', { type: 'geojson', data: unitsGeo(current.units) })
-      for (const kind of ['ambulance', 'fire'] as const) {
-        map.addImage(`unit-marker-${kind}`, unitPinMarker(kind), { pixelRatio: 2 })
-      }
+      map.addImage('unit-marker-fire', fireUnitPinMarker(), { pixelRatio: 2 })
+      map.addImage('ambulance-marker', ambulanceMarker(), { pixelRatio: 2 })
       for (let i = 0; i < POLICE_VIEWS; i++) map.addImage(`police-car-${i}`, policeCarMarker(i * 360 / POLICE_VIEWS), { pixelRatio: 2 })
-      map.addLayer({ id: 'police-car', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'police'], layout: { 'icon-image': policeCarImage(map.getBearing()), 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.75, 14, 1, 17, 1.12], 'icon-anchor': 'center', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
-      map.addLayer({ id: 'unit-point', type: 'symbol', source: 'units', filter: ['!=', ['get', 'kind'], 'police'], layout: { 'icon-image': ['concat', 'unit-marker-', ['get', 'kind']], 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.66, 14, 0.88, 17, 1], 'icon-anchor': 'bottom', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
-      map.addLayer({ id: 'unit-label', type: 'symbol', source: 'units', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': ['case', ['==', ['get', 'kind'], 'police'], ['literal', [0, 2.8]], ['literal', [0, -6.2]]], 'text-anchor': ['case', ['==', ['get', 'kind'], 'police'], 'top', 'bottom'] }, paint: { 'text-color': '#e8f1f6', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
+      map.addLayer({ id: 'police-car', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'police'], layout: { 'icon-image': policeCarImage(map.getBearing()), 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.45, 14, 0.62, 17, 0.72], 'icon-anchor': 'center', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+      map.addLayer({ id: 'ambulance-vehicle', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'ambulance'], layout: { 'icon-image': 'ambulance-marker', 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.42, 14, 0.57, 17, 0.66], 'icon-rotate': ['get', 'heading'], 'icon-anchor': 'center', 'icon-pitch-alignment': 'map', 'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+      map.addLayer({ id: 'unit-point', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'fire'], layout: { 'icon-image': 'unit-marker-fire', 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.66, 14, 0.88, 17, 1], 'icon-anchor': 'bottom', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+      map.addLayer({ id: 'unit-label', type: 'symbol', source: 'units', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': ['case', ['==', ['get', 'kind'], 'fire'], ['literal', [0, -6.2]], ['literal', [0, 2.8]]], 'text-anchor': ['case', ['==', ['get', 'kind'], 'fire'], 'bottom', 'top'] }, paint: { 'text-color': '#e8f1f6', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       patchLayers(map, current.layers, current.selectedId, current.areaIds)
 
       map.on('click', (event) => {
         if (interactionRef.current.drawingArea || suppressClickRef.current) { suppressClickRef.current = false; return }
         const { x, y } = event.point
         const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
-        const unitHit = map.queryRenderedFeatures(box, { layers: ['police-car', 'unit-point', 'unit-label'] })[0]
+        const unitHit = map.queryRenderedFeatures(box, { layers: ['police-car', 'ambulance-vehicle', 'unit-point', 'unit-label'] })[0]
         if (unitHit?.properties?.id) {
           popup.remove()
           onUnitSelectRef.current(String(unitHit.properties.id))
@@ -662,7 +754,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'ambulance-vehicle', 'unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
         map.getCanvas().style.cursor = interactionRef.current.drawingArea ? 'crosshair' : features.length ? 'pointer' : ''
       })
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -842,11 +934,6 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: focusTarget.zoom ?? 14, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: reduced ? 0 : 850 })
   }, [loaded, focusTarget])
 
-  useEffect(() => {
-    const map = mapRef.current
-    if (loaded && map?.getLayer('satellite-base')) map.setLayoutProperty('satellite-base', 'visibility', satellite ? 'visible' : 'none')
-  }, [satellite, loaded])
-
   const locate = () => {
     const selected = citizens.find((citizen) => citizen.id === selectedId)
     if (selected) mapRef.current?.flyTo({ center: [selected.lng, selected.lat], zoom: 14, duration: 850 })
@@ -856,20 +943,20 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     <>
       <div ref={rootRef} data-demo="map" className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
       <WindOverlay mapRef={mapRef} enabled={showWind} directionDeg={windDirection} windKmh={windKmh} />
-      <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
-        <button type="button" data-demo="basemap-standard" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
-        <button type="button" data-demo="basemap-satellite" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
-        <span className="toolbar-divider" />
+      {framingHost && createPortal(
         <details className="view-options" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
-          <summary data-demo="framing-menu">Encuadre</summary>
+          <summary data-demo="framing-menu" aria-label="Encuadre" title="Encuadre">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-4 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+          </summary>
           <div onClick={event => { if ((event.target as HTMLElement).closest('button')) { const details = event.currentTarget.closest('details'); if (details) { details.open = false; details.querySelector('summary')?.focus() } } }}>
             <button type="button" data-demo="framing-fire" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
             {selectedId && <button type="button" data-demo="framing-person" onClick={locate}>Centrar persona</button>}
             {route && <button type="button" data-demo="framing-route" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
             <button type="button" data-demo="framing-all" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
           </div>
-        </details>
-      </div>
+        </details>,
+        framingHost,
+      )}
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
       {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" data-demo="map-error-dismiss" onClick={() => setMapError('')}>Cerrar aviso</button></div>}
     </>
