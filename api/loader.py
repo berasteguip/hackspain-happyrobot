@@ -9,7 +9,6 @@ falte un fichero.
 from __future__ import annotations
 
 import base64
-import binascii
 import csv
 import io
 import json
@@ -229,7 +228,7 @@ def _decode_roster_b64(crudo: str) -> str | None:
 
     try:
         crudo_bytes = base64.b64decode(limpio, validate=True)
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:  # binascii.Error hereda de ValueError
         log.error(
             "ROSTER_B64: no se puede decodificar (%s). Se sigue con los nombres genéricos del "
             "escenario. Genera el valor con `python3 data/roster_secret.py` y pega SOLO lo que "
