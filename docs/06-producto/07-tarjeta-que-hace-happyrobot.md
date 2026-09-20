@@ -27,6 +27,9 @@ bloque `.hr-*`.
 - Se enseña u oculta desde el botón **HappyRobot** de la barra de herramientas
   (`data-demo="tool-happyrobot"`); el cabecero la pliega a una sola fila. El estado se recuerda
   por navegador (`localStorage.router.hrCard`).
+- La barra de herramientas es exclusiva: abrir una ficha (Plan, Personas, Centros…) oculta la
+  tarjeta y desmarca HappyRobot; abrir HappyRobot cierra la ficha. Zona de llamadas también
+  entra en ese turno. Así no quedan dos pestañas marcadas a la vez.
 - Por debajo de 1100 px de ancho desaparece mientras haya una ficha abierta; por debajo de
   760 px no se enseña.
 
@@ -55,6 +58,12 @@ lienzo del editor (fondo casi blanco con retícula de puntos) para que quien hay
 workflow reconozca de inmediato dónde está mirando. La paleta vive en tokens `--hr-*` declarados
 en `.hr-card`; **ningún color del CECOP (`--panel`, `--text`, `--move`…) entra dentro de la
 tarjeta**, porque están calculados para fondo oscuro y ahí no contrastan.
+
+El resto del CECOP (paneles flotantes, dock, listas, guía) toma la **anatomía** de
+esta tarjeta —cabecero de 58 px, close 32×32, fila de contexto, pills de estado,
+cajas de icono 32 px a radio 9, sombra `0 16px 48px`— pero **sigue en oscuro** con
+`--panel` / `--text` / `--move`. Los tokens `--hr-*` no salen de `.hr-card`.
+Ajuste 2026-09-20 a petición de producto: el look, no el lienzo blanco.
 
 ## Lenguaje visual de los diagramas
 
@@ -147,25 +156,27 @@ observación. En reposo el mismo diagrama sirve de anatomía sin números.
 
 ## El despacho de un medio (ficha «Medio»)
 
-Se enseña al pulsar un vehículo, en el mapa o en la lista del plan operativo: una ambulancia o una
-patrulla. Con el mismo formato que la llamada (tronco + tools colgando del agente de voz), dibuja
-**el flujo que seguiría el agente que gestiona los medios** y lo ilumina con lo que el CECOP sabe de
-verdad de ese vehículo. Datos en `HR_UNIT_TRUNK` y `HR_UNIT_TOOLS` (`hrModel.ts`); componente
-`UnitDiagram`.
+Se enseña al pulsar un vehículo, en el mapa o en la lista del plan operativo: patrulla, ambulancia
+o helicóptero. Pulsarlo **abre la tarjeta en su despacho y cierra la ficha que hubiera abierta**
+(las pestañas son exclusivas), igual que la escalada abre la suya. Va en el formato del run de
+escalada: pill de estado arriba, un paso por fila con frase, detalle y carril, y las tools del
+agente colgando en rama compacta de la llamada al conductor. Datos en `HR_UNIT_STEPS` y
+`HR_UNIT_TOOLS` (`hrModel.ts`); componente `UnitDiagram`; lo que el CECOP sabe del vehículo llega
+en `HrUnitPulse`.
 
-**Tronco:** Disparo → Elegir → Ruta → Aprobar → Conductor → Vigilar → Parte.
+**Pasos** (carril · qué es · hoy):
 
-| Nodo | Qué es | Hoy |
-| --- | --- | --- |
-| Disparo | El mando pide un medio desde una ficha, una alerta o una zona; en el flujo completo, el webhook `house_escalated_to_patrol` de la API | real (CECOP) |
-| Elegir | El medio libre más cercano al destino. Previsto: ETA del medio frente a minutos hasta el frente (`priority_rank`), para no mandar a nadie adonde el fuego llega antes | real (CECOP, en línea recta) |
-| Ruta | Mapbox Directions desde la posición actual hasta el acceso, con su ETA. Sin carretera, `hold` y reintento del mando | real (Mapbox) |
-| Aprobar | Approval Process: el mando aprueba antes de mandar un medio a un sector amenazado (`POST /human/approve`). Hoy el clic de «Enviar» hace de aprobación | previsto |
-| Conductor | Outbound Voice Agent «Aviso al medio»: llama al conductor con la dirección exacta, las personas esperadas, los vulnerables y los minutos hasta el frente | previsto |
-| Vigilar | Loop: compara la ETA con el frente mientras el medio va de camino. Cadena: ruta nueva → **llamada** «Ruta nueva» (`route_recalculated`) | previsto |
-| Parte | Extract al colgar (en el acceso, casa vaciada, personas recogidas, medio libre). Cadena: POST «Parte → Vigía» → mensaje al puesto de mando | previsto |
+| Paso | Carril | Qué es | Hoy |
+| --- | --- | --- | --- |
+| Petición de medio | Mando | El mando pide un medio desde una ficha, una alerta o una zona; en el flujo completo lo dispara la API al escalar una casa sin respuesta (`house_escalated_to_patrol`). El detalle es la frase real del despacho («Operador · demo pide ambulancia en … para …») | real (CECOP) |
+| Medio libre más cercano | API router | El libre más cercano al destino. Previsto: ETA frente a minutos hasta el frente (`priority_rank`). El detalle dice de dónde sale o que es una revisión (redirigido desde su posición) | real (CECOP, en línea recta) |
+| Ruta hasta el acceso | API router | Mapbox Directions desde la posición actual, solo carretera. Detalle: «calculando…», «6,2 km · llega en 7 min», «en el acceso» o el motivo del `hold` | real (Mapbox) |
+| Aprobación del mando | Mando | Approval Process antes de mandar un medio a un sector amenazado (`POST /human/approve`). Hoy el clic de «Enviar» hace de aprobación | previsto |
+| Llamada al conductor | HappyRobot | Outbound Voice Agent «Aviso al medio»: dirección exacta, personas esperadas, vulnerables y minutos hasta el frente. De aquí cuelgan las tools | previsto |
+| Vigilar la ETA frente al fuego | HappyRobot | Loop: cada minuto compara la ETA con el frente. Cadena: ruta nueva → **llamada** «Ruta nueva» (`route_recalculated`) | previsto |
+| Parte al colgar | HappyRobot | Extract al colgar (en el acceso, casa vaciada, personas recogidas, medio libre). Cadena: POST «Parte → Vigía» → mensaje al puesto de mando | previsto |
 
-**Las cuatro tools** cuelgan de Conductor, cada una con lo que dispara detrás:
+**Las cuatro tools** cuelgan de la llamada al conductor, compactas y con lo que disparan detrás:
 
 | Tool | Palabra | Cadena |
 | --- | --- | --- |
@@ -178,20 +189,21 @@ verdad de ese vehículo. Datos en `HR_UNIT_TRUNK` y `HR_UNIT_TOOLS` (`hrModel.ts
 bucle, cuando el fuego entra en la carretera y el plan de hace veinte minutos ya no vale. Es el
 criterio «Adaptación al cambio» dibujado; Relevo es «Cuándo tirar el plan» dicho por el propio medio.
 
-**Estados desde el CECOP** (`HrUnitPulse`, regla 6). En patrulla nada ha disparado y los tres nodos
-reales están en reposo. Con destino, Disparo y Elegir están hechos y Ruta late mientras calcula o
-avanza (con la ETA en minutos), acaba en verde al llegar al acceso y en ámbar si no hay carretera
-(el motivo va al `title`). Una redirección sube `revision` y Elegir lo cuenta en su `title`. La
-fila de contexto pasa a enseñar distintivo y cuerpo del vehículo («A-01 · Ambulancia»), con su
-estado real en el `title` y, como en la campaña, un chip con el único número que importa ahora: los
-minutos que quedan por carretera.
+**Estados desde el CECOP** (`HrUnitPulse`, regla 6). La pill de arriba es el estado real del
+vehículo: «Patrullando», «Calculando ruta», «En camino · 7 min», «En el acceso», «Sin ruta». En
+patrulla nada ha disparado y los tres pasos reales están en reposo, sin detalle. Con destino, la
+petición y la elección están hechas y la ruta late mientras calcula o avanza, acaba en verde al
+llegar (con un bloque de resultado «Medio en el acceso») y en ámbar si no hay carretera (bloque con
+el motivo). Una redirección sube `revision` y la elección lo cuenta.
 
-**Honestidad, nodo a nodo.** La cobertura de la ficha es «Previsto» porque nada del despacho pasa
-hoy por HappyRobot; los tres primeros nodos se iluminan igual porque los ejecuta el CECOP (y Mapbox)
-de verdad. De Aprobar hacia abajo todo va discontinuo, y las aristas que entran y salen de lo
-previsto están quietas (`data-edge="still"` en el nodo anterior): nada corre por donde no hay nada
-construido. `built` en `HR_UNIT_TRUNK` es esa frontera; cuando el workflow exista, se cambia ahí y
-el diagrama se enciende solo.
+**Honestidad, paso a paso.** La cobertura de la ficha es «Previsto» porque nada del despacho pasa
+hoy por HappyRobot; los tres primeros pasos se encienden igual porque los ejecuta el CECOP (y
+Mapbox) de verdad. De la aprobación hacia abajo todo va discontinuo y etiquetado «previsto», y las
+aristas que entran y salen de lo previsto están quietas (`edge="still"` en el paso anterior): nada
+corre por donde no hay nada construido. `built` en `HR_UNIT_STEPS` es esa frontera; cuando el
+workflow exista, se cambia ahí y el diagrama se enciende solo. **Excepción:** un medio que nace del
+run de escalada (`escalated`) hereda de él la aprobación y la llamada como hechas, porque ese run ya
+las contó; que las dos tarjetas se contradijeran sería peor que la simulación.
 
 ## Plantilla: cómo se añade un diagrama nuevo
 
@@ -227,8 +239,9 @@ Pasos, todos en `apps/command-center/src`:
    cobertura de abajo y la tabla de `data-demo` del [README del command center](../../apps/command-center/README.md).
 
 **Disparadores.** Hoy el diagrama se elige por la ficha abierta (`hrView` en `CommandCenter.tsx`),
-con dos excepciones: con llamadas en marcha y ninguna ficha abierta manda la campaña, y con el plan
-operativo abierto y un vehículo pulsado manda su despacho (ficha «Medio»). Cuando aparezcan
+con tres excepciones: un run de escalada en marcha manda sobre todo, con llamadas en marcha y
+ninguna ficha abierta manda la campaña, y con un vehículo pulsado y ninguna ficha abierta manda su
+despacho (ficha «Medio»; pulsar el vehículo abre la tarjeta y cierra la ficha). Cuando aparezcan
 otros disparadores (una alerta, un cambio de viento, un webhook de vuelta), **la regla es la misma:
 el disparador decide qué diagrama se enseña, nunca cómo se pinta**. Un disparador nuevo se resuelve
 en `hrView` y punto; la tarjeta no se entera.
@@ -242,7 +255,7 @@ en `hrView` y punto; la tarjeta no se entera.
 | Personas | Parcial | El color es el extract que el agente postea al colgar | pendiente |
 | Ficha de persona | Parcial | Triaje, motivo y hora salen del extract; las rutas son de Mapbox | pendiente |
 | Avisos y medios | Previsto | Aviso a la patrulla por webhook `house_escalated_to_patrol`; hoy los medios son simulados | pendiente |
-| Medio (vehículo pulsado) | Previsto | Nada todavía: el CECOP elige el medio y Mapbox traza la carretera; la llamada al conductor, la vigilancia de la ETA y el parte serían HappyRobot | hecho: **el despacho de un medio**. Ver §«El despacho de un medio». |
+| Medio (vehículo pulsado) | Previsto | Nada todavía: el CECOP elige el medio y Mapbox traza la carretera; la llamada al conductor, la vigilancia de la ETA y el parte serían HappyRobot | hecho: **el despacho de un medio**, en el formato del run. Ver §«El despacho de un medio». |
 | Centros y coordinación | Previsto | Preaviso a hospital o bomberos por voz o SMS; hoy es un borrador local | pendiente |
 | Propagación y viento | Previsto | Giro de viento → reasignación → rellamadas `route_recalculated`; hoy no conecta | pendiente |
 | Escenarios · Capas | Sin HappyRobot | Nada; la tarjeta enseña el circuito completo | — |

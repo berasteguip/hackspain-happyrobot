@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "happyrobot": {
+      "type": "http",
+      "url": "https://mcp.platform.eu.happyrobot.ai/workflows/mcp"
+    }
+  }
+}

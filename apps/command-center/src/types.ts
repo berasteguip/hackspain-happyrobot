@@ -57,6 +57,11 @@ export type Citizen = {
   triage?: Triage
   /** ¿Sonaría el teléfono, o lo pararía el cerrojo de la API? */
   dialable?: boolean
+  /**
+   * Escalada a fuerzas de seguridad: nadie descolgó y el mando pidió que alguien vaya a la
+   * puerta. Guarda qué medios salieron para que el punto lo enseñe y no se escale dos veces.
+   */
+  escalation?: { at: number; runId: string; unitIds: string[] }
   locationUpdatedAt?: number
   accuracyM?: number
   locality?: string

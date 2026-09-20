@@ -22,6 +22,7 @@ from typing import Any, Iterable
 from models import (
     TERMINAL_CALL_STATES,
     Actor,
+    CallLogEntry,
     CallRun,
     CallState,
     Convoy,
@@ -41,6 +42,10 @@ from models import (
 from settings import settings
 
 log = logging.getLogger("crisis.state")
+
+# Cuántas anotaciones del log de llamadas se guardan en memoria para la pantalla. La fuente
+# completa y duradera es la tabla `call_log` de Twin.
+CALL_LOG_MAX = 2000
 
 # subject_type (el del decision_log) → nombre del diccionario en el estado
 COLLECTIONS: dict[str, str] = {
@@ -117,6 +122,12 @@ class CrisisState:
         # Metadatos del fichero de escenario (centro del mapa, bbox, pueblos, aviso de datos
         # sintéticos). No son entidades del contrato: los consume el dashboard para centrar el mapa.
         self.scenario_meta: dict[str, Any] = {}
+
+        # Log de llamadas: lo que se ha sabido hablando, con la versión en la que entró para
+        # que `/state/diff` pueda devolver solo lo nuevo. Espejo de la tabla `call_log` de Twin;
+        # aquí vive para que el puesto de mando lo vea apilarse en vivo por el long-poll que ya
+        # usa. No se mezcla con el `decision_log`: son cosas distintas (contrato §2.6).
+        self.call_log: list[tuple[int, CallLogEntry]] = []
 
         self._journal: list[tuple[int, DecisionLogEntry]] = []
         self._versions: dict[str, dict[str, int]] = {k: {} for k in COLLECTIONS}
@@ -535,6 +546,22 @@ class CrisisState:
             log.warning("no se pudo escribir %s: %s", settings.state_jsonl, exc)
 
     # ------------------------------------------------------------------ lectura
+    def append_call_log(self, entry: CallLogEntry) -> CallLogEntry:
+        """Añade una afirmación al log y sube `state_version` para despertar el long-poll.
+
+        No escribe en el `decision_log`: el sistema no ha decidido nada, alguien ha dicho algo.
+        """
+        with self.lock:
+            self.state_version += 1
+            self.t = utcnow_iso()
+            self.call_log.append((self.state_version, entry))
+            if len(self.call_log) > CALL_LOG_MAX:
+                # Memoria acotada. La fuente completa es Twin; esto es la copia para la pantalla,
+                # y una pantalla no necesita las 5.000 primeras anotaciones de hace tres horas.
+                del self.call_log[:-CALL_LOG_MAX]
+            self.append_jsonl({"kind": "call_log", **entry.model_dump(mode="json")})
+            return entry
+
     def snapshot(self) -> dict:
         with self.lock:
             return {
@@ -550,6 +577,7 @@ class CrisisState:
                 "sectors": [s.model_dump(mode="json") for s in self.sectors.values()],
                 "convoys": [c.model_dump(mode="json") for c in self.convoys.values()],
                 "patrols": [p.model_dump(mode="json") for p in self.patrols.values()],
+                "call_log": [e.model_dump(mode="json") for _, e in self.call_log[-200:]],
                 "pending_approvals": [a.as_dict() for a in self.pending_approvals.values()],
                 "overrides": [
                     {"subject_type": k[0], "subject_id": k[1], "field": k[2], **v}
@@ -578,6 +606,11 @@ class CrisisState:
                 if self.fire and fire_version > since_version
                 else None
             )
+            out["call_log"] = [
+                entry.model_dump(mode="json")
+                for v, entry in self.call_log
+                if v > since_version
+            ]
             out["decision_log"] = [
                 entry.model_dump(mode="json") for v, entry in self._journal if v > since_version
             ]

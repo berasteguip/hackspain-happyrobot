@@ -132,32 +132,35 @@ export const HR_CALL_TOOLS: HrCallTool[] = [
 ]
 
 /**
- * El despacho de un medio: el flujo que seguiría el agente que gestiona patrullas y ambulancias,
- * con el mismo formato que la llamada (tronco + tools colgando del agente de voz). Se enseña al
- * pulsar un vehículo en el mapa o en el plan operativo.
+ * El despacho de un medio: el flujo que seguiría el agente que gestiona patrullas, ambulancias y
+ * helicópteros, en el mismo formato que el run de escalada (`HR_ESCALATION_STEPS`): un paso por
+ * nodo real de la plataforma, con su frase, su detalle, su carril y el nombre del nodo en el
+ * editor. Se enseña al pulsar un vehículo en el mapa o en la lista del plan operativo.
  *
- * `built` es la regla de honestidad aplicada nodo a nodo: lo que el CECOP hace hoy de verdad
- * (el mando pide, se elige el medio libre más cercano, Mapbox traza la carretera) se ilumina con
- * el estado real del vehículo; de «Aprobar» hacia abajo es HappyRobot y no está construido, así
- * que va discontinuo y con la arista quieta. Ver `docs/06-producto/07-tarjeta-que-hace-happyrobot.md`.
+ * `built` es la regla de honestidad aplicada paso a paso: lo que el CECOP hace hoy de verdad (el
+ * mando pide, se elige el medio libre más cercano, Mapbox traza la carretera) se enciende con el
+ * estado real del vehículo; de «Aprobación del mando» hacia abajo es HappyRobot y no está
+ * construido, así que va discontinuo, etiquetado «previsto» y con la arista quieta. Excepción: los
+ * medios que nacen del run de escalada heredan de él la aprobación y la llamada como hechas, porque
+ * ese run ya las contó. Ver `docs/06-producto/07-tarjeta-que-hace-happyrobot.md`.
  */
-export type HrUnitNode = HrCallNode & { built: boolean; chain?: HrChainLink[] }
+export type HrUnitStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; built: boolean; chain?: HrChainLink[] }
 
-export const HR_UNIT_TRUNK: HrUnitNode[] = [
-  { id: 'hook', kind: 'trigger', word: 'Disparo', built: true, hint: 'El mando pide un medio desde una ficha, una alerta o una zona. En el flujo completo lo dispara el webhook house_escalated_to_patrol de la API' },
-  { id: 'pick', kind: 'unit', word: 'Elegir', built: true, hint: 'El medio libre más cercano al destino. Previsto: ETA del medio frente a minutos hasta el frente (priority_rank), para no mandar a nadie adonde el fuego llega antes' },
-  { id: 'route', kind: 'route', word: 'Ruta', built: true, hint: 'Mapbox Directions · carretera desde la posición actual hasta el acceso, con su ETA. Sin carretera el medio se detiene y el mando reintenta' },
-  { id: 'approve', kind: 'human', word: 'Aprobar', built: false, hint: 'Approval Process · el mando aprueba antes de mandar un medio a un sector amenazado (POST /human/approve). Hoy el clic de «Enviar» hace de aprobación' },
-  { id: 'driver', kind: 'voice', word: 'Conductor', built: false, hint: 'Outbound Voice Agent «Aviso al medio» · llama al conductor con la dirección exacta, las personas esperadas, los vulnerables y los minutos hasta el frente' },
+export const HR_UNIT_STEPS: HrUnitStep[] = [
+  { id: 'hook', kind: 'trigger', lane: 'mando', built: true, label: 'Petición de medio', detail: 'El mando pide un medio desde una ficha, una alerta o una zona. En el flujo completo lo dispara la API al escalar una casa sin respuesta.', hint: 'Incoming hook · house_escalated_to_patrol' },
+  { id: 'pick', kind: 'unit', lane: 'api', built: true, label: 'Medio libre más cercano', detail: 'El libre más cercano al destino. Previsto: ETA del medio frente a minutos hasta el frente, para no mandar a nadie adonde el fuego llega antes.', hint: 'Python Sandbox · priority_rank = minutos hasta el frente − ETA' },
+  { id: 'route', kind: 'route', lane: 'api', built: true, label: 'Ruta hasta el acceso', detail: 'Carretera desde la posición actual, con su ETA. Sin carretera el medio se detiene y el mando reintenta.', hint: 'Mapbox Directions · solo carretera, sin conectores a edificios' },
+  { id: 'approve', kind: 'human', lane: 'mando', built: false, label: 'Aprobación del mando', detail: 'Antes de mandar un medio a un sector amenazado. Hoy el clic de «Enviar» hace de aprobación.', hint: 'Approval Process · POST /human/approve' },
+  { id: 'driver', kind: 'voice', lane: 'happyrobot', built: false, label: 'Llamada al conductor', detail: 'Dirección exacta, personas esperadas, vulnerables y minutos hasta el frente. El agente puede además:', hint: 'Outbound Voice Agent «Aviso al medio»' },
   {
-    id: 'watch', kind: 'clock', word: 'Vigilar', built: false, hint: 'Loop · compara la ETA con el frente mientras el medio va de camino. Si el fuego entra en la carretera: ruta nueva y rellamada route_recalculated',
+    id: 'watch', kind: 'clock', lane: 'happyrobot', built: false, label: 'Vigilar la ETA frente al fuego', detail: 'Cada minuto compara la ETA con el frente. Si el fuego entra en la carretera: ruta nueva y rellamada.', hint: 'Loop · route_recalculated',
     chain: [
       { kind: 'route', hint: 'Ruta nueva desde la posición actual del medio' },
       { kind: 'voice', hint: 'Outbound Voice Agent «Ruta nueva» · la única llamada que nace sola del bucle: el plan de hace veinte minutos ya no vale' },
     ],
   },
   {
-    id: 'report', kind: 'extract', word: 'Parte', built: false, hint: 'Extract «Parte» al colgar · en el acceso, casa vaciada, personas recogidas, medio libre',
+    id: 'report', kind: 'extract', lane: 'happyrobot', built: false, label: 'Parte al colgar', detail: 'En el acceso, casa vaciada, personas recogidas, medio libre. Vuelve a Vigía y al puesto de mando.', hint: 'Extract «Parte»',
     chain: [
       { kind: 'webhook', hint: 'POST «Parte → Vigía» · el medio y la casa cambian de estado en el mapa' },
       { kind: 'send', hint: 'Mensaje al puesto de mando (Slack)' },
@@ -192,7 +195,7 @@ export const HR_UNIT_TOOLS: HrCallTool[] = [
 ]
 
 /** Qué ficha del CECOP está abierta. `overview` es «ninguna»: se enseña el circuito completo. */
-export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'unit' | 'centers' | 'cop' | 'incidents' | 'layers'
+export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'unit' | 'centers' | 'cop' | 'incidents' | 'layers' | 'escalation'
 
 /**
  * Cuánto de esta ficha pasa de verdad por HappyRobot hoy.
@@ -222,12 +225,21 @@ export type HrUnitPulse = {
   mission: UnitMission
   /** Sube con cada redirección: revisión 2 es «se tiró el plan y salió otro». */
   revision: number
+  /** Quién lo pidió («Operador · demo», «HappyRobot · Escalada») y la frase completa del despacho. */
+  agent: string
+  summary: string
+  /** De dónde sale: hospital, parque, base aérea. */
+  origin: string
   /** Etiqueta del destino asignado; en patrulla no hay. */
   target?: string
   /** Minutos que quedan por carretera, solo en camino. */
   etaMin?: number
+  /** Kilómetros de la ruta, cuando la hay. */
+  distanceKm?: number
   /** Por qué está detenido, solo en `hold`. */
   hold?: string
+  /** Nació del run de escalada: la aprobación y la llamada a organismo ya pasaron allí. */
+  escalated: boolean
 }
 
 export type HrDiagramProps = {
@@ -266,4 +278,39 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   cop: { title: 'Propagación y viento', summary: 'Un giro de viento reasigna salidas y la API dispararía rellamadas con la instrucción nueva. Hoy no conecta.', coverage: 'planned' },
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },
   layers: { title: 'Capas y leyenda', summary: 'Las capas son geometría del mapa. HappyRobot no interviene.', coverage: 'none' },
+  escalation: { title: 'Escalada · sin respuesta', summary: 'Nadie descolgó. El mando aprueba y HappyRobot rellama, ordena por riesgo, avisa a Guardia Civil y 1-1-2 y deja constancia en Vigía.', coverage: 'partial' },
+}
+
+// --------------------------------------------------------------------------- escalada a fuerzas de seguridad
+
+/**
+ * Un paso del run de escalada. Cada uno es un nodo real de la plataforma (el `hint` lleva su
+ * nombre en el editor) encadenado como lo montaría el workflow «Escalada · hogar sin respuesta».
+ * `ms` es cuánto tarda en la demo: la suma ronda los diez segundos.
+ */
+export type HrEscalationStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; ms: number; outcome?: 'done' | 'error' }
+
+export const HR_ESCALATION_STEPS: HrEscalationStep[] = [
+  { id: 'hook', kind: 'trigger', lane: 'api', label: 'Disparo desde Vigía', detail: 'La API manda los hogares con dos intentos sin respuesta: id, teléfono, coordenadas y minutos hasta el frente.', hint: 'Incoming hook · POST /hooks/escalada', ms: 1100 },
+  { id: 'approval', kind: 'human', lane: 'mando', label: 'Aprobado por operador', detail: 'El mando ha pedido la escalada. Sin este paso el run no sigue.', hint: 'Approval Process del workflow', ms: 800 },
+  { id: 'lookup', kind: 'db', lane: 'happyrobot', label: 'Consultar el registro', detail: 'Qué se sabe ya de esas casas: acompañantes, movilidad, quién contestó al lado.', hint: 'Query Twin with SQL · call_log', ms: 1300 },
+  { id: 'recall', kind: 'voice', lane: 'vecino', label: 'Último intento de llamada', detail: 'Rellamada corta al hogar y a la persona de contacto si consta.', hint: 'Outbound Voice Agent · «Rellamada»', ms: 1900, outcome: 'error' },
+  { id: 'rank', kind: 'route', lane: 'happyrobot', label: 'Ordenar por riesgo y acceso', detail: 'A quién le llega antes el fuego, y por dónde se entra: carretera para la ambulancia, a vista para el helicóptero.', hint: 'Google Maps · Distance Matrix + Python Sandbox', ms: 1400 },
+  { id: 'organism', kind: 'building', lane: 'happyrobot', label: 'Llamada a Guardia Civil y 1-1-2', detail: 'Coordenadas, cuántos viven y quién corre más peligro. Pide helicóptero y ambulancia.', hint: 'Outbound Voice Agent · «Llamada a organismo»', ms: 2100 },
+  { id: 'brief', kind: 'sms', lane: 'happyrobot', label: 'Parte escrito a los medios', detail: 'Lista de casas ordenada, acceso y punto de encuentro. Copia al CECOPI.', hint: 'Send SMS + Slack · canal del CECOPI', ms: 1000 },
+  { id: 'vigia', kind: 'webhook', lane: 'api', label: 'Anotar y devolver a Vigía', detail: 'La escalada queda escrita y el mapa marca a esas casas como «fuerzas en camino».', hint: 'Write to Twin + POST «Escalada → Vigía»', ms: 800 },
+]
+
+/** Lo que se lanza al terminar el run, en este orden. */
+export const HR_ESCALATION_UNITS = ['helicopter', 'ambulance'] as const
+
+/** Estado del run que el CECOP mantiene mientras la tarjeta lo dibuja. */
+export type HrEscalationRun = {
+  id: string
+  citizenIds: string[]
+  label: string
+  startedAt: number
+  /** Índice del paso en curso; `>= HR_ESCALATION_STEPS.length` es «terminado». */
+  step: number
+  unitIds: string[]
 }
