@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { after, test } from 'node:test'
 import { createServer } from 'vite'
 import { createElement } from 'react'
@@ -31,7 +32,7 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(html.includes('Simulación local'))
   assert.ok(html.includes('campaign-dock'))
   assert.ok(html.includes('data-demo="tour-start"'))
-  assert.ok(html.includes('Guía'))
+  assert.ok(html.includes('Ver recorrido'))
   assert.ok(html.includes('Memoria compartida'))
   assert.ok(html.includes('data-demo="tool-happyrobot"'))
   assert.ok(!html.includes('class="forecast-summary"'))
@@ -41,29 +42,45 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(!html.includes('class="floating-panel"'))
 })
 
-test('la guía señala escenario, herramientas, llamadas y plan, sin abrir paneles', async () => {
-  const { TOUR_STEPS, shouldShowTourIntro, TOUR_STORAGE_KEY } = await server.ssrLoadModule('/src/demoTour.ts')
-  assert.equal(TOUR_STEPS.length, 5)
-  assert.deepEqual(TOUR_STEPS.map((step) => step.element), [
-    '[data-demo="tour-fire"]',
-    '[data-demo="tour-people"]',
-    '[data-demo="tools"]',
-    '[data-demo="campaign-dock"]',
-    '[data-demo="tool-alerts"]',
-  ])
-  assert.equal(TOUR_STEPS[0].side, 'right')
-  assert.ok(TOUR_STEPS[0].description.includes('zona de riesgo'))
-  assert.ok(TOUR_STEPS[1].title.includes('punto azul'))
-  assert.ok(TOUR_STEPS[2].title.includes('panel'))
-  assert.ok(TOUR_STEPS[3].description.includes('Llamar zona de riesgo'))
-  assert.ok(TOUR_STEPS[4].title.includes('Plan'))
+test('el recorrido cuenta la historia entera: situación, llamar, HappyRobot, prioridad, ficha, rutas, escalada, fuego, plan, coordinación', async () => {
+  const { DEMO_TOUR_STEPS, TOUR_INTRO, shouldShowTourIntro, TOUR_STORAGE_KEY } = await server.ssrLoadModule('/src/demoTour.ts')
+  assert.deepEqual(DEMO_TOUR_STEPS.map((step) => step.id), ['situacion', 'personas', 'llamar', 'happyrobot', 'cola', 'ficha', 'rutas', 'escalada', 'fuego', 'plan', 'centros', 'empieza'])
+  // Cada anclaje existe en la interfaz: un selector que no está en el código es un paso que Driver no puede señalar.
+  const source = [
+    readFileSync(new URL('./src/CommandCenter.tsx', import.meta.url), 'utf8'),
+    readFileSync(new URL('./src/CommandMap.tsx', import.meta.url), 'utf8'),
+    readFileSync(new URL('./src/CopPanels.tsx', import.meta.url), 'utf8'),
+    readFileSync(new URL('./src/HappyRobotCard.tsx', import.meta.url), 'utf8'),
+  ].join('\n')
+  for (const step of DEMO_TOUR_STEPS) {
+    const demo = step.element.match(/data-demo="([^"]+)"/)?.[1]
+    assert.ok(demo, `${step.id}: anclaje data-demo`)
+    assert.ok(source.includes(`data-demo="${demo}"`) || source.includes(`'${demo}'`) || source.includes(`scope="${demo}"`), `${step.id}: ${demo} existe en la interfaz`)
+    assert.ok(step.title.length <= 60 && step.description.split(' ').length <= 60, `${step.id}: se lee de un vistazo`)
+  }
+  // Los pasos que explican un panel lo abren antes; los del mapa cierran todo.
+  const view = Object.fromEntries(DEMO_TOUR_STEPS.map((step) => [step.id, step.view]))
+  assert.deepEqual(view.situacion, {})
+  assert.deepEqual(view.happyrobot, { happyRobot: true })
+  assert.deepEqual(view.cola, { panel: 'people' })
+  assert.deepEqual(view.ficha, { person: true })
+  assert.deepEqual(view.rutas, { person: true })
+  assert.deepEqual(view.escalada, { person: true })
+  assert.deepEqual(view.fuego, { panel: 'cop' })
+  assert.deepEqual(view.plan, { panel: 'alerts' })
+  assert.deepEqual(view.centros, { panel: 'centers' })
+  assert.deepEqual(view.empieza, {})
+  assert.ok(view.escalada && DEMO_TOUR_STEPS.find((step) => step.id === 'escalada').description.includes('Enviar fuerzas de seguridad'))
+  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'empieza').description.includes('Llamar zona de riesgo'))
+  assert.equal(TOUR_INTRO.checklist.length, 3)
   assert.equal(TOUR_STORAGE_KEY, 'vigia-tour-seen')
   assert.equal(shouldShowTourIntro(), false)
   const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
   const intro = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
-  assert.ok(intro.includes('Un recorrido por el mapa'))
-  assert.ok(intro.includes('Ver guía'))
-  assert.ok(intro.includes('Cerrar introducción'))
+  assert.ok(intro.includes('Cómo se guía una evacuación'))
+  assert.ok(intro.includes('Ver recorrido'))
+  assert.ok(intro.includes('Explorar por mi cuenta'))
+  assert.ok(intro.includes('tour-intro-checklist'))
 })
 
 test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {

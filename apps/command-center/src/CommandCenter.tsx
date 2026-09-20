@@ -31,8 +31,10 @@ import {
   postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
 import { DEMO_ONLY } from './demoMode'
+import { flushSync } from 'react-dom'
 import { TourIntro } from './TourIntro'
-import { markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
+import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
+import type { TourView } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
 import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS } from './hrModel'
@@ -272,6 +274,7 @@ export function CommandCenter({ token }: { token: string }) {
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
+      if (touring) return // Driver gestiona su propio Escape y restaura la vista al cerrarse.
       if (drawingArea) { setDrawingArea(false); setCallArea(null); setAreaIds([]); return }
       setSelectedId(null)
       setPanel(null)
@@ -286,7 +289,7 @@ export function CommandCenter({ token }: { token: string }) {
     }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
-  }, [panel, drawingArea, hrCard])
+  }, [panel, drawingArea, hrCard, touring])
   useEffect(() => {
     if (!showFirms) return
     let cancelled = false
@@ -901,11 +904,26 @@ export function CommandCenter({ token }: { token: string }) {
   }
   const launchTour = () => {
     setShowTourIntro(false)
-    setSelectedId(null)
-    setPanel(null)
-    setHrCard('hidden')
+    // Al terminar, el visitante vuelve a encontrarse lo que tenía abierto.
+    const previous = { panel, selectedId, hrCard }
+    const personId = selectedId ?? filtered[0]?.id ?? citizens[0]?.id ?? null
     setTouring(true)
-    window.requestAnimationFrame(() => { void startDemoTour(() => setTouring(false)) })
+    void startDemoTour({
+      // flushSync: Driver mide el anclaje justo después, así que la vista tiene que estar ya en el DOM.
+      open: (view: TourView) => flushSync(() => {
+        setDrawingArea(false)
+        setHrCard(view.happyRobot ? 'open' : 'hidden')
+        setSelectedId(view.person ? personId : null)
+        setPanel(view.person ? 'people' : view.panel ?? null)
+        if (view.panel === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
+      }),
+      close: () => {
+        setTouring(false)
+        setPanel(previous.panel)
+        setSelectedId(previous.selectedId)
+        setHrCard(previous.hrCard)
+      },
+    })
   }
   const unreadAlerts = alerts.filter(alert => !readAlertIds.has(alert.id))
   const toasts = unreadAlerts.slice(0, 3)
@@ -1014,7 +1032,7 @@ export function CommandCenter({ token }: { token: string }) {
         }} />}
         </section></div>
       </aside>}
-      {!showTourIntro && !touring && <button type="button" className="tour-replay" data-demo="tour-start" onClick={launchTour}>Guía</button>}
+      {!showTourIntro && !touring && <button type="button" className="tour-replay" data-demo="tour-start" onClick={launchTour}><Icon name="routes" />{TOUR_INTRO.replay}</button>}
       {showTourIntro && <TourIntro onStart={launchTour} onDismiss={() => { markTourSeen(); setShowTourIntro(false) }} />}
     </div>
   )
@@ -1183,7 +1201,7 @@ function PersonDetail({ citizen, events, now, onClose, onDispatch, onEscalate, e
             </>}
         </section>
       )}
-      <section className="detail-section"><h3>Enviar medio</h3>
+      <section className="detail-section" data-demo="person-dispatch"><h3>Enviar medio</h3>
         <DispatchActions scope="dispatch-person" kinds={['ambulance', 'police', 'fire']} disabled={unitLimit} onDispatch={onDispatch} />
         {unitLimit && <p className="fine">Límite de {MAX_UNITS} envíos.</p>}
       </section>
