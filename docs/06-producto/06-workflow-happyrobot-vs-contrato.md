@@ -1,6 +1,6 @@
 # El workflow desplegado en HappyRobot frente al contrato
 
-> **Actualizado:** 2026-09-19 · **Estado:** borrador
+> **Actualizado:** 2026-09-20 · **Estado:** borrador
 > **En una frase:** el workflow que hoy vive en la plataforma no implementa el
 > contrato que este repo declara vinculante, y su prompt manda confinar justo
 > donde el producto manda evacuar.
@@ -188,6 +188,57 @@ mismo id que la API mandó al disparar la llamada. Los puntos 1 y 2 del §2 qued
 
 Con esas dos cosas hechas, publicar la v7 (reemplaza a la v6 en producción) y volver a lanzar la
 sonda: un `501` desde `/sim/run` o un `200` desde `/calls/observation` confirman el circuito.
+
+## 6. La segunda llamada al colgar, y quién anima cada punto — 2026-09-20
+
+Hecho, leído en los runs de la plataforma vía MCP (`monitor_runs`, workflow `cmupqukyx4lk`,
+v12 publicada y en vivo), no supuesto.
+
+**Síntoma.** Tras colgar una llamada atendida, el mismo teléfono volvía a sonar sin motivo.
+Ráfaga de las 05:37 UTC: cinco llamadas atendidas, cinco runs nuevos creados 0,4 s antes de
+que cada run original marcase `completed`. El `Incoming hook` de esos runs nuevos trae
+`reason: "Su trayectoria entra en el cono de avance del fuego"` y `say_this: "…pare y
+escúcheme: el fuego se está metiendo por donde va. Dé la vuelta…"`. Es decir: los disparó
+nuestra API, no la plataforma.
+
+**Causa.** El nodo «Observación → Vigía» postea a `/calls/observation`; la API deja a la
+persona en `contacted` y corre el planner; `detect_at_risk` admitía `contacted` y decidía por
+posición (`is_in_advance_cone`), no por trayectoria; la casa está dentro del cono (que cubre el
+pueblo entero) → `at_risk` y `place_call` en el acto. Alguien sentado en su salón recibía la
+orden de dar la vuelta. Y si rechazaba esa segunda llamada, el `no_contactado` lo dejaba en
+`no_answer` (rojo) y su casa escalaba a la patrulla: run `8e23f34e` (Allan), decisiones
+`ev-000087`…`ev-000090`.
+
+**Arreglos en `api/`** (con tests):
+
+- `planner.detect_at_risk` solo dispara sobre `moving`: la llamada en el acto es para quien va
+  hacia el fuego. Quien acaba de colgar en casa ya tiene la instrucción, y la cola y la
+  patrulla ya cuentan con su casa.
+- El planner ya no marca a quien tiene un intento vivo en el tablero (`_GuardedNotify`).
+- Un «SMS» del planner (cambio de ruta, convoy) salía por el mismo webhook que la voz, y el
+  workflow ignora `action`: también era una llamada. Sin `HR_SMS_WEBHOOK` el SMS se registra
+  en el decision_log y no sale.
+- Los números del rango sintético `+3460099…` no se marcan: HappyRobot los intentaba (el
+  «Freno de mano» solo comprueba que parezcan un móvil español), la centralita los devolvía
+  `busy` / `sip_user_unavailable` a los 0 s (ráfaga de las 03:21: 8 de 14), el extract decía
+  `no_contactado` y la API pintaba de rojo a un vecino inventado, pisando la simulación local.
+  Quedan como `simulated` con el motivo en el tablero, y `dialable` del roster ya lo refleja.
+
+**Arreglo en el CECOP.** El círculo en modo real enrolaba a TODOS en la simulación local,
+también a los teléfonos reales: el punto «descolgaba» a los 2,4 s y echaba a correr antes de
+que la persona cogiera el teléfono. Ahora quien tiene un intento vivo en HappyRobot queda
+marcado `real` y la simulación no le toca ni estado ni posición: lo que le pase entra por el
+tablero (`ringing` → `answered` / `no_answer`) y por el triaje del roster. Sin respuesta,
+buzón de voz o rechazo → el extract dice `no_contactado` (verificado en los runs `a57e7928`
+y `8e23f34e`) → punto rojo con la escalada a fuerzas de seguridad disponible, exactamente
+igual que para un vecino simulado. Un intento `stale` (cinco minutos sin desenlace) también
+se pinta como sin respuesta: para el mando es una casa a la que nadie ha llegado.
+
+Lo que sigue igual: `voice_mail: "hangup"` en el Outbound Voice Agent (cuelga al saltar el
+buzón, 3-5 s) y `from_number` de EEUU (§ pendientes de `02-happyrobot/06-trigger-desde-fuera.md`).
+
+Fuentes: runs `2aaecbb0`, `2838e80e`, `c4bb7eb7`, `8e23f34e`, `14de1d9a`, `a57e7928` y las
+sesiones del workflow (`monitor_runs action=sessions`), leídos vía MCP el 2026-09-20.
 
 ## Preguntas abiertas
 

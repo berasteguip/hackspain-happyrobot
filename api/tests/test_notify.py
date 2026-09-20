@@ -29,7 +29,9 @@ def cliente_espia():
 
 
 def _persona() -> Person:
-    return Person(id="p-tel", name="Antonio Prieto", phone="+34600992001")
+    # Fuera del rango sintético `+3460099…`: aquí se prueba que la petición SALE, y a un número
+    # sintético no se le marca nunca (test más abajo).
+    return Person(id="p-tel", name="Antonio Prieto", phone="+34600000001")
 
 
 def test_sin_la_variable_de_entorno_no_se_llama_a_nadie(state, cliente_espia):
@@ -111,7 +113,7 @@ def test_con_la_variable_encendida_si_sale_la_peticion(state, cliente_espia, mon
     assert str(peticion.url) == "https://example.invalid/hook"
     assert peticion.headers["x-api-key"] == "clave-de-test"
     assert resultado.simulated is False and resultado.ok is True
-    assert resultado.payload["phone"] == "+34600992001"
+    assert resultado.payload["phone"] == "+34600000001"
     assert resultado.payload["say_this"] == "salga ya"
     assert resultado.payload["action"] == "call"
 
@@ -149,6 +151,56 @@ def test_sin_webhook_configurado_falla_pero_no_explota(state, cliente_espia, mon
     assert "HR_WORKFLOW_WEBHOOK" in resultado.detail
     # y el fallo también se registra: el mando tiene que ver que no se pudo avisar
     assert "FALLÓ" in state.decision_log[-1].reason
+
+
+def test_un_numero_sintetico_no_sale_a_la_red_ni_con_el_interruptor_encendido(state, cliente_espia, monkeypatch):
+    """Los `+3460099…` del escenario no suenan en ningún sitio. HappyRobot los intentaba igual,
+    la centralita los devolvía `busy` a los 0 s y el extract mandaba un `no_contactado` que
+    pintaba de rojo a un vecino inventado. Quedan como intento simulado, con el motivo."""
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/hook")
+
+    persona = Person(id="p-sint", name="Vecina sintética", phone="+34600992001")
+    state.people[persona.id] = persona
+    resultado = notify.place_call(persona, "prueba", state, client=cliente)
+
+    assert enviadas == []
+    assert resultado.ok is True and resultado.simulated is True
+    assert "SINTÉTICO" in resultado.detail
+
+
+def test_un_sms_sin_canal_propio_no_hace_sonar_el_telefono(state, cliente_espia, monkeypatch):
+    """El único webhook es el del workflow de voz, y ese marca diga lo que diga `action`: un
+    «SMS» de cambio de ruta llegaba como una segunda llamada del agente. Sin `HR_SMS_WEBHOOK`
+    el SMS se registra y no sale."""
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/voz")
+    monkeypatch.setattr(settings, "hr_sms_webhook", "")
+
+    persona = _persona()
+    state.people[persona.id] = persona
+    resultado = notify.send_sms(persona, "cambia de ruta", state, client=cliente)
+
+    assert enviadas == [], "al webhook de voz no va ningún SMS"
+    assert resultado.ok is True and resultado.simulated is True
+    assert "SIN CANAL DE SMS" in resultado.detail
+    assert state.decision_log[-1].type == DecisionType.sms_sent
+
+
+def test_con_canal_propio_el_sms_sale_por_su_webhook_y_no_por_el_de_voz(state, cliente_espia, monkeypatch):
+    cliente, enviadas = cliente_espia
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://example.invalid/voz")
+    monkeypatch.setattr(settings, "hr_sms_webhook", "https://example.invalid/sms")
+
+    persona = _persona()
+    state.people[persona.id] = persona
+    resultado = notify.send_sms(persona, "cambia de ruta", state, client=cliente)
+
+    assert resultado.ok is True and resultado.simulated is False
+    assert [str(r.url) for r in enviadas] == ["https://example.invalid/sms"]
 
 
 # --------------------------------------------------------------------------------------

@@ -844,7 +844,7 @@ class RosterEntry(Base):
     locality: str | None = None
     address: str | None = None
     vulnerable: bool = False
-    dialable: bool = False  # ¿lo dejaría marcar el cerrojo tal y como está configurado?
+    dialable: bool = False  # ¿sonaría de verdad? Sin teléfono, o con uno del rango sintético, no.
     status: PersonStatus = PersonStatus.unknown
     call_state: CallState | None = None
     location_source: PositionSource | None = None

@@ -46,6 +46,13 @@ export type Citizen = {
   callDelaySec: number
   outcome: Exclude<CitizenStatus, 'pending' | 'ringing' | 'evacuating' | 'assistance' | 'routing'>
   live?: boolean
+  /**
+   * HappyRobot tiene su llamada de verdad: el teléfono es real y el run está vivo. La simulación
+   * local no le toca ni el estado ni la posición; lo que le pase entra por el tablero de llamadas
+   * y por el triaje del roster. Un punto real que echase a correr al pulsar «Llamar» estaría
+   * fingiendo una conversación que todavía no ha ocurrido.
+   */
+  real?: boolean
   routeId?: string
   routeProgressM?: number
   routePhase?: 'access' | 'road'

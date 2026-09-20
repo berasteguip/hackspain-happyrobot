@@ -357,6 +357,28 @@ test('la campaña no duplica destinatarios ni altera a quienes no se seleccionar
   assert.deepEqual(noSelection.citizens, INITIAL_CITIZENS)
 })
 
+test('una persona con llamada real de HappyRobot no la anima la simulación local', () => {
+  const origin = at(7, 8)
+  const route = road('real-road', zones[0], [origin, at(8, 8)], 60)
+  const base = { lng: origin[0], lat: origin[1], locality: 'El Arenal', status: 'pending', outcome: 'tracking', routeId: route.id, routeProgressM: 0, routePhase: 'access', safeZoneId: zones[0].id }
+  const real = { ...INITIAL_CITIZENS[0], ...base, real: true }
+  const demo = { ...INITIAL_CITIZENS[1], ...base }
+  const batch = prepareAreaCampaign([real, demo], [real.id, demo.id], 0, new Set())
+  assert.deepEqual(batch.addedIds, [demo.id], 'el teléfono real no entra en la simulación')
+  let current = batch.citizens
+  for (const time of [1, 4, 11]) current = advanceProtocol(current, time, [], new Set([real.id, demo.id])).citizens
+  assert.equal(current[0].status, 'pending', 'la simulación no descuelga por la persona real')
+  assert.equal(current[0].call, undefined)
+  assert.equal(current[1].status, 'evacuating', 'el vecino sintético sí sigue su guion')
+  const ringing = { ...current[0], status: 'ringing', callState: 'ringing' }
+  const [still] = advanceProtocol([ringing], 100, [], new Set([real.id])).citizens
+  assert.equal(still.status, 'ringing', 'sonando de verdad: solo el tablero de llamadas lo cierra')
+  const walker = { ...current[0], status: 'evacuating', call: { answeredAt: 0, agent: 'x', summary: '', consent: 'granted', needs: [] } }
+  const [parked] = moveEvacuees([walker], new Map([[route.id, route]]), zones, 10)
+  assert.equal(parked.lng, origin[0])
+  assert.equal(parked.lat, origin[1])
+})
+
 test('no se mueve un estado evacuating sin llamada respondida', () => {
   const origin = at(7, 8)
   const route = road('unconfirmed', zones[0], [origin, at(8, 8)], 60)

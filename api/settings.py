@@ -96,6 +96,9 @@ class Settings:
     hr_shared_secret: str = field(default_factory=lambda: os.getenv("HR_SHARED_SECRET", ""))
     hr_api_key: str = field(default_factory=lambda: os.getenv("HR_API_KEY", ""))
     hr_workflow_webhook: str = field(default_factory=lambda: os.getenv("HR_WORKFLOW_WEBHOOK", ""))
+    # Canal de SMS propio, si lo hay. Vacío = no hay SMS: el webhook de voz NO vale de respaldo,
+    # porque hace sonar el teléfono diga lo que diga `action` (ver `notify._dispatch`).
+    hr_sms_webhook: str = field(default_factory=lambda: os.getenv("HR_SMS_WEBHOOK", ""))
     hr_base_url: str = field(
         default_factory=lambda: os.getenv("HR_BASE_URL", "https://platform.eu.happyrobot.ai")
     )
@@ -232,6 +235,11 @@ class Settings:
                 else "OFF (HR_SHARED_SECRET vacío)"
             ),
             "webhook_happyrobot": "configurado" if self.hr_workflow_webhook else "sin configurar",
+            "webhook_sms": (
+                "configurado"
+                if self.hr_sms_webhook
+                else "sin configurar (los SMS se registran, no salen)"
+            ),
             "state_jsonl": str(self.state_jsonl),
         }
 

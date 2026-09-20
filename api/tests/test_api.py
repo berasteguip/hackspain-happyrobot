@@ -580,3 +580,107 @@ def test_los_booleanos_del_extract_admiten_las_formas_razonables(client):
     assert CallObservation(duration_s="96").duration_s == 96
     assert CallObservation(duration_s="96.7").duration_s == 96
     assert CallObservation(duration_s="un rato").duration_s is None
+
+
+# ======================================================================================
+# La segunda llamada al colgar (20 sep 2026)
+# ======================================================================================
+
+
+def _espiar_llamadas_reales(monkeypatch):
+    import notify
+
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_shared_secret", "x" * 40)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://hr.example/voz")
+    llamadas: list[dict] = []
+    monkeypatch.setattr(
+        notify,
+        "_post_to_happyrobot",
+        lambda payload, client=None: llamadas.append(payload) or (True, "ok", "run-x"),
+    )
+    return llamadas
+
+
+def test_contestar_desde_casa_no_dispara_una_segunda_llamada(client, monkeypatch):
+    """Cada observación atendida dejaba a la persona en `contacted`; su casa estaba dentro del
+    cono de avance y `detect_at_risk` la subía a `at_risk` con llamada en el acto: el agente
+    volvía a llamar 0,4 s después de colgar («pare y dé la vuelta») a alguien en su salón."""
+    from models import PersonStatus
+    from state import state
+
+    client.post("/reset")
+    llamadas = _espiar_llamadas_reales(monkeypatch)
+    # p-001, en casa, sin contactar todavía, y con la casa en el eje del cono (3 km al norte del
+    # vértice): la condición que disparaba la rellamada. En el fixture está fuera del eje.
+    from fire import fire_head_point, is_in_advance_cone
+
+    persona = state.people["p-001"]
+    persona.phone = "+34600000001"  # fuera del rango sintético: si sonara, se vería aquí
+    persona.status = PersonStatus.unknown
+    vertice = fire_head_point(state.fire)
+    persona.lat, persona.lon = vertice[0] + 0.03, vertice[1]
+    assert is_in_advance_cone(persona, state.fire), "premisa del test: la casa está en el cono"
+    # Con la casa ya en su sitio se deja al planner recalcular la ruta ANTES de la llamada: lo
+    # que se prueba es lo que dispara colgar, no un cambio de ruta por haber movido la casa.
+    import planner
+
+    state.mark_route_dirty(["p-001"])
+    planner.run_planner(state)
+    llamadas.clear()
+
+    r = client.post(
+        "/calls/observation",
+        headers={"x-api-key": "x" * 40},
+        json={"PERSONA_ID": "p-001", "nivel": "verde", "discrepancia": "ninguna", "confianza": "alta", "resultado": "completada"},
+    )
+
+    assert r.status_code == 200
+    assert llamadas == [], "colgar no puede ser motivo de otra llamada"
+    assert client.get("/people/p-001", headers={"x-api-key": "x" * 40}).json()["status"] == "contacted"
+
+
+def test_quien_va_hacia_el_fuego_si_recibe_la_llamada_en_el_acto(client, monkeypatch):
+    """El freno anterior no mata la feature: alguien en marcha dentro del cono sí suena."""
+    import planner
+    from models import PersonStatus
+    from state import state
+
+    client.post("/reset")
+    llamadas = _espiar_llamadas_reales(monkeypatch)
+    persona = state.people["p-001"]
+    persona.phone = "+34600000001"
+    persona.status = PersonStatus.moving
+    persona.heading_deg = 180.0  # hacia el frente, que queda al sur
+    persona.speed_kmh = 30.0
+
+    planner.run_planner(state)
+
+    assert [p["person_id"] for p in llamadas] == ["p-001"]
+    assert "cono de avance" in llamadas[0]["reason"]
+    assert state.people["p-001"].status == PersonStatus.at_risk
+
+
+def test_el_planner_no_marca_a_quien_ya_tiene_el_telefono_sonando(client, monkeypatch):
+    """Con un intento vivo en el tablero, el aviso automático se omite: el estado cambia, el
+    teléfono no vuelve a sonar encima de la llamada que ya está en curso."""
+    import planner
+    from models import CallRun, CallState, PersonStatus
+    from state import state
+
+    client.post("/reset")
+    llamadas = _espiar_llamadas_reales(monkeypatch)
+    persona = state.people["p-001"]
+    persona.phone = "+34600000001"
+    persona.status = PersonStatus.moving
+    persona.heading_deg = 180.0
+    persona.speed_kmh = 30.0
+    state.calls["call-abierto"] = CallRun(
+        id="call-abierto", person_id="p-001", phone=persona.phone, state=CallState.ringing
+    )
+
+    planner.run_planner(state)
+
+    assert llamadas == []
+    assert state.people["p-001"].status == PersonStatus.at_risk
+    state.calls.pop("call-abierto", None)

@@ -24,7 +24,7 @@ export function selectAreaIds(citizens: Citizen[], area: CallArea | null): strin
 
 export function prepareAreaCampaign(citizens: Citizen[], selectedIds: string[], elapsedSec: number, enrolled: ReadonlySet<string>) {
   const selected = new Set(selectedIds)
-  const addedIds = citizens.filter(citizen => selected.has(citizen.id) && !enrolled.has(citizen.id) && !citizen.live && citizen.status === 'pending').map(citizen => citizen.id)
+  const addedIds = citizens.filter(citizen => selected.has(citizen.id) && !enrolled.has(citizen.id) && !citizen.live && !citizen.real && citizen.status === 'pending').map(citizen => citizen.id)
   const offset = citizens.reduce((latest, citizen) => enrolled.has(citizen.id) && ['pending', 'ringing'].includes(citizen.status) ? Math.max(latest, citizen.callDelaySec + RING_SEC) : latest, elapsedSec)
   const schedule = new Map(addedIds.map((id, index) => [id, offset + 1 + Math.floor(index / AGENTS.length) * (RING_SEC + 0.6)]))
   return {
@@ -146,7 +146,7 @@ export function advanceProtocol(
 ): { citizens: Citizen[]; events: CallEvent[] } {
   const events = [...prevEvents]
   const next = citizens.map((citizen, index): Citizen => {
-    if (citizen.live || campaignIds && !campaignIds.has(citizen.id)) return citizen
+    if (citizen.live || citizen.real || campaignIds && !campaignIds.has(citizen.id)) return citizen
     if (citizen.status === 'safe' || citizen.status === 'refused') return citizen
     if (citizen.status === 'no_answer') return citizen
     if (citizen.status === 'informed') return citizen
@@ -268,7 +268,7 @@ export function moveEvacuees(
 ): Citizen[] {
   if (dtSec <= 0) return citizens
   return citizens.map((citizen): Citizen => {
-    if (citizen.live || citizen.status !== 'evacuating') return citizen
+    if (citizen.live || citizen.real || citizen.status !== 'evacuating') return citizen
     if (!citizen.call || citizen.call.consent !== 'granted') return { ...citizen, status: 'assistance', routeHoldReason: 'Sin llamada respondida y consentimiento. No se inicia el movimiento.' }
     const zone = zones.find((item) => item.id === citizen.safeZoneId)
     if (!zone) return { ...citizen, status: 'assistance', routeHoldReason: 'Sin destino validado. Pendiente de revisión del mando.' }

@@ -139,6 +139,10 @@ def test_sin_lista_blanca_se_marca_a_cualquiera_del_escenario(poblado, monkeypat
     antemano. Lo que queda frenando una ráfaga es ALLOW_REAL_CALLS y los topes de lote.
     """
     monkeypatch.setattr(settings, "allow_real_calls", True)
+    # Fuera del rango sintético: los `+3460099…` no se marcan (test de abajo), y aquí lo que se
+    # prueba es que a cualquier teléfono de verdad se le intenta llamar.
+    poblado.people["p-001"].phone = "+34600000001"
+    poblado.people["p-003"].phone = "+34600000003"
 
     _, intentos, _, _ = dispatcher.dispatch(
         poblado, CallDispatch(person_ids=["p-001", "p-003"])
@@ -148,6 +152,44 @@ def test_sin_lista_blanca_se_marca_a_cualquiera_del_escenario(poblado, monkeypat
         assert intento.state != CallState.blocked, "ya no existe el bloqueo por lista"
         # Sin webhook configurado no sale ninguna, pero por falta de webhook, no por filtro.
         assert "HR_WORKFLOW_WEBHOOK" in (intento.detail or "")
+
+
+def test_los_numeros_sinteticos_del_escenario_no_se_marcan_de_verdad(poblado, monkeypatch):
+    """Los `+3460099xxxx` del dataset no suenan en ningún sitio. Marcarlos solo producía runs
+    fallidos a los 0 s y un `no_contactado` que pintaba de rojo a un vecino inventado, encima de
+    la simulación local. Quedan como `simulated` con el motivo, y el teléfono real del mismo
+    círculo sí se intenta, y va primero."""
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_workflow_webhook", "https://hr.example/voz")
+    enviados = []
+    monkeypatch.setattr(
+        notify,
+        "_post_to_happyrobot",
+        lambda payload, client=None: enviados.append(payload) or (True, "HTTP 200", "run-real"),
+    )
+    poblado.people["p-001"].phone = "+34600000001"
+
+    _, intentos, _, _ = dispatcher.dispatch(
+        poblado, CallDispatch(person_ids=["p-003", "p-001"])
+    )
+
+    por_persona = {c.person_id: c for c in intentos}
+    assert por_persona["p-001"].state == CallState.ringing
+    assert por_persona["p-003"].state == CallState.simulated
+    assert "SINTÉTICO" in (por_persona["p-003"].detail or "")
+    assert [p["person_id"] for p in enviados] == ["p-001"], "solo sale la petición del real"
+    assert intentos[0].person_id == "p-001", "el teléfono real va antes que el sintético"
+
+
+def test_el_roster_dice_quien_sonaria_de_verdad(client, monkeypatch):
+    """`dialable` es lo que el CECOP usa para no fingir: un sintético no suena."""
+    from state import state as vivo
+
+    vivo.people["p-001"].phone = "+34600000001"
+    filas = {f["id"]: f for f in client.get("/api/roster").json()}
+    assert filas["p-001"]["dialable"] is True
+    assert filas["p-002"]["dialable"] is False, "+34600992002 es del rango sintético"
+    vivo.people["p-001"].phone = "+34600992001"
 
 
 def test_normalizar_telefono_ignora_espacios_y_guiones():

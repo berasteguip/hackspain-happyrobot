@@ -89,8 +89,35 @@ class _SilentNotify:
         return None
 
 
+class _GuardedNotify:
+    """Los avisos automáticos del planner, con el freno que al operador no le hace falta.
+
+    El círculo del mando pasa por `dispatcher`, que ya se niega a marcar a quien tiene un intento
+    vivo. El planner marcaba por su cuenta (riesgo, ruta, convoy) sin mirar el tablero, así que
+    podía hacer sonar un teléfono que ya estaba sonando. Aquí se mira: con un intento abierto
+    (`queued`/`dialing`/`ringing`) la llamada automática se omite y queda en el log.
+    """
+
+    @staticmethod
+    def place_call(person, reason, state=None, **kwargs):
+        vivo = state.active_call(person.id) if state is not None else None
+        if vivo is not None:
+            log.info(
+                "llamada automática omitida a %s (%s): ya tiene un intento %s en curso",
+                person.name or person.id,
+                reason,
+                vivo.state.value,
+            )
+            return None
+        return notify.place_call(person, reason, state, **kwargs)
+
+    @staticmethod
+    def send_sms(person, text, state=None, **kwargs):
+        return notify.send_sms(person, text, state, **kwargs)
+
+
 def _notifier():
-    return notify if settings.auto_notify else _SilentNotify
+    return _GuardedNotify if settings.auto_notify else _SilentNotify
 
 
 def _first_name(person: Person | None) -> str:
@@ -306,7 +333,18 @@ def _refresh_house_ranks(state) -> None:
 
 
 def detect_at_risk(state, trigger_event_id: str | None = None) -> Decisions:
-    """Personas cuya trayectoria entra en el cono de avance → `at_risk` y llamada EN EL ACTO."""
+    """Quien VA hacia el fuego → `at_risk` y llamada EN EL ACTO.
+
+    Solo `moving`: lo que dispara la llamada es la trayectoria, no el sitio. Un `contacted` que
+    acaba de colgar sigue en casa, y su casa puede estar dentro del cono sin que eso sea noticia:
+    la cola de prioridad y la patrulla ya cuentan con ella.
+
+    Hasta el 20 sep 2026 aquí entraban también los `contacted`. Como toda observación deja a la
+    persona en `contacted` y el cono cubre el pueblo entero, cada llamada atendida disparaba otra
+    nada más colgar («pare y escúcheme: el fuego se está metiendo por donde va») a alguien sentado
+    en su salón. Comprobado run a run en la plataforma: cinco llamadas, cinco rellamadas creadas
+    0,4 s antes de cerrarse cada run.
+    """
     decisions: Decisions = []
     if state.fire is None:
         return decisions
@@ -320,7 +358,7 @@ def detect_at_risk(state, trigger_event_id: str | None = None) -> Decisions:
         entra = trajectory_enters_cone(person, state.fire, settings.at_risk_horizon_min)
         parado = _is_stalled(person)
 
-        if person.status in {PersonStatus.moving, PersonStatus.contacted} and (entra or parado):
+        if person.status == PersonStatus.moving and (entra or parado):
             motivo = (
                 "Su trayectoria entra en el cono de avance del fuego"
                 if entra

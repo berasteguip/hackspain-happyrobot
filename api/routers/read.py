@@ -97,7 +97,8 @@ def api_roster() -> list[RosterEntry]:
                 locality=(casa.village if casa else None) or state.scenario,
                 address=casa.address if casa else None,
                 vulnerable=bool(casa.vulnerable) if casa else False,
-                dialable=bool(person.phone),
+                # ¿Sonaría de verdad? Un número del rango sintético no se marca (`notify`).
+                dialable=bool(person.phone) and not notify.is_synthetic_phone(person.phone),
                 status=person.status,
                 call_state=ultima.state if ultima else None,
                 location_source=person.position_source,

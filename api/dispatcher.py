@@ -163,7 +163,14 @@ def dispatch(state, body: CallDispatch) -> tuple[str, list[CallRun], list[dict[s
 
     # Quien se registró desde el enlace con su propio teléfono va primero: el tope de la ráfaga
     # no puede dejar fuera a la única persona real del círculo por culpa de los vecinos sintéticos.
-    llamables.sort(key=lambda p: notify.normalize_phone(p.phone) not in state.registered_phones)
+    # …y los teléfonos de verdad antes que los sintéticos, que no van a sonar (ver
+    # `notify.is_synthetic_phone`): el tope no debe gastarse en números inventados.
+    llamables.sort(
+        key=lambda p: (
+            notify.normalize_phone(p.phone) not in state.registered_phones,
+            notify.is_synthetic_phone(p.phone),
+        )
+    )
     if len(llamables) > settings.call_max_batch:
         sobran = llamables[settings.call_max_batch :]
         llamables = llamables[: settings.call_max_batch]

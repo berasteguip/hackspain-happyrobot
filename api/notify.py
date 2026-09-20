@@ -99,6 +99,23 @@ def normalize_phone(phone: str | None) -> str:
     return "".join(ch for ch in phone if ch.isdigit() or ch == "+")
 
 
+# El rango que el contrato reserva a los teléfonos sintéticos (§1): todo número del repo va ahí,
+# y los reales entran por `PHONE_OVERRIDES` o registrándose desde el enlace.
+SYNTHETIC_PHONE_PREFIX = "+3460099"
+
+
+def is_synthetic_phone(phone: str | None) -> bool:
+    """¿Es un número inventado del escenario, que no suena en ningún sitio?
+
+    Marcarlos de verdad no es inocuo: HappyRobot los intenta (el «Freno de mano» del workflow
+    solo mira que parezcan un móvil español), la centralita los devuelve `busy` o
+    `sip_user_unavailable` a los cero segundos, el extract dice `no_contactado` y la API pinta
+    de rojo a un vecino que nunca existió, pisando la simulación local que lo tenía contestando
+    y en camino. Comprobado en los runs del 20 sep 2026 (ráfaga de las 03:21: 8 de 14 así).
+    """
+    return normalize_phone(phone).startswith(SYNTHETIC_PHONE_PREFIX)
+
+
 def phone_allowed(phone: str | None) -> bool:
     """Cerrojo opcional del ensayo con el enlace: con `REGISTER_ONLY_CALLS` solo suena quien se
     registró él mismo desde `/track`. Apagado (por defecto) no filtra nada."""
@@ -133,10 +150,10 @@ def _run_id_from(resp: httpx.Response) -> str | None:
 
 
 def _post_to_happyrobot(
-    payload: dict, client: httpx.Client | None = None
+    payload: dict, client: httpx.Client | None = None, url: str | None = None
 ) -> tuple[bool, str, str | None]:
-    """POST al webhook del workflow. Devuelve (ok, detalle, run_id)."""
-    url = settings.hr_workflow_webhook
+    """POST al webhook del workflow (o al `url` que se pase). Devuelve (ok, detalle, run_id)."""
+    url = settings.hr_workflow_webhook if url is None else url
     if not url:
         return False, "HR_WORKFLOW_WEBHOOK sin configurar", None
     own_client = client is None
@@ -286,9 +303,41 @@ def _dispatch(
             "llamada" if channel == Channel.call else "SMS",
             person.name or person.id,
         )
+    elif is_synthetic_phone(person.phone):
+        # No hay nadie al otro lado de un número del rango reservado. Queda como intento
+        # simulado, con el motivo, y el CECOP anima a esa persona en local.
+        simulated = True
+        ok = True
+        detail = (
+            "SINTÉTICO: número del rango reservado del escenario (+3460099…), no se marca. "
+            "La simulación local del CECOP cubre a esta persona."
+        )
+        log.info(
+            "[SINTÉTICO] %s a %s (%s) no se marca · %s",
+            "llamada" if channel == Channel.call else "SMS",
+            person.name or person.id,
+            person.phone,
+            reason,
+        )
+    elif channel == Channel.sms and not settings.hr_sms_webhook:
+        # El único webhook que hay es el del workflow de voz, y ese hace SONAR el teléfono
+        # diga lo que diga `action`: un «SMS» de cambio de ruta llegaba como una segunda
+        # llamada del agente. Sin canal propio de SMS, el texto se registra y no sale.
+        simulated = True
+        ok = True
+        detail = (
+            "SIN CANAL DE SMS: HR_SMS_WEBHOOK no está configurado y el webhook de voz haría "
+            "sonar el teléfono. El texto queda registrado, no se manda."
+        )
+        log.warning("[SIN SMS] a %s (%s): %s", person.name or person.id, person.phone, reason)
     else:
         simulated = False
-        ok, detail, run_id = _post_to_happyrobot(payload, client=client)
+        if channel == Channel.sms:
+            ok, detail, run_id = _post_to_happyrobot(
+                payload, client=client, url=settings.hr_sms_webhook
+            )
+        else:
+            ok, detail, run_id = _post_to_happyrobot(payload, client=client)
         log.info(
             "[REAL] %s a %s · %s · %s%s",
             "llamada" if channel == Channel.call else "SMS",

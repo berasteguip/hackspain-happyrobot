@@ -81,6 +81,10 @@ function citizenFromRoster(row: RosterEntry, index: number): Citizen {
  */
 function statusFromRoster(row: RosterEntry): Citizen['status'] {
   if (row.status === 'no_answer') return 'no_answer'
+  // Un intento que caducó sin desenlace sobre alguien a quien nadie ha llegado a contactar es,
+  // para el mapa, una casa sin respuesta: rojo y escalable. La ficha conserva el matiz («sin
+  // desenlace»). Si ya contestó antes, no se le quita el contacto por eso.
+  if (row.call_state === 'stale' && (row.status === 'unknown' || row.status === 'unreachable')) return 'no_answer'
   if (row.triage_level && row.triage_level !== 'unknown') return 'informed'
   return row.call_state === 'answered' ? 'informed' : 'pending'
 }
@@ -377,7 +381,7 @@ export function CommandCenter({ token }: { token: string }) {
       citizensRef.current = moved
       setCitizens(moved)
       const awaitingPlan = moved.some(citizen => campaignRef.current.has(citizen.id) && !citizen.live && citizen.call?.consent === 'granted' && !citizen.routeId && !plannedRef.current.has(citizen.id))
-      if (!inFlightRef.current.size && !awaitingPlan && moved.every(citizen => !campaignRef.current.has(citizen.id) || citizen.live || !['pending', 'ringing', 'tracking', 'routing', 'evacuating'].includes(citizen.status))) setProtocolOn(false)
+      if (!inFlightRef.current.size && !awaitingPlan && moved.every(citizen => !campaignRef.current.has(citizen.id) || citizen.live || citizen.real || !['pending', 'ringing', 'tracking', 'routing', 'evacuating'].includes(citizen.status))) setProtocolOn(false)
       if (advanced.events.length) setEvents((previous) => [...advanced.events.reverse(), ...previous].slice(0, 700))
     }, 100)
     return () => window.clearInterval(timer)
@@ -467,7 +471,9 @@ export function CommandCenter({ token }: { token: string }) {
           ...citizen,
           callState: call.state,
           status: call.state === 'answered' ? 'informed'
-            : call.state === 'no_answer' ? 'no_answer'
+            // Sin respuesta, o cinco minutos sin desenlace: para el mando es una casa a la que
+            // nadie ha llegado. Rojo y escalable; la ficha conserva el matiz del tablero.
+            : call.state === 'no_answer' || call.state === 'stale' ? 'no_answer'
             : CALL_STATE_OPEN.includes(call.state) ? 'ringing'
             : citizen.status,
         }
@@ -591,7 +597,7 @@ export function CommandCenter({ token }: { token: string }) {
     waiting: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.status === 'assistance').length,
   }), [citizens, campaignSet])
   const callableCount = citizens.filter(citizen => areaIds.includes(citizen.id) && !citizen.live && citizen.status === 'pending' && !campaignSet.has(citizen.id)).length
-  const campaignRunning = citizens.some(citizen => campaignSet.has(citizen.id) && !citizen.live && ['pending', 'ringing', 'tracking', 'routing', 'evacuating'].includes(citizen.status))
+  const campaignRunning = citizens.some(citizen => campaignSet.has(citizen.id) && !citizen.live && !citizen.real && ['pending', 'ringing', 'tracking', 'routing', 'evacuating'].includes(citizen.status))
   const selected = citizens.find((citizen) => citizen.id === selectedId) ?? null
   const filtered = citizens.filter((citizen) => {
     const text = `${citizen.name} ${citizen.phone} ${citizen.id} ${citizen.locality} ${STATUS_LABEL[citizen.status]}`.toLowerCase()
@@ -634,11 +640,16 @@ export function CommandCenter({ token }: { token: string }) {
       const resultado = await dispatchCircle(operatorKey, area, { operator: 'puesto de mando', force: forceRecall, reason })
       setLiveBatch({ id: resultado.batch_id, skipped: resultado.skipped_detail })
       setLiveCalls(resultado.calls)
-      // Híbrido: la API marca los teléfonos reales; los vecinos demo del círculo (sin GPS real)
-      // arrancan a la vez la simulación local para que el mapa se mueva mientras suena la llamada.
-      const realIds = resultado.calls.map((call) => call.person_id)
-      const campaign = prepareAreaCampaign(citizensRef.current, ids, elapsedRef.current, campaignRef.current)
-      const enrolled = new Set([...campaign.ids, ...realIds])
+      // Híbrido de verdad: HappyRobot se queda con los teléfonos que ha hecho sonar (intento
+      // vivo: en cola, marcando o llamando). El resto del círculo —vecinos sintéticos, intentos
+      // simulados o bloqueados— lo anima la simulación local. Un punto con llamada real no se
+      // mueve ni «contesta» hasta que su desenlace entre por el tablero: si echara a correr al
+      // pulsar «Llamar» estaría fingiendo una conversación que todavía no ha ocurrido.
+      const dispatchedIds = resultado.calls.map((call) => call.person_id)
+      const realSet = new Set(resultado.calls.filter((call) => CALL_STATE_OPEN.includes(call.state)).map((call) => call.person_id))
+      const withReal = realSet.size ? citizensRef.current.map((citizen) => realSet.has(citizen.id) ? { ...citizen, real: true } : citizen) : citizensRef.current
+      const campaign = prepareAreaCampaign(withReal, ids, elapsedRef.current, campaignRef.current)
+      const enrolled = new Set([...campaign.ids, ...dispatchedIds])
       campaignRef.current = enrolled
       citizensRef.current = campaign.citizens
       setCitizens(campaign.citizens)
