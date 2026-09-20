@@ -62,6 +62,12 @@ export type Citizen = {
    * puerta. Guarda qué medios salieron para que el punto lo enseñe y no se escale dos veces.
    */
   escalation?: { at: number; runId: string; unitIds: string[] }
+  /**
+   * Cambio de destino en marcha: el mando pintó un frente previsto que cruzaba su camino (o su
+   * refugio) y HappyRobot le buscó otra salida desde donde estaba. `toZoneId` llega cuando
+   * Directions devuelve la ruta nueva; hasta entonces la persona está parada, esperando.
+   */
+  reroute?: { at: number; runId: string; fromZoneId: string; toZoneId?: string }
   locationUpdatedAt?: number
   accuracyM?: number
   locality?: string
@@ -78,9 +84,13 @@ export type Citizen = {
 
 export type CallArea = { lng: number; lat: number; radiusM: number }
 
+/** Un frente previsto pintado a mano por el mando: anillo cerrado en [lng, lat] y cuándo se pintó. */
+export type PaintedFire = { id: string; ring: [number, number][]; at: number }
+
 export type MapLayers = {
   perimeter: boolean
   spread: boolean
+  plannedFire: boolean
   thermal: boolean
   citizens: boolean
   references: boolean

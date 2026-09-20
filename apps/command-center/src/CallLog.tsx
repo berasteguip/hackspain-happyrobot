@@ -21,7 +21,7 @@ export function CallLog() {
   const [entries, setEntries] = useState<CallLogEntry[]>([])
   const [error, setError] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const [now, setNow] = useState(() => Date.now())
   const seen = useRef(new Set<string>())
   const [pulse, setPulse] = useState(false)
@@ -75,9 +75,9 @@ export function CallLog() {
   return (
     <section className={`call-log${collapsed ? ' collapsed' : ''}`} aria-label="Memoria compartida entre llamadas">
       <header>
-        <span className={`log-dot${pulse ? ' pulsing' : ''}`} aria-hidden="true" />
+        <span className={`log-dot${error ? ' offline' : pulse ? ' pulsing' : ''}`} aria-hidden="true" />
         <strong>Memoria compartida</strong>
-        <span className="log-count">{entries.length}</span>
+        {error ? <span className="log-offline">Sin conexión</span> : <span className="log-count">{entries.length}</span>}
         {open > 0 && <span className="log-count open" title="Dudas sin respuesta">{open} {open === 1 ? 'abierta' : 'abiertas'}</span>}
         <button type="button" aria-expanded={!collapsed} aria-label={collapsed ? 'Desplegar' : 'Plegar'} onClick={() => setCollapsed(v => !v)}>{collapsed ? '▴' : '▾'}</button>
       </header>
@@ -90,7 +90,7 @@ export function CallLog() {
         </div>
 
         <div className="log-body">
-          {error && <p className="log-empty">Sin conexión con la API.<br /><small>{error}</small></p>}
+          {error && <div className="log-empty"><p>No se puede actualizar la memoria.</p><details><summary>Detalle de conexión</summary><small>{error}</small></details></div>}
           {!error && !shown.length && <p className="log-empty">{entries.length
             ? 'Nada con este filtro.'
             : 'Todavía no se ha aprendido nada. Lo que averigüe una llamada aparecerá aquí y lo sabrán todas las demás.'}</p>}

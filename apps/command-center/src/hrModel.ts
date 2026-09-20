@@ -202,7 +202,7 @@ export type HrUnitRun = {
 }
 
 /** Qué ficha del CECOP está abierta. `overview` es «ninguna»: se enseña el circuito completo. */
-export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'unit' | 'centers' | 'cop' | 'incidents' | 'layers' | 'escalation'
+export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'unit' | 'centers' | 'cop' | 'incidents' | 'layers' | 'escalation' | 'reroute'
 
 /**
  * Cuánto de esta ficha pasa de verdad por HappyRobot hoy.
@@ -290,6 +290,7 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },
   layers: { title: 'Capas y leyenda', summary: 'Las capas son geometría del mapa. HappyRobot no interviene.', coverage: 'none' },
   escalation: { title: 'Escalada · sin respuesta', summary: 'Nadie descolgó. El mando aprueba y HappyRobot rellama, ordena por riesgo, avisa a Guardia Civil y 1-1-2 y deja constancia en Vigía.', coverage: 'partial' },
+  reroute: { title: 'Rerruta · frente previsto', summary: 'El mando pinta un frente que aún no existe. HappyRobot detecta a quién le corta el camino, le busca otra salida desde donde está y se lo dice.', coverage: 'partial' },
 }
 
 // --------------------------------------------------------------------------- escalada a fuerzas de seguridad
@@ -325,3 +326,39 @@ export type HrEscalationRun = {
   step: number
   unitIds: string[]
 }
+
+// --------------------------------------------------------------------------- rerruta por frente previsto
+
+/**
+ * Un paso del run de rerruta. Mismo molde que la escalada: nodos reales de la plataforma, con el
+ * nombre del editor en `hint`, encadenados como los montaría el workflow «Rerruta · frente
+ * previsto». `ms` es lo que tarda en la demo; la suma ronda los nueve segundos y la ruta nueva de
+ * Directions llega mientras se anuncia el aviso al vecino, así que los puntos giran con «Enviado».
+ */
+export type HrRerouteStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; ms: number }
+
+export const HR_REROUTE_STEPS: HrRerouteStep[] = [
+  { id: 'hook', kind: 'trigger', lane: 'api', label: 'Frente previsto recibido', detail: 'El mando pinta un frente que todavía no arde. La API lo mete en el modelo a +15 min y recalcula la exposición de cada ruta en curso.', hint: 'Incoming hook · POST /hooks/frente-previsto', ms: 1000 },
+  { id: 'cross', kind: 'code', lane: 'api', label: 'Cruzar rutas con el frente', detail: 'Quién iba a atravesar el fuego previsto, y quién iba a un refugio que dentro de un rato ya no vale.', hint: 'Python Sandbox · exposición ruta a ruta', ms: 1200 },
+  { id: 'lookup', kind: 'db', lane: 'happyrobot', label: 'Consultar el registro', detail: 'Quién va andando, quién lleva a alguien que no puede correr, quién ya llegó y no hace falta mover.', hint: 'Query Twin with SQL · call_log', ms: 1100 },
+  { id: 'replan', kind: 'route', lane: 'happyrobot', label: 'Recalcular destino', detail: 'Desde donde están ahora, no desde casa. Fuera los refugios expuestos; de los que quedan gana el que llega antes del frente.', hint: 'Google Maps · Directions + Python Sandbox', ms: 1600 },
+  { id: 'approval', kind: 'human', lane: 'mando', label: 'Aprobado por operador', detail: 'El plan nuevo pasa por el mando antes de decirle a nadie que se dé la vuelta.', hint: 'Approval Process del workflow', ms: 900 },
+  { id: 'notify', kind: 'voice', lane: 'vecino', label: 'Aviso al vecino', detail: '«Alto. Esperen ahí. Cambia la ruta.» Llamada corta o SMS con el enlace nuevo, según lo que tenga cada uno en la mano.', hint: 'Outbound Voice Agent «Rerruta» + Send SMS', ms: 2000 },
+  { id: 'vigia', kind: 'webhook', lane: 'api', label: 'Anotar y devolver a Vigía', detail: 'La ruta nueva queda escrita y los puntos giran en el mapa.', hint: 'Write to Twin + POST «Rerruta → Vigía»', ms: 900 },
+]
+
+/** Índice del paso en el que los vecinos reciben la ruta nueva: ahí el CECOP suelta el recálculo real. */
+export const HR_REROUTE_RELEASE_STEP = HR_REROUTE_STEPS.findIndex(step => step.id === 'notify')
+
+/** Estado del run de rerruta que el CECOP mantiene mientras la tarjeta lo dibuja. */
+export type HrRerouteRun = {
+  id: string
+  citizenIds: string[]
+  label: string
+  startedAt: number
+  /** Índice del paso en curso; `>= HR_REROUTE_STEPS.length` es «terminado». */
+  step: number
+}
+
+/** Lo que la tarjeta enseña al acabar: a dónde va cada grupo ahora. */
+export type HrRerouteOutcome = { zoneId: string; code: string; name: string; count: number }

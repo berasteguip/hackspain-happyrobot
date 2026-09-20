@@ -5,20 +5,19 @@ import { HappyRobotLogo, HappyRobotSymbol } from './HappyRobot'
 import { Wordmark } from './Logo'
 
 /** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
-const INTRO_MS = 4800
+const INTRO_MS = 1700
 import { fetchFirmsSpain } from './firms'
 import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
 import { anchorScenario } from './scenario'
 import { recommendAreas } from './risk'
 import type { FireScenario } from './scenario'
-import { MAX_FORECAST_MIN, buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
+import { MAX_FORECAST_MIN, PLANNED_FIRE_MIN, buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
 import type { FireSettings } from './fire-model'
-import { CallLog } from './CallLog'
 import { FireControls, RefugeRoutesPanel, ResponsePanel, AlertsPanel, DispatchActions } from './CopPanels'
 import type { DemoNotice } from './response'
 import { SITE_EMOJI } from './response'
 import type { RefugeRoute } from './routing'
-import { planCitizenRoute } from './routing'
+import { planCitizenRoute, positionAt } from './routing'
 import type { RouteIndex } from './routing'
 import { detectAlerts, initialWatch, mergeAlerts } from './alerts'
 import type { AlertAction, AlertWatch, CommandAlert } from './alerts'
@@ -31,14 +30,17 @@ import {
   postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
 import { DEMO_ONLY } from './demoMode'
+import { flushSync } from 'react-dom'
 import { TourIntro } from './TourIntro'
-import { markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
+import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
+import type { TourView } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
-import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_UNIT_RUN_STEPS } from './hrModel'
-import type { HrCallsPulse, HrEscalationRun, HrUnitPulse, HrUnitRun, HrView } from './hrModel'
+import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_REROUTE_RELEASE_STEP, HR_REROUTE_STEPS, HR_UNIT_RUN_STEPS } from './hrModel'
+import type { HrCallsPulse, HrEscalationRun, HrRerouteOutcome, HrRerouteRun, HrUnitPulse, HrUnitRun, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
-import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
+import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, PaintedFire, SafeZone } from './types'
+import type { FeatureCollection, Polygon } from 'geojson'
 
 /**
  * El censo que sirve la API (`/api/roster`) sustituye al de `scenario.ts` en cuanto responde.
@@ -110,6 +112,7 @@ function layerOptions(scenario: FireScenario): { key: keyof MapLayers; name: str
   return [
     { key: 'perimeter', name: 'Huella térmica', detail: 'Celdas del incendio', symbol: 'fire' },
     { key: 'spread', name: 'Propagación', detail: 'Avance desde el foco', symbol: 'wind' },
+    { key: 'plannedFire', name: 'Frente previsto', detail: 'Pintado por el mando · +15 min', symbol: 'fire' },
     { key: 'routes', name: 'Ruta seleccionada', detail: 'Recorrido comparado', symbol: 'routes' },
     { key: 'hospitals', name: 'Hospitales', detail: hospital?.name ?? 'Hospital', symbol: 'centers' },
     { key: 'healthCenters', name: 'Centros de salud', detail: health?.name ?? 'Centro de salud', symbol: 'centers' },
@@ -134,6 +137,13 @@ function readHrCardState(): HrCardState {
     return saved === 'collapsed' || saved === 'hidden' ? saved : 'open'
   } catch {
     return 'open'
+  }
+}
+/** Los frentes pintados como colección de polígonos cerrados, que es lo que el modelo de fuego entiende. */
+function paintedFootprint(fires: PaintedFire[]): FeatureCollection<Polygon> {
+  return {
+    type: 'FeatureCollection',
+    features: fires.filter(fire => fire.ring.length >= 3).map(fire => ({ type: 'Feature', properties: { id: fire.id }, geometry: { type: 'Polygon', coordinates: [[...fire.ring, fire.ring[0]]] } })),
   }
 }
 function formatClock(date: Date) {
@@ -189,6 +199,11 @@ export function CommandCenter({ token }: { token: string }) {
   // Run de escalada a fuerzas de seguridad: la tarjeta de HappyRobot lo dibuja paso a paso y, al
   // terminar, salen los medios. Uno a la vez: es una decisión del mando, no una cola.
   const [escalation, setEscalation] = useState<HrEscalationRun | null>(null)
+  // Frentes previstos pintados a mano y el run de rerruta que disparan cuando cortan un camino.
+  const [paintedFires, setPaintedFires] = useState<PaintedFire[]>([])
+  const [fireStroke, setFireStroke] = useState<[number, number][] | null>(null)
+  const [drawingFire, setDrawingFire] = useState(false)
+  const [reroute, setReroute] = useState<HrRerouteRun | null>(null)
   useEffect(() => {
     try { localStorage.setItem(HR_CARD_KEY, hrCard) } catch { /* sin almacenamiento: no se recuerda */ }
   }, [hrCard])
@@ -202,7 +217,8 @@ export function CommandCenter({ token }: { token: string }) {
   const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]]; maxZoom?: number } | null>(null)
   const [mapRoute, setMapRoute] = useState<RefugeRoute | null>(null)
   const [notices, setNotices] = useState<DemoNotice[]>([])
-  const forecast = useMemo(() => buildFireForecast(scenario.fireCells, fireSettings), [scenario.fireCells, fireSettings])
+  const plannedFootprint = useMemo(() => paintedFires.length ? { footprint: paintedFootprint(paintedFires), minute: PLANNED_FIRE_MIN } : undefined, [paintedFires])
+  const forecast = useMemo(() => buildFireForecast(scenario.fireCells, fireSettings, plannedFootprint), [scenario.fireCells, fireSettings, plannedFootprint])
   const projection = useMemo(() => forecastGeo(forecast, horizon), [forecast, horizon])
   const recommended = useMemo(() => recommendAreas(scenario.fireCells, forecast, fireSettings.windTowardDeg), [scenario.fireCells, forecast, fireSettings.windTowardDeg])
   const zoneExposure = useMemo(() => Object.fromEntries(scenario.safeZones.map(zone => [zone.id, exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)])), [forecast, horizon, marginM, scenario.safeZones])
@@ -212,7 +228,7 @@ export function CommandCenter({ token }: { token: string }) {
   const [firms, setFirms] = useState<FireSpot[]>([])
   const [showFirms, setShowFirms] = useState(false)
   const [firmsState, setFirmsState] = useState('Sin consultar · detecciones de las últimas 24 h')
-  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: true, thermal: false, citizens: true, references: true, zones: true, hospitals: true, healthCenters: true, fireStations: true, routes: true, callArea: true, units: true })
+  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: true, plannedFire: true, thermal: false, citizens: true, references: true, zones: true, hospitals: true, healthCenters: true, fireStations: true, routes: true, callArea: true, units: true })
   useEffect(() => {
     if (!firePlaying) return
     const origin = horizonRef.current
@@ -272,7 +288,9 @@ export function CommandCenter({ token }: { token: string }) {
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
+      if (touring) return // Driver gestiona su propio Escape y restaura la vista al cerrarse.
       if (drawingArea) { setDrawingArea(false); setCallArea(null); setAreaIds([]); return }
+      if (drawingFire) { setDrawingFire(false); setFireStroke(null); return }
       setSelectedId(null)
       setPanel(null)
       if (hrCard !== 'hidden') { setHrCard('hidden'); return }
@@ -286,7 +304,7 @@ export function CommandCenter({ token }: { token: string }) {
     }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
-  }, [panel, drawingArea, hrCard])
+  }, [panel, drawingArea, drawingFire, hrCard, touring])
   useEffect(() => {
     if (!showFirms) return
     let cancelled = false
@@ -314,7 +332,9 @@ export function CommandCenter({ token }: { token: string }) {
           updatePopulation(current => current.map(item => {
             if (item.id !== citizen.id || item.live || item.call?.consent !== 'granted') return item
             if (plan.route) routesRef.current.set(plan.route.id, plan.route)
-            return { ...item, status: plan.citizen.status, safeZoneId: plan.citizen.safeZoneId, routeId: plan.citizen.routeId, routeProgressM: plan.citizen.routeProgressM, routePhase: plan.citizen.routePhase, routeHoldReason: plan.citizen.routeHoldReason }
+            // Si venía de una rerruta, aquí se sabe por fin a dónde va: la tarjeta lo enseña.
+            const rerouted = item.reroute && !item.reroute.toZoneId && plan.citizen.safeZoneId ? { ...item.reroute, toZoneId: plan.citizen.safeZoneId } : item.reroute
+            return { ...item, status: plan.citizen.status, safeZoneId: plan.citizen.safeZoneId, routeId: plan.citizen.routeId, routeProgressM: plan.citizen.routeProgressM, routePhase: plan.citizen.routePhase, routeHoldReason: plan.citizen.routeHoldReason, reroute: rerouted }
           }))
         }).catch(() => {
           if (!controller.signal.aborted) updatePopulation(current => current.map(item => item.id === citizen.id && !item.live ? { ...item, status: 'assistance', routeHoldReason: 'No se pudo calcular la ruta individual. Puede reintentar la consulta.' } : item))
@@ -586,6 +606,8 @@ export function CommandCenter({ token }: { token: string }) {
     setSelectedId(null)
     setPanel(null)
     setHrCard('hidden')
+    setDrawingFire(false)
+    setFireStroke(null)
     if (drawingArea) {
       setDrawingArea(false)
       updateArea(null)
@@ -777,6 +799,93 @@ export function CommandCenter({ token }: { token: string }) {
     return () => window.clearTimeout(timer)
   }, [escalation])
   const escalationUnits = useMemo(() => escalation ? escalation.unitIds.map(id => units.find(unit => unit.id === id)).filter((unit): unit is DispatchUnit => Boolean(unit)).map(unit => ({ callSign: unit.callSign, label: `${UNIT_LABEL[unit.kind]} · ${UNIT_STATUS_LABEL[unit.status]}`, eta: unitEta(unit) })) : [], [escalation, units])
+  // --- frente previsto pintado a mano y rerruta ------------------------------------------------
+  const beginFirePaint = () => {
+    setSelectedId(null)
+    setPanel(null)
+    setHrCard('hidden')
+    setDrawingArea(false)
+    setFireStroke(null)
+    setDrawingFire(active => !active)
+    setLayers(previous => ({ ...previous, plannedFire: true, citizens: true, zones: true }))
+  }
+  const clearPlannedFires = () => {
+    setPaintedFires([])
+    setFireStroke(null)
+    setDrawingFire(false)
+  }
+  /**
+   * El trazo se cierra: entra en el modelo como fuego a +15 min y se mira a quién le corta el
+   * camino. La prueba se hace contra un pronóstico hecho SOLO con el frente pintado, para que la
+   * culpa sea del trazo y no del fuego real: alguien cuya ruta ya rozaba la proyección vieja no
+   * se rerruta por pintar en la otra punta del mapa.
+   */
+  const finishFireStroke = (ring: [number, number][]) => {
+    const painted: PaintedFire = { id: crypto.randomUUID(), ring, at: Date.now() }
+    setPaintedFires(previous => [...previous, painted])
+    setFireStroke(null)
+    setDrawingFire(false)
+    const paintedOnly = buildFireForecast({ type: 'FeatureCollection', features: [] }, fireSettings, { footprint: paintedFootprint([painted]), minute: PLANNED_FIRE_MIN })
+    const through = Math.max(60, horizonRef.current)
+    const affected = citizensRef.current.filter(citizen => {
+      if (citizen.live || citizen.reroute && !citizen.reroute.toZoneId) return false
+      if (!['evacuating', 'tracking', 'routing'].includes(citizen.status) || !citizen.routeId) return false
+      const route = routesRef.current.get(citizen.routeId)
+      const zone = scenario.safeZones.find(item => item.id === citizen.safeZoneId)
+      if (!route || !zone) return false
+      if (exposureAt(paintedOnly, zone.lng, zone.lat, through, marginM + zone.radiusM).level !== 'clear') return true
+      // Lo que le queda de camino, desde donde está: lo andado ya no lo cruza nadie.
+      const progress = citizen.routeProgressM ?? 0
+      const ahead = route.coords.filter((_, index) => route.cumulative[index] >= progress)
+      const remaining: [number, number][] = [[citizen.lng, citizen.lat], positionAt(route, progress), ...ahead]
+      return routeBlocked(paintedOnly, remaining, through, marginM)
+    })
+    if (!affected.length || reroute) return
+    const run: HrRerouteRun = { id: crypto.randomUUID(), citizenIds: affected.map(citizen => citizen.id), label: `${affected.length} ${affected.length === 1 ? 'persona' : 'personas'} con el camino cortado`, startedAt: Date.now(), step: 0 }
+    const at = Date.now()
+    // Se paran donde están mientras el run decide. Conservan la ruta vieja para que el planificador
+    // no les busque salida antes de que HappyRobot «se lo diga»; se suelta en el paso del aviso.
+    updatePopulation(current => current.map(citizen => run.citizenIds.includes(citizen.id)
+      ? { ...citizen, status: 'routing', routeHoldReason: 'Frente previsto en su camino. HappyRobot recalcula el destino…', reroute: { at, runId: run.id, fromZoneId: citizen.safeZoneId } }
+      : citizen))
+    setEvents(previous => [...previous, ...affected.map(citizen => ({ id: `${citizen.id}-reroute-${run.id}`, ts: at, agent: 'HappyRobot · Rerruta', citizenId: citizen.id, name: citizen.name, detail: 'alto: frente previsto en su camino · recalculando destino' }))])
+    setReroute(run)
+    setHrCard('open')
+    const lngs = affected.map(citizen => citizen.lng).concat(ring.map(([lng]) => lng))
+    const lats = affected.map(citizen => citizen.lat).concat(ring.map(([, lat]) => lat))
+    setFocusTarget({ lng: (Math.min(...lngs) + Math.max(...lngs)) / 2, lat: (Math.min(...lats) + Math.max(...lats)) / 2, bounds: [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]] })
+  }
+  /** Paso del aviso: los vecinos «reciben» la ruta nueva, así que ahora sí se pide a Directions desde donde están. */
+  const releaseReroute = (run: HrRerouteRun) => {
+    for (const id of run.citizenIds) plannedRef.current.delete(id)
+    updatePopulation(current => current.map(citizen => run.citizenIds.includes(citizen.id) && citizen.reroute?.runId === run.id
+      ? { ...citizen, status: 'routing', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: 'Buscando la salida más rápida desde su posición actual…' }
+      : citizen))
+    setProtocolOn(true)
+  }
+  const releaseRerouteRef = useRef(releaseReroute)
+  releaseRerouteRef.current = releaseReroute
+  useEffect(() => {
+    if (!reroute) return
+    const step = HR_REROUTE_STEPS[reroute.step]
+    if (!step) {
+      const timer = window.setTimeout(() => setReroute(current => current?.id === reroute.id ? null : current), 10000)
+      return () => window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(() => {
+      if (reroute.step + 1 === HR_REROUTE_RELEASE_STEP) releaseRerouteRef.current(reroute)
+      setReroute(current => current?.id === reroute.id ? { ...current, step: current.step + 1 } : current)
+    }, step.ms)
+    return () => window.clearTimeout(timer)
+  }, [reroute])
+  const rerouteOutcome = useMemo(() => {
+    if (!reroute) return null
+    const mine = citizens.filter(citizen => reroute.citizenIds.includes(citizen.id))
+    const outcomes: HrRerouteOutcome[] = scenario.safeZones.map(zone => ({ zoneId: zone.id, code: zone.code, name: zone.name, count: mine.filter(citizen => citizen.reroute?.toZoneId === zone.id).length })).filter(item => item.count > 0)
+    const pending = mine.filter(citizen => !citizen.reroute?.toZoneId && citizen.status !== 'assistance').length
+    const stuck = mine.filter(citizen => !citizen.reroute?.toZoneId && citizen.status === 'assistance').length
+    return { run: reroute, outcomes: stuck ? [...outcomes, { zoneId: 'none', code: '—', name: 'Sin salida segura · revisión del mando', count: stuck }] : outcomes, pending }
+  }, [reroute, citizens, scenario.safeZones])
   const handleAlertAction = (alert: CommandAlert, action: AlertAction) => {
     if (action === 'call-area' && alert.focus) {
       finishArea({ lng: alert.focus.lng, lat: alert.focus.lat, radiusM: alert.radiusM ?? 1200 })
@@ -922,8 +1031,8 @@ export function CommandCenter({ token }: { token: string }) {
     }
   }, [units, selectedUnitId, citizens])
   // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
-  // Con un vehículo pulsado y ninguna ficha abierta, manda su despacho.
-  const hrView: HrView = escalation ? 'escalation' : selected ? 'person' : panel ?? (hrUnit || unitRun ? 'unit' : hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
+  // Con un despacho en marcha o un vehículo pulsado y ninguna ficha abierta, manda el despacho.
+  const hrView: HrView = escalation ? 'escalation' : reroute ? 'reroute' : selected ? 'person' : panel ?? (hrUnit || unitRun ? 'unit' : hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
   const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Plan operativo' : 'Personas'
   const panelKicker = selected ? 'Censo' : panel === 'incidents' ? 'Escenario' : panel === 'layers' ? 'Mapa' : panel === 'cop' ? 'Modelo' : panel === 'centers' ? 'Coordinación' : panel === 'alerts' ? 'Operación' : 'Censo'
   const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
@@ -953,12 +1062,99 @@ export function CommandCenter({ token }: { token: string }) {
     setSelectedId(null)
     setPanel(null)
   }
+  // El recorrido lee el estado del turno actual desde el temporizador de Driver, fuera de React:
+  // las refs le dan siempre la versión más reciente sin rehacer el tour en cada render.
+  const tourStateRef = useRef({ escalation, alerts, fireSettings, selectedId, silentIds, recommended, escalationUnits })
+  tourStateRef.current = { escalation, alerts, fireSettings, selectedId, silentIds, recommended, escalationUnits }
+  const launchRecommendedRef = useRef(launchRecommended)
+  launchRecommendedRef.current = launchRecommended
+  const startEscalationRef = useRef(startEscalation)
+  startEscalationRef.current = startEscalation
+  const tourWindShiftAtRef = useRef(0)
+  /** Primera casa sin respuesta de la campaña; si aún no la hay, la primera que está sonando o en la cola. */
+  const tourSilentPerson = () => {
+    const enrolled = citizensRef.current.filter(citizen => campaignRef.current.has(citizen.id) && !citizen.live)
+    return (enrolled.find(citizen => citizen.status === 'no_answer') ?? enrolled.find(citizen => citizen.status === 'ringing') ?? enrolled[0] ?? citizensRef.current[0])?.id ?? null
+  }
+  const tourCallCounts = () => {
+    const enrolled = citizensRef.current.filter(citizen => campaignRef.current.has(citizen.id))
+    const answered = enrolled.filter(citizen => citizen.call).length
+    const ringing = enrolled.filter(citizen => citizen.status === 'ringing').length
+    const silent = enrolled.filter(citizen => citizen.status === 'no_answer').length
+    return { total: enrolled.length, answered, ringing, silent }
+  }
   const launchTour = () => {
     setShowTourIntro(false)
-    setSelectedId(null)
-    setPanel(null)
+    // Al terminar, el visitante vuelve a encontrarse lo que tenía abierto. Lo que la demo ha
+    // puesto en marcha (llamadas, medios, viento) se queda: es el punto de partida para explorar.
+    const previous = { panel, selectedId, hrCard }
+    const personId = selectedId ?? filtered[0]?.id ?? citizens[0]?.id ?? null
     setTouring(true)
-    window.requestAnimationFrame(() => { void startDemoTour(() => setTouring(false)) })
+    void startDemoTour({
+      // flushSync: Driver mide el anclaje justo después, así que la vista tiene que estar ya en el DOM.
+      open: (view: TourView) => flushSync(() => {
+        setDrawingArea(false)
+        if (view.focus === 'risk' && tourStateRef.current.recommended) setFocusTarget({ lng: tourStateRef.current.recommended.risk.lng, lat: tourStateRef.current.recommended.risk.lat, zoom: 13.6 })
+        if (view.run === 'call-risk' && !campaignRef.current.size) launchRecommendedRef.current('risk')
+        if (view.run === 'shift-wind' && tourStateRef.current.fireSettings.windTowardDeg === INITIAL_WIND) {
+          tourWindShiftAtRef.current = Date.now()
+          shiftWind()
+        }
+        if (view.run === 'escalate' && !tourStateRef.current.escalation && tourStateRef.current.silentIds.length) startEscalationRef.current(tourStateRef.current.silentIds, 'recorrido')
+        setHrCard(view.happyRobot ? 'open' : 'hidden')
+        setSelectedId(view.person ? (view.silent ? tourSilentPerson() : personId) : null)
+        setPanel(view.person ? 'people' : view.panel ?? null)
+        if (view.panel === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
+      }),
+      tick: (stepId) => {
+        const state = tourStateRef.current
+        const calls = tourCallCounts()
+        const callsLine = calls.total ? `${calls.answered} de ${calls.total} han contestado · ${calls.ringing} sonando · ${calls.silent} sin respuesta` : null
+        switch (stepId) {
+          case 'personas':
+            return state.recommended ? `${selectAreaIds(citizensRef.current, state.recommended.risk).length} casas en la zona de riesgo recomendada` : null
+          case 'llamar':
+          case 'happyrobot':
+          case 'cola':
+            return callsLine ?? 'Lanzando las llamadas…'
+          case 'ficha': {
+            // Si la ficha abierta aún no es una casa sin respuesta y ya hay una, cambiamos a ella una vez.
+            const current = citizensRef.current.find(citizen => citizen.id === state.selectedId)
+            if (current?.status !== 'no_answer') {
+              const silent = citizensRef.current.find(citizen => campaignRef.current.has(citizen.id) && citizen.status === 'no_answer')
+              if (silent) { setSelectedId(silent.id); return `${silent.name} · sin respuesta tras dos intentos` }
+              return calls.total ? 'Esperando a la primera casa que no descuelgue…' : null
+            }
+            return `${current.name} · sin respuesta tras dos intentos · ${calls.silent} casas en rojo`
+          }
+          case 'escalada': {
+            if (!state.escalation) {
+              if (state.silentIds.length) { startEscalationRef.current(state.silentIds, 'recorrido'); return 'Arrancando el run…' }
+              const escalated = citizensRef.current.filter(citizen => citizen.escalation).length
+              return escalated ? `${escalated} casas con fuerzas de seguridad en camino` : (calls.total ? 'Aún no hay casas sin respuesta: espera a que acaben de sonar.' : 'Sin llamadas en marcha: vuelve al paso 3.')
+            }
+            const step = HR_ESCALATION_STEPS[state.escalation.step]
+            if (step) return `Paso ${state.escalation.step + 1} de ${HR_ESCALATION_STEPS.length} · ${step.label}`
+            return state.escalationUnits.length ? `Enviado · ${state.escalationUnits.map(unit => `${unit.callSign} ${unit.eta}`).join(' · ')}` : 'Enviado'
+          }
+          case 'viento': {
+            const since = tourWindShiftAtRef.current
+            const fresh = state.alerts.filter(alert => alert.ts >= since).length
+            return since ? `Viento hacia ${state.fireSettings.windTowardDeg}° · ${fresh} ${fresh === 1 ? 'aviso nuevo' : 'avisos nuevos'} desde el giro` : 'El viento ya estaba girado'
+          }
+          case 'plan':
+            return `${state.alerts.length} avisos · ${unitsRef.current.filter(unit => unit.mission !== 'patrol').length} medios con misión`
+          default:
+            return null
+        }
+      },
+      close: () => {
+        setTouring(false)
+        setPanel(previous.panel)
+        setSelectedId(previous.selectedId)
+        setHrCard(previous.hrCard)
+      },
+    })
   }
   const unreadAlerts = alerts.filter(alert => !readAlertIds.has(alert.id))
   const toasts = unreadAlerts.slice(0, 3)
@@ -973,7 +1169,7 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className={`map-app${panel || selected ? ' has-panel' : ''}${hrCard !== 'hidden' ? ' has-hr' : ''}`}>
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} recommended={recommended} units={units} selectedUnitId={selectedUnitId} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
+        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} plannedFires={paintedFires} fireStroke={fireStroke} drawingFire={drawingFire} onFireStroke={setFireStroke} onFireComplete={finishFireStroke} recommended={recommended} units={units} selectedUnitId={selectedUnitId} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
       <Intro brand={brandRef} />
       <header className="floating-brand">
@@ -986,6 +1182,7 @@ export function CommandCenter({ token }: { token: string }) {
       </header>
       <nav className="floating-actions" data-demo="tools" aria-label="Herramientas del mapa">
         <button type="button" data-demo="tool-area" aria-label="Dibujar zona de llamadas" aria-pressed={drawingArea} className={drawingArea ? 'active' : ''} onClick={beginArea}><Icon name="zone" /><span>Zona</span></button>
+        <button type="button" data-demo="tool-paint-fire" aria-label="Pintar un frente previsto" aria-pressed={drawingFire} className={`paint-fire ${drawingFire ? 'active' : ''}`} onClick={beginFirePaint}><Icon name="brush" /><span>Frente</span>{paintedFires.length > 0 && <small>{paintedFires.length}</small>}</button>
         <button ref={copButtonRef} type="button" data-demo="tool-fire" aria-label="Propagación" className={panel === 'cop' ? 'active' : ''} aria-expanded={panel === 'cop'} aria-controls="map-panel" onClick={() => togglePanel('cop')}><Icon name="fire" /><span>Propagación</span></button>
         <button ref={centersButtonRef} type="button" data-demo="tool-centers" aria-label="Centros y coordinación" className={panel === 'centers' ? 'active' : ''} aria-expanded={panel === 'centers'} aria-controls="map-panel" onClick={() => togglePanel('centers')}><Icon name="centers" /><span>Centros</span></button>
         <button ref={alertsButtonRef} type="button" data-demo="tool-alerts" aria-label={`Plan operativo · ${unreadAlerts.length} cambios nuevos`} className={panel === 'alerts' ? 'active' : ''} aria-expanded={panel === 'alerts'} aria-controls="map-panel" onClick={() => togglePanel('alerts')}><Icon name="alerts" /><span>Plan</span>{unreadAlerts.length > 0 && <small>{unreadAlerts.length}</small>}</button>
@@ -993,12 +1190,12 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={layersButtonRef} type="button" data-demo="tool-layers" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
         <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={toggleHappyRobot}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
-      <CallLog />
+      {/* La memoria compartida (src/CallLog.tsx) está oculta: se monta aquí cuando vuelva a la demo. */}
       {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setDrawingArea(false); setHrCard('hidden'); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
       {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label={panelTitle}>
         <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">{panelKicker}</p><h2>{panelTitle}</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>
         <div className="floating-panel-body" key={selected?.id ?? panel}>
-          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} data-demo="scenario" data-demo-id={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><span className="row-mark"><i className="incident-dot" aria-hidden="true" /></span><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} onEscalate={() => startEscalation([selected.id], selected.name)} escalating={Boolean(escalation)} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} units={units} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} selectedUnitId={selectedUnitId} unitsPaused={unitsPaused} plan={{ status: planStale ? 'stale' : planReview.reviewedAt ? 'active' : 'draft', revision: planReview.revision, reviewedAt: planReview.reviewedAt, recommendedCount: recommendedCounts?.risk ?? 0, affectedCount: recommendedCounts?.affected ?? 0, campaignCount: campaignIds.length, answered: counts.answered, silent: counts.silent, moving: counts.moving, waiting: counts.waiting, live: liveMode }} onToggleUnits={() => setUnitsPaused(value => !value)} onRetryUnit={retryUnit} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} onAdoptPlan={() => adoptCurrentPlan(true)} onStartRecommended={() => launchRecommended('risk')} onOpenCampaign={() => { setDrawingArea(false); setHrCard('hidden'); setPanel('campaign') }} /> : panel === 'layers' ? (
+          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} data-demo="scenario" data-demo-id={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><span className="row-mark"><i className="incident-dot" aria-hidden="true" /></span><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} onEscalate={() => startEscalation([selected.id], selected.name)} escalating={Boolean(escalation)} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} units={units} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} plannedCount={paintedFires.length} onPaintFire={beginFirePaint} onClearPlanned={clearPlannedFires} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} selectedUnitId={selectedUnitId} unitsPaused={unitsPaused} plan={{ status: planStale ? 'stale' : planReview.reviewedAt ? 'active' : 'draft', revision: planReview.revision, reviewedAt: planReview.reviewedAt, recommendedCount: recommendedCounts?.risk ?? 0, affectedCount: recommendedCounts?.affected ?? 0, campaignCount: campaignIds.length, answered: counts.answered, silent: counts.silent, moving: counts.moving, waiting: counts.waiting, live: liveMode }} onToggleUnits={() => setUnitsPaused(value => !value)} onRetryUnit={retryUnit} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} onAdoptPlan={() => adoptCurrentPlan(true)} onStartRecommended={() => launchRecommended('risk')} onOpenCampaign={() => { setDrawingArea(false); setHrCard('hidden'); setPanel('campaign') }} /> : panel === 'layers' ? (
             <div className="layer-content">
               <div className="map-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin contactar</span><span><i className="legend-point no_answer" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><span className="site-emoji" aria-hidden="true">{SITE_EMOJI.meeting}</span>Punto de encuentro</span><span><Icon name="units" />Medios</span><span><i className="legend-fire" />Huella térmica</span></div>
               {layerOptions(scenario).map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><LayerMark layer={layer.key} symbol={layer.symbol} /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" data-demo="layer-toggle" data-demo-id={layer.key} aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}
@@ -1016,17 +1213,18 @@ export function CommandCenter({ token }: { token: string }) {
           )}
         </div>
       </aside>}
-      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} unit={hrUnit} unitRun={unitRun} escalation={escalation ? { run: escalation, units: escalationUnits } : null} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => { setHrCard('hidden'); setSelectedUnitId(null) }} />}
+      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} unit={hrUnit} unitRun={unitRun} escalation={escalation ? { run: escalation, units: escalationUnits } : null} reroute={rerouteOutcome} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => setHrCard('hidden')} />}
       <section className={`campaign-dock ${liveMode && !DEMO_ONLY ? 'is-live' : ''}`} data-demo="campaign-dock" aria-label="Campaña de llamadas por zona">
         <button ref={campaignButtonRef} type="button" data-demo="campaign-settings" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
-        <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{DEMO_ONLY || !liveMode ? 'Simulación local' : 'Llamadas reales · HappyRobot'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>
+        <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingFire ? 'Pinta el frente previsto sobre el mapa' : drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{DEMO_ONLY || !liveMode ? 'Simulación local' : 'Llamadas reales · HappyRobot'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>
         {silentIds.length > 0 && <button type="button" data-demo="campaign-escalate" className="escalate-button dock-escalate" disabled={Boolean(escalation)} onClick={() => startEscalation(silentIds, `${silentIds.length} ${silentIds.length === 1 ? 'casa' : 'casas'} sin respuesta`)} aria-label={`Enviar fuerzas de seguridad a ${silentIds.length} sin respuesta`}><Icon name="alerts" /><span>{escalation ? escalation.step >= HR_ESCALATION_STEPS.length ? 'Enviado' : 'Escalando…' : `Fuerzas · ${silentIds.length} sin respuesta`}</span></button>}
         {!liveMode && campaignRunning && <button type="button" data-demo="campaign-pause" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} /></button>}
         {!drawingArea && !callArea && recommended && recommendedCounts && <>
           <button type="button" className="cop-secondary dock-secondary" data-demo="campaign-affected" onClick={() => launchRecommended('affected')} disabled={dispatching || !recommendedCounts.affected} aria-label={`Llamar a la zona posiblemente afectada · ${recommendedCounts.affected}`}><span>Zona afectada · {recommendedCounts.affected}</span></button>
           <button type="button" className="cop-secondary dock-secondary" data-demo="campaign-draw" onClick={beginArea} aria-label="Dibujar zona de llamadas a mano"><Icon name="zone" /></button>
         </>}
-        {drawingArea ? <button type="button" data-demo="campaign-cancel" className="cop-secondary dock-cancel" onClick={() => { setDrawingArea(false); updateArea(null) }}>Cancelar</button>
+        {drawingFire ? <button type="button" data-demo="paint-fire-cancel" className="cop-secondary dock-cancel" onClick={() => { setDrawingFire(false); setFireStroke(null) }}>Cancelar</button>
+          : drawingArea ? <button type="button" data-demo="campaign-cancel" className="cop-secondary dock-cancel" onClick={() => { setDrawingArea(false); updateArea(null) }}>Cancelar</button>
           : callArea ? <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={launchAreaCampaign} disabled={dispatching || (liveMode && !DEMO_ONLY ? !areaIds.length : !callableCount)}><Icon name="phone" /><span>{dispatching ? 'Enviando…' : liveMode && !DEMO_ONLY ? 'Llamar · REAL' : 'Llamar · demo'}</span></button>
           : recommended && recommendedCounts ? <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={() => launchRecommended('risk')} disabled={dispatching || !recommendedCounts.risk}><Icon name="phone" /><span>{dispatching ? 'Enviando…' : `Llamar zona de riesgo · ${recommendedCounts.risk}${liveMode && !DEMO_ONLY ? ' · REAL' : ''}`}</span></button>
           : <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={beginArea}><Icon name="zone" /><span>Dibujar zona</span></button>}
@@ -1067,7 +1265,7 @@ export function CommandCenter({ token }: { token: string }) {
         }} />}
         </section></div>
       </aside>}
-      {!showTourIntro && !touring && <button type="button" className="tour-replay" data-demo="tour-start" onClick={launchTour}>Guía</button>}
+      {!showTourIntro && !touring && <button type="button" className="tour-replay" data-demo="tour-start" onClick={launchTour}><Icon name="routes" />{TOUR_INTRO.replay}</button>}
       {showTourIntro && <TourIntro onStart={launchTour} onDismiss={() => { markTourSeen(); setShowTourIntro(false) }} />}
     </div>
   )
@@ -1109,6 +1307,8 @@ function CallBoard({ calls, skipped, onSelect }: { calls: CallRun[]; skipped: Di
 const ICONS = {
   zone: 'M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M12 7v10M7 12h10',
   fire: 'M13 3c1 5-4 5-2 9 1-2 3-2 4-4 3 3 4 5 4 7a7 7 0 0 1-14 0c0-4 4-6 8-12Z',
+  // Pincel: el gesto de pintar un frente que aún no arde.
+  brush: 'M20 3c-4 1-9 6-11 10l2 2c4-2 9-7 10-11l-1-1ZM9 13c-3 0-4 2-4 4 0 1-1 2-2 3 3 0 7-1 8-4l-2-3Z',
   centers: 'M9 3h6v6h6v6h-6v6H9v-6H3V9h6Z',
   people: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
   layers: 'm12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5',
@@ -1226,6 +1426,7 @@ function PersonDetail({ citizen, events, now, onClose, onDispatch, onEscalate, e
       <div className="person-title"><span className="person-avatar">{citizen.name.split(' ').slice(0, 2).map((word) => word[0]).join('')}</span><div><span className="eyebrow">{citizen.locality ?? citizen.id}</span><h2>{citizen.name}</h2></div></div>
       <div className="person-badges"><span className={`status-badge ${citizen.status}`}>{STATUS_LABEL[citizen.status]}</span>{citizen.resident === false && <span className="status-badge">Fuera del núcleo</span>}</div>
       {citizen.status === 'assistance' && <p className="need-note">{citizen.routeHoldReason}</p>}
+      {citizen.reroute && citizen.status !== 'safe' && <div className="reroute-done" data-demo="person-reroute"><strong>{citizen.reroute.toZoneId ? 'Destino cambiado por un frente previsto' : 'Parado: frente previsto en su camino'}</strong><span>{citizen.reroute.toZoneId ? `${zones.find(zone => zone.id === citizen.reroute?.fromZoneId)?.code ?? '?'} → ${zones.find(zone => zone.id === citizen.reroute?.toZoneId)?.code ?? '?'} · ${zones.find(zone => zone.id === citizen.reroute?.toZoneId)?.name ?? ''}` : citizen.routeHoldReason ?? 'HappyRobot recalcula la salida desde su posición actual.'}</span><small>Desde {formatClock(new Date(citizen.reroute.at))} · ruta nueva desde donde estaba, no desde casa</small></div>}
       {citizen.status === 'no_answer' && (
         <section className="detail-section escalate-section" aria-label="Escalada a fuerzas de seguridad">
           {citizen.escalation
@@ -1236,7 +1437,7 @@ function PersonDetail({ citizen, events, now, onClose, onDispatch, onEscalate, e
             </>}
         </section>
       )}
-      <section className="detail-section"><h3>Enviar medio</h3>
+      <section className="detail-section" data-demo="person-dispatch"><h3>Enviar medio</h3>
         <DispatchActions scope="dispatch-person" kinds={['ambulance', 'police', 'fire']} disabled={unitLimit} onDispatch={onDispatch} />
         {unitLimit && <p className="fine">Límite de {MAX_UNITS} envíos.</p>}
       </section>
