@@ -15,7 +15,7 @@ este.
 - **Estado actual (19 sep, mediodía):** alcance de producto cerrado en
   `docs/06-producto/02-escenario-incendio.md` (guiado individual de evacuación en incendios
   forestales; 300 vecinos simulados con personalidad que hablan con HappyRobot por texto,
-  decisión 002). Hay dos frontends (`web/dashboard`, `apps/command-center`) y dos datasets
+  decisión 002). El frontend es `apps/command-center` (decisión 003); quedan dos datasets
   (Zamora, Ávila): unificarlos es la decisión 003, pendiente del equipo. La base de
   conocimiento sigue siendo obligatoria.
 
@@ -27,8 +27,7 @@ api/                 Estado de crisis (FastAPI): única fuente de verdad, decide
 engine/              Motor de escenario: el incendio avanza y cambia la situación en runtime
 sim/                 Simulador de evacuación: elige el plan que pierde a menos gente
 data/                Dataset sintético (~120 casas / 300 personas, semilla fija) y validador
-web/dashboard        Puesto de mando (MapLibre + OSM)      } dos frontends; ver docs/07-decisiones/003
-apps/command-center  CECOP (Vite + React + Mapbox)         }
+apps/command-center  CECOP, el puesto de mando (Vite + React + Mapbox) — frontend único, decisión 003
 web/gps              Página del enlace que comparte la ubicación del vecino
 prompts/             Guiones del agente de HappyRobot y guion de la demo
 docs/                Base de conocimiento. OCHO carpetas, no crear más:

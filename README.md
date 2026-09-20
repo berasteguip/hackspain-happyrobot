@@ -33,8 +33,7 @@ engine/  motor de escenario: el incendio avanza y la situación cambia en runtim
   ▼
 api/     estado de crisis: única fuente de verdad. Decide prioridad, rutas, convoyes,
   │      patrullas y prioridad aérea. Cada cambio deja una entrada con motivo en el decision_log.
-  ├──────► web/dashboard/       puesto de mando (MapLibre + OSM): mapa, timeline, intervención
-  ├──────► apps/command-center/ CECOP (Vite + React + Mapbox), frontend de router
+  ├──────► apps/command-center/ CECOP, el puesto de mando (Vite + React + Mapbox), frontend de router: mapa, memoria compartida, intervención
   ├──────► web/gps/             la página del enlace que comparte la ubicación del vecino
   ├──────► sim/                 simula la evacuación completa y elige el plan que pierde a menos gente
   └──◄──── HappyRobot           conversaciones con los 300 vecinos, llamadas, SMS, Slack
@@ -43,7 +42,7 @@ prompts/ guiones del agente de HappyRobot (onboarding, rerruta, patrulla, extrac
 docs/    base de conocimiento (ver docs/README.md); docs/_inbox/ es material crudo
 ```
 
-Hay dos frontends (`web/dashboard` y `apps/command-center`). Unificarlos es una decisión pendiente
+El frontend es `apps/command-center` (decisión 003). Queda pendiente unificar los dos datasets
 del equipo; hasta entonces ambos consumen la misma `api/`.
 
 ## Arranque

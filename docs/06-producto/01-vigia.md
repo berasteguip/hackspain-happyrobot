@@ -11,7 +11,7 @@
 > refugios con capacidad, convoyes, lista de casas sin respuesta) está en
 > [`02-escenario-incendio.md`](02-escenario-incendio.md). Donde los dos discrepen, manda el 02.
 > Diferencias conocidas: dataset (aquí Ávila; en el 02 Zamora) y mapa (aquí Mapbox; en
-> `web/dashboard` MapLibre). Ambas están abiertas en [`../07-decisiones/`](../07-decisiones/README.md).
+> `web/dashboard`, ya retirado). Ambas están en [`../07-decisiones/`](../07-decisiones/README.md).
 
 ## Problema
 

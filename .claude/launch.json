@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "api",
+      "runtimeExecutable": "api/.venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--port", "8000", "--app-dir", "api"],
+      "port": 8000
+    },
+    {
       "name": "command-center",
       "runtimeExecutable": "sh",
       "runtimeArgs": ["-c", "cd apps/command-center && npx vite --port \"${PORT:-5173}\" --strictPort"],

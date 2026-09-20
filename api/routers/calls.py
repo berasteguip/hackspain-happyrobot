@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from datetime import timedelta
+
+from fastapi import APIRouter, HTTPException, Query
 
 import dispatcher
 import planner
@@ -21,6 +23,8 @@ from models import (
     CallDispatch,
     CallDispatchResponse,
     CallExtracted,
+    CallLogEntry,
+    CallLogWrite,
     CallObservation,
     CallOutcome,
     CallRun,
@@ -39,6 +43,7 @@ from models import (
     TriageLevel,
     VulnerablePerson,
     WriteResponse,
+    parse_iso,
     utcnow_iso,
 )
 from routers._common import write_response
@@ -563,6 +568,119 @@ def post_call_started(body: CallStarted) -> WriteResponse:
     return write_response(decisiones, event="call-started")
 
 
+# ======================================================================================
+# El log de llamadas: lo que una llamada aprende y las otras 299 pueden consultar
+# ======================================================================================
+#
+# La fuente para el agente es la tabla `call_log` de Twin: escribe y lee allí sin salir de la
+# plataforma, que es lo que hace que la lectura en mitad de una conversación sea barata.
+# Estos dos endpoints son el espejo para la pantalla: el mismo apunte llega aquí y sube
+# `state_version`, así que el puesto de mando lo ve aparecer por el long-poll de `/state/diff`
+# que ya usa, sin tocar Twin desde el navegador (contrato §0: el dashboard nunca lee de Twin).
+#
+# Si el webhook a esta API falla, el log sigue funcionando y solo se retrasa la pantalla. Ese es
+# el lado correcto del fallo.
+
+
+@router.post("/calls/log", response_model=WriteResponse)
+def post_call_log(payload: CallLogWrite) -> WriteResponse:
+    """Anota una afirmación. Pensado para llamarse **en cada interacción**, no solo al colgar.
+
+    `validity_min` es la alternativa cómoda a `valid_until`: el workflow dice «esto vale 20
+    minutos» y la fecha la calcula la API, que es quien tiene el reloj bueno.
+    """
+    ahora = utcnow_iso()
+    valid_until = payload.valid_until
+    if valid_until is None and payload.validity_min is not None:
+        base = parse_iso(ahora)
+        if base is not None:
+            valid_until = (base + timedelta(minutes=payload.validity_min)).isoformat()
+
+    # Si viene teléfono pero no persona, se resuelve contra el padrón que ya tenemos en memoria.
+    # Que NO resuelva es información: es un número que nadie tenía en la lista.
+    person_id = payload.person_id
+    if person_id is None and payload.phone:
+        encontrada = state.person_by_phone(payload.phone)
+        if encontrada is not None:
+            person_id = encontrada.id
+
+    entrada = CallLogEntry(
+        id=payload.id or state.next_id("log", width=6),
+        created_at=ahora,
+        topic=payload.topic,
+        locality_id=payload.locality_id,
+        road=payload.road,
+        place_text=payload.place_text,
+        person_id=person_id,
+        phone=payload.phone,
+        source_id=payload.source_id,
+        source_detail=payload.source_detail,
+        question=payload.question,
+        answer=payload.answer,
+        answered_at=ahora if payload.answer is not None else None,
+        valid_until=valid_until,
+        callback_to=payload.callback_to,
+        callback_at=payload.callback_at,
+        run_id=payload.run_id,
+        answer_run_id=payload.answer_run_id,
+        simulated=payload.simulated,
+    )
+    state.append_call_log(entrada)
+    log.info(
+        "log %s · %s · %s · %s",
+        entrada.id,
+        entrada.topic.value,
+        entrada.source_id,
+        entrada.question[:60],
+    )
+    # Anotar algo no es decidir nada: la lista de decisiones va vacía a propósito.
+    return write_response([], event="call-log")
+
+
+@router.get("/calls/log")
+def get_call_log(
+    limit: int = Query(50, ge=1, le=500),
+    topic: str | None = None,
+    locality_id: str | None = None,
+    road: str | None = None,
+    person_id: str | None = None,
+    only_open: bool = False,
+    vigentes: bool = False,
+) -> dict:
+    """Lo que se sabe, de lo más reciente a lo más antiguo.
+
+    `only_open` deja las dudas sin respuesta (la cola de lo que hay que preguntar) y `vigentes`
+    descarta lo que ya ha caducado. Se ordena por fiabilidad de la fuente y luego por reciente:
+    si dos vecinos se contradicen sobre la misma carretera, gana el que tenga mejor `rank` —el
+    orden lo aplica el agente con la tabla `source` de Twin; aquí es solo por fecha.
+    """
+    ahora = parse_iso(utcnow_iso())
+    filas = [e for _, e in state.call_log]
+    if topic:
+        filas = [e for e in filas if e.topic.value == topic]
+    if locality_id:
+        filas = [e for e in filas if e.locality_id == locality_id]
+    if road:
+        filas = [e for e in filas if e.road == road]
+    if person_id:
+        filas = [e for e in filas if e.person_id == person_id]
+    if only_open:
+        filas = [e for e in filas if e.answer is None]
+    if vigentes and ahora is not None:
+        def sigue_valiendo(e: CallLogEntry) -> bool:
+            if e.valid_until is None:
+                return True
+            hasta = parse_iso(e.valid_until)
+            return hasta is None or hasta > ahora
+
+        filas = [e for e in filas if sigue_valiendo(e)]
+
+    filas = list(reversed(filas))[:limit]
+    return {
+        "state_version": state.state_version,
+        "count": len(filas),
+        "entries": [e.model_dump(mode="json") for e in filas],
+    }
 def _close_call_run(outcome: CallOutcome, person: Person) -> None:
     """Cierra el intento que originó esta llamada, si lo encontramos.
 
