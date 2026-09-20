@@ -5,7 +5,7 @@ import { HappyRobotLogo, HappyRobotSymbol } from './HappyRobot'
 import { Wordmark } from './Logo'
 
 /** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
-const INTRO_MS = 4800
+const INTRO_MS = 3200
 import { fetchFirmsSpain } from './firms'
 import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
 import { anchorScenario } from './scenario'

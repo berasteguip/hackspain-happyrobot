@@ -608,6 +608,7 @@ Fuente: petición de producto 2026-09-20.
 ## Guía de onboarding — 2026-09-20
 
 Al terminar la entradilla, la primera visita (o `?guia=1`) muestra una tarjeta.
+La entradilla `router | HappyRobot` dura 3,2 segundos.
 El recorrido usa driver.js y señala **cinco controles**: el fuego y sus
 círculos de riesgo, un punto de persona, las herramientas, la barra de llamadas
 y Plan. No abre paneles ni lanza la campaña. El primer paso sale a la derecha
