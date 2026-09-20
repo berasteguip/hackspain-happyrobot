@@ -10,10 +10,18 @@
  *   disparar una llamada real desde el recorrido, y en producción no hace falta un segundo build.
  */
 const GUIDE_PARAM = 'guia'
+/** Alias aceptados: `?guia=1`, `?guide=1`, `?GUIDE=1`, `?demo=1`, `?tour=1` (y `true`/`on`/vacío). */
+const GUIDE_ALIASES = ['guia', 'guide', 'demo', 'tour']
 
 function readGuideMode(): boolean {
   if (typeof window === 'undefined') return false
-  return new URLSearchParams(window.location.search).get(GUIDE_PARAM) === '1'
+  const params = new URLSearchParams(window.location.search)
+  for (const [key, value] of params) {
+    if (!GUIDE_ALIASES.includes(key.toLowerCase())) continue
+    const v = value.trim().toLowerCase()
+    if (v === '' || v === '1' || v === 'true' || v === 'on' || v === 'yes') return true
+  }
+  return /(^|[#&])(guia|guide|demo|tour)(=1)?($|&)/i.test(window.location.hash)
 }
 
 /** `?guia=1` en la URL: recorrido guiado sobre el escenario sintético. */
