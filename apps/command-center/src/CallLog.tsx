@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ageLabel, fetchCallLog, isStale, sourceOf, TOPICS, zoneLabel } from './call-log'
+import { ageLabel, fetchCallLog, isStale, sourceOf } from './call-log'
 import type { CallLogEntry } from './call-log'
 
 type Filter = 'all' | 'open' | 'official'
@@ -108,14 +108,6 @@ export function CallLog() {
                 {unanswered
                   ? <p className="log-pending">Sin respuesta todavía</p>
                   : <p className="log-a">{entry.answer}</p>}
-                <div className="log-tags">
-                  {entry.road && <span className="log-tag road">{entry.road}</span>}
-                  {entry.locality_id && <span className="log-tag">{zoneLabel(entry.locality_id)}</span>}
-                  {entry.place_text && <span className="log-tag">{entry.place_text}</span>}
-                  {entry.topic && entry.topic !== 'other' && <span className="log-tag">{TOPICS[entry.topic] ?? entry.topic}</span>}
-                  {stale && <span className="log-tag stale">caducado</span>}
-                  {entry.simulated && <span className="log-tag sim">simulado</span>}
-                </div>
               </article>
             )
           })}

@@ -296,11 +296,5 @@ select:focus-visible, textarea:focus-visible { outline: 2px solid var(--move); o
 .log-q { margin: 3px 0 0; font-size: 10px; color: #92a6b4; line-height: 1.45; }
 .log-a { margin: 3px 0 0; font-size: 11.5px; color: var(--text); line-height: 1.45; }
 .log-pending { margin: 3px 0 0; font-size: 10px; color: var(--warn); }
-.log-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.log-tag { font: 9px ui-monospace, monospace; color: #92a6b4; background: #2a353d; border-radius: 3px; padding: 1px 5px; }
-.log-tag.road { color: #c8def0; }
-/* Se declara, no se esconde: igual que el origen de una ubicación se dice en la ficha. */
-.log-tag.sim { color: var(--warn); background: #d797701f; }
-.log-tag.stale { color: #d78080; background: #d780801f; }
 
 @media (max-height: 760px) { .call-log { max-height: 38dvh; } }
