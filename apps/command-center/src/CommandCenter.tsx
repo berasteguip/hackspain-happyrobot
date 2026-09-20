@@ -29,7 +29,7 @@ import {
   TRIAGE_COLOR, TRIAGE_LABEL,
   postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
-import { DEMO_ONLY } from './demoMode'
+import { DEMO_ONLY, GUIDE_MODE, exitGuideMode, guideUrl } from './demoMode'
 import { flushSync } from 'react-dom'
 import { TourIntro } from './TourIntro'
 import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
@@ -1284,6 +1284,9 @@ export function CommandCenter({ token }: { token: string }) {
   const tourOpenRef = useRef(tourOpen)
   tourOpenRef.current = tourOpen
   const launchTour = () => {
+    // Con censo real detrás, el recorrido no corre aquí: abre el mismo despliegue con `?guia=1`,
+    // que arranca en modo autocontenido sobre el escenario sintético.
+    if (!DEMO_ONLY) { window.location.assign(guideUrl()); return }
     setShowTourIntro(false)
     // Al terminar, el visitante vuelve a encontrarse lo que tenía abierto. Lo que ha puesto en
     // marcha (llamadas, medios, frentes) se queda: es el punto de partida para explorar.
@@ -1325,7 +1328,7 @@ export function CommandCenter({ token }: { token: string }) {
         <div className="brand-row" ref={brandRef}><Wordmark className="brand-logo" /></div>
         <span className="brand-divider" aria-hidden="true" />
         <button ref={incidentButtonRef} type="button" data-demo="incident-trigger" className="incident-trigger" aria-label="Cambiar escenario" aria-expanded={panel === 'incidents'} aria-controls="map-panel" onClick={() => togglePanel('incidents')}>
-          <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${!DEMO_ONLY && apiRoster ? 'connected' : ''}`} aria-hidden="true" />{DEMO_ONLY ? 'Demo fija · sin backend' : apiRoster ? 'API conectada' : 'Escenario de demo'} · {DEMO_ONLY || !apiRoster ? scenario.incident.area : placeName}</small></span><Icon name="chevron" />
+          <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${!DEMO_ONLY && apiRoster ? 'connected' : ''}`} aria-hidden="true" />{DEMO_ONLY ? GUIDE_MODE ? 'Recorrido guiado · escenario sintético' : 'Demo fija · sin backend' : apiRoster ? 'API conectada' : 'Escenario de demo'} · {DEMO_ONLY || !apiRoster ? scenario.incident.area : placeName}</small></span><Icon name="chevron" />
         </button>
         {beaconId && <span className={`beacon-chip ${beaconState}`} role="status">{beaconState === 'on' ? 'Compartiendo tu ubicación' : beaconState === 'denied' ? 'Ubicación denegada' : beaconState === 'error' ? 'Sin conexión con la API' : 'Leyendo tu ubicación…'}</span>}
       </header>
@@ -1416,6 +1419,7 @@ export function CommandCenter({ token }: { token: string }) {
         </section></div>
       </aside>}
       {!showTourIntro && !touring && <button type="button" className="tour-replay" data-demo="tour-start" onClick={launchTour}><Icon name="routes" />{TOUR_INTRO.replay}</button>}
+      {GUIDE_MODE && !showTourIntro && !touring && <button type="button" className="tour-replay tour-exit" data-demo="tour-exit" onClick={() => exitGuideMode()}>Salir de la guía</button>}
       {showTourIntro && <TourIntro onStart={launchTour} onDismiss={() => { markTourSeen(); setShowTourIntro(false) }} />}
     </div>
   )

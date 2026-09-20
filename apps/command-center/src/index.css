@@ -640,6 +640,7 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
 }
 .tour-replay svg { width: 14px; height: 14px; color: var(--tour-accent); }
 .tour-replay:hover { background: var(--tour-panel); }
+.tour-exit { left: 522px; opacity: 0.85; font-weight: 500; }
 .tour-intro {
   position: absolute; left: 372px; bottom: 86px; z-index: 6;
   width: min(380px, calc(100% - 400px)); padding: 0; border-radius: 18px;
@@ -843,6 +844,7 @@ body.tour-interlude .driver-overlay path { opacity: 0.8 !important; }
   .campaign-dock .campaign-pause { min-width: 32px; width: 32px; padding: 6px; }
   .map-toolbar { left: 12px; bottom: 108px; padding: 4px; border-radius: 8px; }
   .tour-replay { left: 12px; bottom: 176px; }
+  .tour-exit { left: 162px; }
   .tour-intro { left: 12px; right: 12px; top: 150px; bottom: auto; width: auto; max-width: none; gap: 8px; padding-left: 12px; }
   .call-log { left: 12px; right: 12px; width: auto; bottom: 108px; }
   .map-toolbar button, .view-options > summary { font-size: 10px; padding: 7px 10px; }

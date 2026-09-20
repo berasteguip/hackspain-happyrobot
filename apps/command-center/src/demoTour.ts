@@ -15,6 +15,7 @@
  * hecha; hasta entonces la línea en directo le dice qué falta.
  */
 import type { DriveStep, PopoverDOM } from 'driver.js'
+import { DEMO_ONLY, GUIDE_MODE } from './demoMode'
 
 export const TOUR_STORAGE_KEY = 'vigia-tour-seen'
 
@@ -225,8 +226,11 @@ let tourGeneration = 0
 
 export function shouldShowTourIntro() {
   if (typeof window === 'undefined') return false
+  if (GUIDE_MODE) return true
+  // Con censo real detrás (producción sin `?guia=1`) la intro no sale: el recorrido lanza llamadas
+  // y no puede correr sobre personas de verdad. El botón «Ver recorrido» lleva a la URL con guía.
+  if (!DEMO_ONLY) return false
   const params = new URLSearchParams(window.location.search)
-  if (params.get('guia') === '1') return true
   if (params.get('p')) return false
   try { return !window.localStorage.getItem(TOUR_STORAGE_KEY) } catch { return true }
 }
