@@ -462,3 +462,48 @@ def test_una_llamada_sin_nada_resenable_tambien_deja_motivo(client):
     client.post("/calls/observation", json={"PERSONA_ID": "p-004", "nivel": "verde"})
     otro = client.get("/people/p-004").json()["triage"]["reason"]
     assert otro and "confirma" not in otro
+
+
+def test_un_campo_ininteligible_no_tira_toda_la_observacion(client):
+    """Caso real del 20 sep 2026: el AI Extract devolvió `"llamas": "llamas"`.
+
+    Pydantic tumbaba la petición entera con un 422 y se perdía una observación que traía nivel
+    rojo, discrepancia y una nota diciendo que la persona veía llamas. Del otro lado de este
+    endpoint hay un modelo de lenguaje: puede poner cualquier cosa en cualquier campo, y eso no
+    puede costar la única información que tenemos de alguien en peligro.
+    """
+    client.post("/reset")
+    r = client.post(
+        "/calls/observation",
+        json={
+            "PERSONA_ID": "p-001",
+            "nivel": "rojo",
+            "llamas": "llamas",          # el nombre del campo en vez de un booleano
+            "duration_s": "un rato",     # y un número que no es un número
+            "discrepancia": "prior_bajo_obs_alta",
+            "confianza": "media",
+            "resultado": "cortada",
+            "nota_libre": "Afirmó ver llamas cercanas; el triaje quedó interrumpido.",
+        },
+    )
+    assert r.status_code == 200, "un campo ilegible no puede costar la observación entera"
+
+    triaje = client.get("/people/p-001").json()["triage"]
+    assert triaje["level"] == "red", "lo que SÍ se entendía se guarda"
+    assert triaje["flames"] is None, "lo que no se entendía se descarta, no se inventa"
+    assert "PEOR de lo que decía el mapa" in triaje["reason"]
+    assert "se cortó a medias" in triaje["reason"]
+
+
+def test_los_booleanos_del_extract_admiten_las_formas_razonables(client):
+    from models import CallObservation
+
+    assert CallObservation(llamas="true").flames is True
+    assert CallObservation(llamas="sí").flames is True
+    assert CallObservation(llamas=1).flames is True
+    assert CallObservation(llamas="false").flames is False
+    assert CallObservation(llamas="no").flames is False
+    assert CallObservation(llamas="cualquier cosa").flames is None
+    assert CallObservation(duration_s="96").duration_s == 96
+    assert CallObservation(duration_s="96.7").duration_s == 96
+    assert CallObservation(duration_s="un rato").duration_s is None
