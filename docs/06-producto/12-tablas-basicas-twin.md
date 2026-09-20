@@ -139,7 +139,8 @@ Cambios respecto al diseño del doc 07, y el porqué:
 | `asunto` en texto para buscar | `topic` cerrado + `road` / `locality_id` | Buscar «¿está cortada la ZA-P-2551?» por texto no funciona: nadie repite la frase. `question` se queda, pero para que lo lea un humano. |
 | `zona` texto | `locality_id` FK + `place_text` + `road` | Llave cuando el sitio existe, texto cuando no, y **`road` aparte**: una carretera no pertenece a un núcleo. La ZA-P-2434 es la salida de Sesnández *y* de Ferreruela; archivarla bajo una sola pierde el dato para la otra. |
 | `fuente` texto | `source_id` FK + `source_detail` | `source.label` es lo que el agente **pronuncia** al citar, y `source.rank` resuelve contradicciones con un `order by` en vez de un `CASE` repetido. |
-| `vigencia_min` | `valid_until` | Una fecha se indexa; minutos obligan a calcular en cada lectura. |
+| `vigencia_min` | `validity_min` + `source.default_validity_min` | Se mantiene en minutos, y no en fecha, porque **el nodo `Write to Twin` escribe valores, no expresiones**: no puede calcular `now() + interval`. La caducidad se evalúa en la lectura, y si el agente no dice nada, la hereda de la fuente. |
+| `resuelto` / `answered_at` | nada | El canvas solo sabe insertar y hacer upsert por PK: no hay camino para actualizar una fila desde un nodo. Así que el log es **append-only**: la duda y su respuesta son dos filas del mismo tema, y la lectura se queda con la mejor. Una columna que nadie puede escribir es peor que no tenerla. |
 
 ### La tabla de resumen por zona: de momento, no
 
