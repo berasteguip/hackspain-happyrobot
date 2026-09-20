@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { CommandMap } from './CommandMap'
+import { HappyRobotLogo } from './HappyRobot'
 import { Wordmark } from './Logo'
 
 /** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
-const INTRO_MS = 1500
+const INTRO_MS = 2400
 import { fetchFirmsSpain } from './firms'
 import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
 import type { FireScenario } from './scenario'
@@ -817,13 +818,18 @@ const LAYER_MARK: Partial<Record<keyof MapLayers, keyof typeof SITE_EMOJI>> = {
 }
 
 /**
- * Entradilla de apertura: al abrir, el logotipo aparece grande en el centro y viaja
- * hasta su sitio en la cabecera mientras el mapa se descubre por debajo.
+ * Entradilla de apertura: al abrir, el conjunto —nuestro logotipo, un separador y el de
+ * HappyRobot— aparece grande en el centro. Después el separador y HappyRobot se retiran,
+ * y el nuestro sigue solo hasta su sitio en la cabecera mientras el mapa se descubre.
  *
- * Lo que se mueve es un clon medido contra el logotipo real, así que aterriza encima
- * de él sea cual sea el tamaño de la pantalla —sin repetir posiciones en el CSS ni
- * desincronizarse con los puntos de ruptura— y se desvanece al final para que el
- * relevo entre el clon y el de verdad no se note.
+ * Lo que se mueve es un clon medido contra el logotipo real, así que aterriza encima de
+ * él sea cual sea el tamaño de la pantalla —sin repetir posiciones en el CSS ni
+ * desincronizarse con los puntos de ruptura— y se desvanece al final para que el relevo
+ * entre el clon y el de verdad no se note.
+ *
+ * La caja del clon es EXACTAMENTE la del logotipo de la cabecera: el separador y
+ * HappyRobot cuelgan fuera, en posición absoluta, para no ensancharla. Así el aterrizaje
+ * sigue siendo el mismo cálculo de antes, con ellos o sin ellos.
  */
 function Intro({ brand }: { brand: RefObject<HTMLDivElement | null> }) {
   // Quien pide menos movimiento entra directo al mapa: la entradilla ni se monta.
@@ -840,28 +846,50 @@ function Intro({ brand }: { brand: RefObject<HTMLDivElement | null> }) {
     box.style.width = `${home.width}px`
     box.style.height = `${home.height}px`
 
-    // Grande sin desbordar: 62 % del ancho, o el 22 % del alto si la pantalla es apaisada.
-    const scale = Math.min(window.innerWidth * 0.62 / home.width, window.innerHeight * 0.22 / home.height)
-    const start = `translate(${(window.innerWidth - home.width * scale) / 2 - home.left}px, ${(window.innerHeight - home.height * scale) / 2 - home.top}px) scale(${scale})`
+    // El conjunto es más ancho que su caja porque HappyRobot cuelga fuera: hay que medirlo
+    // ya colocado para centrarlo entero y que no se salga por la derecha.
+    const fin = box.lastElementChild?.getBoundingClientRect()
+    const ancho = fin ? fin.right - home.left : home.width
+
+    // Grande sin desbordar: 80 % del ancho, o el 24 % del alto si la pantalla es apaisada.
+    // El conjunto mide casi el triple que el logotipo solo, así que manda casi siempre el ancho.
+    const scale = Math.min(window.innerWidth * 0.8 / ancho, window.innerHeight * 0.24 / home.height)
+    const start = `translate(${(window.innerWidth - ancho * scale) / 2 - home.left}px, ${(window.innerHeight - home.height * scale) / 2 - home.top}px) scale(${scale})`
     // Se planta, viaja, descansa ya colocado y se retira: ese descanso es el que deja
     // ver que ha aterrizado, y el fundido final tapa el relevo con el logotipo real.
     const travel = box.animate([
       { opacity: 1, transform: start, easing: 'linear', offset: 0 },
-      { opacity: 1, transform: start, easing: 'cubic-bezier(.45,0,.15,1)', offset: 0.18 },
-      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.72 },
-      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.9 },
+      { opacity: 1, transform: start, easing: 'cubic-bezier(.45,0,.15,1)', offset: 0.36 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.78 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.92 },
       { opacity: 0, transform: 'none', offset: 1 },
     ], { duration: INTRO_MS, fill: 'both' })
 
+    // El separador y HappyRobot se van justo antes de que el nuestro arranque, con un
+    // desplazamiento mínimo a la izquierda para que parezca que le ceden el paso.
+    const salida = [
+      { opacity: 1, transform: 'none', offset: 0 },
+      { opacity: 1, transform: 'none', offset: 0.24 },
+      { opacity: 0, transform: 'translateX(-8px)', offset: 0.38 },
+      { opacity: 0, transform: 'translateX(-8px)', offset: 1 },
+    ]
+    const acompanan = [...box.querySelectorAll('[data-sale]')].map((el) =>
+      el.animate(salida, { duration: INTRO_MS, fill: 'both', easing: 'ease' }),
+    )
+
     travel.finished.then(() => setDone(true), () => {})
-    return () => travel.cancel()
+    return () => [travel, ...acompanan].forEach((a) => a.cancel())
   }, [brand])
 
   if (done) return null
   return (
     <>
       <div className="intro-veil" aria-hidden="true" />
-      <div className="intro-logo" ref={clone} aria-hidden="true"><Wordmark /></div>
+      <div className="intro-logo" ref={clone} aria-hidden="true">
+        <Wordmark />
+        <span className="intro-sep" data-sale />
+        <span className="intro-partner" data-sale><HappyRobotLogo /></span>
+      </div>
     </>
   )
 }

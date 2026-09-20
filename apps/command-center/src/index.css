@@ -10,7 +10,7 @@
   --safe: #8abca4;
   --warn: #d3ac78;
   --shadow: 0 8px 32px #0003, 0 1px 3px #0002;
-  --intro: 1500ms;
+  --intro: 2400ms;
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
@@ -34,7 +34,13 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .intro-veil { position: fixed; inset: 0; z-index: 40; background: var(--bg); pointer-events: none; animation: intro-veil var(--intro) cubic-bezier(.4, 0, .2, 1) both; }
 .intro-logo { position: fixed; z-index: 41; pointer-events: none; opacity: 0; transform-origin: top left; color: var(--text); }
 .intro-logo > svg { display: block; width: 100%; height: 100%; }
-@keyframes intro-veil { 0%, 30% { opacity: 1; } 78%, 100% { opacity: 0; } }
+/* El separador y HappyRobot cuelgan fuera de la caja del clon para no ensancharla: la caja
+   tiene que seguir siendo la del logotipo de la cabecera o el aterrizaje deja de cuadrar.
+   Van en porcentajes del propio clon, así que escalan con él sin cuentas aparte. */
+.intro-sep { position: absolute; left: 100%; top: 19%; height: 62%; width: 1px; margin-left: 20%; background: #ffffff45; }
+.intro-partner { position: absolute; left: 100%; top: 50%; height: 74%; margin-left: 40%; transform: translateY(-50%); color: var(--text); }
+.intro-partner > svg { display: block; height: 100%; width: auto; }
+@keyframes intro-veil { 0%, 40% { opacity: 1; } 80%, 100% { opacity: 0; } }
 
 .floating-brand, .floating-actions, .map-toolbar, .campaign-dock, .floating-panel { background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
 .floating-brand { position: absolute; left: 20px; top: 20px; display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 12px; z-index: 3; width: min(390px, 35vw); height: 58px; }

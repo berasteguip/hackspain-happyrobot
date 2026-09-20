@@ -27,6 +27,7 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Avisos', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
   assert.ok(html.includes('class="brand-logo"'), 'la cabecera lleva el logotipo')
   assert.ok(html.includes('aria-label="router"'), 'y se anuncia como router')
+  assert.ok(html.includes('intro-partner'), 'y la entradilla acredita a HappyRobot')
   assert.ok(html.includes('Simulación local'))
   assert.ok(html.includes('campaign-dock'))
   assert.ok(!html.includes('class="forecast-summary"'))
