@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { CommandMap } from './CommandMap'
-import { HappyRobotLogo } from './HappyRobot'
+import { HappyRobotLogo, HappyRobotSymbol } from './HappyRobot'
 import { Wordmark } from './Logo'
 
 /** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
@@ -30,6 +30,8 @@ import {
   postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
 import { focusPersonFromUrl, readMe } from './me'
+import { HappyRobotCard } from './HappyRobotCard'
+import type { HrCallsPulse, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
@@ -118,6 +120,17 @@ function layerOptions(scenario: FireScenario): { key: keyof MapLayers; name: str
 const INITIAL_WIND = 225
 const SHIFTED_WIND = 45
 const MAX_UNITS = 12
+/** Cómo dejó el operador la tarjeta de HappyRobot: se recuerda por navegador, como el token. */
+const HR_CARD_KEY = 'router.hrCard'
+type HrCardState = 'open' | 'collapsed' | 'hidden'
+function readHrCardState(): HrCardState {
+  try {
+    const saved = localStorage.getItem(HR_CARD_KEY)
+    return saved === 'collapsed' || saved === 'hidden' ? saved : 'open'
+  } catch {
+    return 'open'
+  }
+}
 function formatClock(date: Date) {
   return date.toLocaleTimeString('es-ES', { hour12: false })
 }
@@ -164,6 +177,11 @@ export function CommandCenter({ token }: { token: string }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
   const [panel, setPanel] = useState<'people' | 'layers' | 'cop' | 'centers' | 'alerts' | 'campaign' | 'incidents' | null>(null)
+  // La tarjeta «qué hace HappyRobot detrás»: abierta, plegada al cabecero u oculta.
+  const [hrCard, setHrCard] = useState<HrCardState>(readHrCardState)
+  useEffect(() => {
+    try { localStorage.setItem(HR_CARD_KEY, hrCard) } catch { /* sin almacenamiento: no se recuerda */ }
+  }, [hrCard])
   const [fireSettings, setFireSettings] = useState<FireSettings>({ windTowardDeg: INITIAL_WIND, windKmh: 20, spreadMPerMin: 8 })
   const [horizon, setHorizon] = useState(0)
   const [firePlaying, setFirePlaying] = useState(false)
@@ -730,6 +748,15 @@ export function CommandCenter({ token }: { token: string }) {
     setFocusTarget({ lng: center.lng, lat: center.lat })
     setLayers(previous => ({ ...previous, [center.kind === 'hospital' ? 'hospitals' : center.kind === 'health' ? 'healthCenters' : 'fireStations']: true }))
   }
+  // El pulso de la campaña para la tarjeta de HappyRobot: con la ráfaga viva manda el tablero de la
+  // API; en simulación local, los vecinos del círculo. Sin campaña, no hay pulso.
+  const hrCalls: HrCallsPulse | undefined = useMemo(() => {
+    if (liveBatch) return { total: liveCalls.length, open: liveCalls.filter(call => CALL_STATE_OPEN.includes(call.state)).length, answered: liveCalls.filter(call => call.state === 'answered').length }
+    if (!campaignIds.length) return undefined
+    return { total: campaignIds.length, open: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.status === 'ringing').length, answered: counts.answered }
+  }, [liveBatch, liveCalls, campaignIds.length, citizens, campaignSet, counts.answered])
+  // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
+  const hrView: HrView = selected ? 'person' : panel ?? (hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
   const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Avisos y medios' : 'Personas'
   const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
   const playFire = () => {
@@ -765,7 +792,7 @@ export function CommandCenter({ token }: { token: string }) {
   const brandRef = useRef<HTMLDivElement>(null)
 
   return (
-    <div className="map-app">
+    <div className={`map-app${panel || selected ? ' has-panel' : ''}${hrCard !== 'hidden' ? ' has-hr' : ''}`}>
       <main className="map-wrap" aria-label="Mapa de situación">
         <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} recommended={recommended} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
@@ -785,6 +812,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={alertsButtonRef} type="button" data-demo="tool-alerts" aria-label={`Avisos ${unreadAlerts.length}`} className={panel === 'alerts' ? 'active' : ''} aria-expanded={panel === 'alerts'} aria-controls="map-panel" onClick={() => togglePanel('alerts')}><Icon name="alerts" /><span>Avisos</span>{unreadAlerts.length > 0 && <small>{unreadAlerts.length}</small>}</button>
         <button ref={peopleButtonRef} type="button" data-demo="tool-people" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
         <button ref={layersButtonRef} type="button" data-demo="tool-layers" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
+        <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={() => setHrCard(value => value === 'hidden' ? 'open' : 'hidden')}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
       {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
       {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label={panelTitle}>
@@ -808,6 +836,7 @@ export function CommandCenter({ token }: { token: string }) {
           )}
         </div>
       </aside>}
+      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode} calls={hrCalls} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => setHrCard('hidden')} />}
       <section className={`campaign-dock ${liveMode ? 'is-live' : ''}`} aria-label="Campaña de llamadas por zona">
         <button ref={campaignButtonRef} type="button" data-demo="campaign-settings" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
         <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{liveMode ? 'Llamadas reales · HappyRobot' : 'Simulación local'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>

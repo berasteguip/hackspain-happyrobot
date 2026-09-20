@@ -30,6 +30,20 @@ const NOMBRE = [
   'M36.7812 17.2444V3.1272H38.8469V9.13825H45.4845V3.1272H47.56V17.2444H45.4845V10.9886H38.8469V17.2444H36.7812Z',
 ]
 
+/**
+ * Solo el símbolo, sin el nombre, para donde no cabe el logotipo entero: el botón de la barra de
+ * herramientas que enseña u oculta la tarjeta. Misma geometría, así que no hay dos marcas.
+ */
+export function HappyRobotSymbol({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 27.6 21.4" fill="currentColor" aria-hidden="true" focusable="false">
+      {SIMBOLO.map((d) => (
+        <path key={d.slice(0, 24)} d={d} />
+      ))}
+    </svg>
+  )
+}
+
 export function HappyRobotLogo({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 141 22" fill="currentColor" aria-hidden="true" focusable="false">

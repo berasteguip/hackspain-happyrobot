@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import type { GeoJSONSource } from 'mapbox-gl'
@@ -245,6 +246,20 @@ function fireUnitPinMarker() {
     context.fill()
   }
   return context.getImageData(0, 0, 96, 136)
+}
+
+/** Un control de Mapbox vacío: reserva su hueco en la esquina y React pinta dentro por portal. */
+class PortalControl implements mapboxgl.IControl {
+  container = document.createElement('div')
+  constructor(className: string) {
+    this.container.className = `mapboxgl-ctrl mapboxgl-ctrl-group ${className}`
+  }
+  onAdd() {
+    return this.container
+  }
+  onRemove() {
+    this.container.remove()
+  }
 }
 
 function overviewBounds(cells: FeatureCollection<Polygon>, centers: ResponseCenter[], zones: SafeZone[], fires: FireSpot[]) {
@@ -529,7 +544,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     return () => { markers.forEach(marker => marker.remove()); markers.clear() }
   }, [])
   const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended })
-  const [satellite, setSatellite] = useState(false)
+  // El menú de encuadre vive dentro de un control de Mapbox (encima del zoom); React lo pinta ahí por portal.
+  const [framingHost, setFramingHost] = useState<HTMLElement | null>(null)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
@@ -549,9 +565,14 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     mapRef.current = map
     const popup = new mapboxgl.Popup({ closeButton: true, offset: 10, className: 'router-popup', maxWidth: '300px' })
     popupRef.current = popup
+    // En las posiciones «bottom» Mapbox inserta cada control nuevo por encima del anterior:
+    // el encuadre se añade después del zoom para quedar justo encima de él.
     map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), 'bottom-right')
+    const framing = new PortalControl('framing-control')
+    map.addControl(framing, 'bottom-right')
+    setFramingHost(framing.container)
     map.addControl(new mapboxgl.ScaleControl({ maxWidth: 110, unit: 'metric' }), 'bottom-left')
-    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-left')
     map.on('error', (event) => setMapError(event.error.message || 'No se ha podido cargar la cartografía.'))
     let flame = 0
     const rotatePolice = () => { if (map.getLayer('police-car')) map.setLayoutProperty('police-car', 'icon-image', policeCarImage(map.getBearing())) }
@@ -559,10 +580,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
 
     const onLoad = () => {
       const current = dataRef.current
+      // Las capas propias se insertan bajo la primera capa de rótulos del estilo: los nombres de calle quedan encima.
       const firstLabel = map.getStyle().layers.find((layer) => layer.type === 'symbol')?.id
-      map.addSource('satellite-base', { type: 'raster', url: 'mapbox://mapbox.satellite', tileSize: 256 })
-      map.addLayer({ id: 'satellite-base', type: 'raster', source: 'satellite-base', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.12, 'raster-brightness-max': 0.95 } }, firstLabel)
-
       map.addSource('fire-heat', { type: 'geojson', data: fireHeatPoints(fireCells, current.forecast, current.horizon) })
       map.addLayer({
         id: 'fire-smoke', type: 'heatmap', source: 'fire-heat',
@@ -915,11 +934,6 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     mapRef.current?.flyTo({ center: [focusTarget.lng, focusTarget.lat], zoom: focusTarget.zoom ?? 14, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: reduced ? 0 : 850 })
   }, [loaded, focusTarget])
 
-  useEffect(() => {
-    const map = mapRef.current
-    if (loaded && map?.getLayer('satellite-base')) map.setLayoutProperty('satellite-base', 'visibility', satellite ? 'visible' : 'none')
-  }, [satellite, loaded])
-
   const locate = () => {
     const selected = citizens.find((citizen) => citizen.id === selectedId)
     if (selected) mapRef.current?.flyTo({ center: [selected.lng, selected.lat], zoom: 14, duration: 850 })
@@ -929,20 +943,20 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     <>
       <div ref={rootRef} data-demo="map" className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
       <WindOverlay mapRef={mapRef} enabled={showWind} directionDeg={windDirection} windKmh={windKmh} />
-      <div className="map-toolbar" role="group" aria-label="Vista cartográfica">
-        <button type="button" data-demo="basemap-standard" className={!satellite ? 'active' : ''} aria-pressed={!satellite} onClick={() => setSatellite(false)}>Mapa</button>
-        <button type="button" data-demo="basemap-satellite" className={satellite ? 'active' : ''} aria-pressed={satellite} onClick={() => setSatellite(true)}>Satélite</button>
-        <span className="toolbar-divider" />
+      {framingHost && createPortal(
         <details className="view-options" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
-          <summary data-demo="framing-menu">Encuadre</summary>
+          <summary data-demo="framing-menu" aria-label="Encuadre" title="Encuadre">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-4 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+          </summary>
           <div onClick={event => { if ((event.target as HTMLElement).closest('button')) { const details = event.currentTarget.closest('details'); if (details) { details.open = false; details.querySelector('summary')?.focus() } } }}>
             <button type="button" data-demo="framing-fire" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
             {selectedId && <button type="button" data-demo="framing-person" onClick={locate}>Centrar persona</button>}
             {route && <button type="button" data-demo="framing-route" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
             <button type="button" data-demo="framing-all" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
           </div>
-        </details>
-      </div>
+        </details>,
+        framingHost,
+      )}
       {!loaded && !mapError && <div className="map-message" role="status">Cargando cartografía…</div>}
       {mapError && <div className="map-message error" role="alert"><strong>Cartografía incompleta</strong><span>{mapError}</span><button type="button" data-demo="map-error-dismiss" onClick={() => setMapError('')}>Cerrar aviso</button></div>}
     </>
