@@ -295,8 +295,8 @@ export function CommandCenter({ token }: { token: string }) {
       const dt = nextElapsed - previousElapsed
       previousElapsed = nextElapsed
       elapsedRef.current = nextElapsed
-      const advanced = advanceProtocol(citizensRef.current, nextElapsed, [], campaignRef.current)
       const risk = forecastRef.current
+      const advanced = advanceProtocol(citizensRef.current, nextElapsed, [], campaignRef.current, risk)
       const ready = advanced.citizens
       const moved = moveEvacuees(ready, routesRef.current, scenario.safeZones, dt).map((next, index) => {
         const previous = ready[index]
