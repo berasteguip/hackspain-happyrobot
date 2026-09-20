@@ -1,14 +1,14 @@
 /**
- * Puente entre Vigía y la API de estado de crisis (`api/`).
+ * Puente entre router y la API de estado de crisis (`api/`).
  *
- * Vigía nació autocontenido: su población, sus llamadas y su reloj viven en el navegador
+ * router nació autocontenido: su población, sus llamadas y su reloj viven en el navegador
  * (`scenario.ts` + `simulation.ts`). Eso sigue funcionando y es lo que se enseña sin backend.
  * Este módulo añade el otro modo, el que importa para el reto: **rodear un círculo y que
  * suenen teléfonos de verdad**. El navegador no llama a HappyRobot — no puede y no debe:
  * la clave viviría en el código fuente de la página. Manda el círculo a nuestra API y es
  * ella quien dispara los runs.
  *
- * Si la API no responde, todo esto devuelve `null` y Vigía se queda en su modo local. Una
+ * Si la API no responde, todo esto devuelve `null` y router se queda en su modo local. Una
  * demo no se cae porque un backend no esté levantado.
  */
 
@@ -16,7 +16,10 @@ import type { CallStateName, TriageLevel } from './types'
 
 export type { CallStateName, TriageLevel }
 
-const KEY = 'vigia.operatorKey'
+const KEY = 'router.operatorKey'
+
+/** Igual que con el token de Mapbox: la clave de antes del cambio de nombre se sigue leyendo. */
+const KEY_ANTERIOR = 'vigia.operatorKey'
 
 export type RosterEntry = {
   id: string
@@ -115,7 +118,7 @@ export function readOperatorKey(): string {
   const env = import.meta.env.VITE_OPERATOR_KEY as string | undefined
   if (env && env.trim()) return env.trim()
   try {
-    return localStorage.getItem(KEY)?.trim() || ''
+    return (localStorage.getItem(KEY) ?? localStorage.getItem(KEY_ANTERIOR))?.trim() || ''
   } catch {
     return ''
   }
@@ -235,7 +238,7 @@ export async function postPosition(personId: string, lat: number, lon: number, a
 /**
  * El gesto del mando: este círculo, estas llamadas.
  *
- * Se manda el CÍRCULO, no la lista de ids que Vigía calculó. Así la API decide con su propio
+ * Se manda el CÍRCULO, no la lista de ids que router calculó. Así la API decide con su propio
  * estado —que es el que puede haber cambiado hace dos segundos por un GPS entrante— y no con
  * la foto que tenía el navegador. Si las dos listas no coinciden, la buena es la del backend:
  * es quien va a marcar.

@@ -6,32 +6,14 @@
  * (o tendrá) su propio diagrama; lo común es el cabecero con la marca, la fila de contexto
  * («detrás de qué ficha estás mirando»), el hueco del diagrama y el pie con el workflow.
  *
- * Vocabulario, etiquetas y qué cubre cada ficha: `happyrobot.ts`. Aquí solo componentes.
+ * Vocabulario, etiquetas y qué cubre cada ficha: `hrModel.ts`. La marca es ajena y vive en
+ * `HappyRobot.tsx`. Aquí solo componentes.
  */
 
 import type { ReactNode } from 'react'
-import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_VIEWS } from './happyrobot'
-import type { HrCallNode, HrChainLink, HrDiagramProps, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrView } from './happyrobot'
-
-// --------------------------------------------------------------------------- marca
-
-/**
- * La marca de HappyRobot redibujada a mano como trazo (dos cintas paralelas: vertical, diagonal,
- * vertical). Aproximación del logotipo oficial para poder teñirla con `currentColor` en fondo
- * oscuro; si el equipo consigue el SVG oficial, se sustituye aquí y todo lo demás sigue igual.
- */
-export function HappyRobotMark({ className = 'hr-mark' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 52 40" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="butt" strokeLinejoin="round" aria-hidden="true" focusable="false">
-      <path d="M6 0V9C6 18 21 22 21 31V40" />
-      <path d="M31 0V9C31 18 46 22 46 31V40" />
-    </svg>
-  )
-}
-
-export function HappyRobotLogo() {
-  return <span className="hr-logo"><HappyRobotMark /><strong>HappyRobot</strong></span>
-}
+import { HappyRobotLogo } from './HappyRobot'
+import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_VIEWS } from './hrModel'
+import type { HrCallNode, HrChainLink, HrDiagramProps, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrView } from './hrModel'
 
 // --------------------------------------------------------------------------- primitivas del diagrama
 
@@ -212,7 +194,7 @@ export function HappyRobotCard({ view, connected, live, calls, collapsed, onTogg
     <aside className={`hr-card ${collapsed ? 'is-collapsed' : ''}`} data-demo="hr-card" aria-label="Qué hace HappyRobot">
       <header className="hr-card-head">
         <button type="button" className="hr-card-brand" data-demo="hr-collapse" aria-expanded={!collapsed} aria-controls="hr-card-content" onClick={onToggleCollapse}>
-          <HappyRobotLogo />
+          <HappyRobotLogo className="hr-logo" />
           <span className="hr-status" data-state={status.key} role="status"><i aria-hidden="true" />{status.label}</span>
           <svg className={`hr-chevron ${collapsed ? 'is-collapsed' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m8 10 4 4 4-4" /></svg>
         </button>

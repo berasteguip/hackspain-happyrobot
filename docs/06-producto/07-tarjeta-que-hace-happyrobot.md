@@ -18,7 +18,7 @@
 
 ## Dónde vive
 
-`apps/command-center/src/HappyRobotCard.tsx` (componentes) y `src/happyrobot.ts` (vocabulario:
+`apps/command-center/src/HappyRobotCard.tsx` (componentes) y `src/hrModel.ts` (vocabulario:
 workflow desplegado, tipos de nodo y estado, cobertura por ficha). Estilos en `src/index.css`,
 bloque `.hr-*`.
 
@@ -42,10 +42,12 @@ bloque `.hr-*`.
 responde), `API conectada` (responde `/api/roster`), `Llamadas reales` (además «Llamar de verdad»
 está encendido; late en ámbar). Es lo primero que se lee y es lo que separa demo de ejecución.
 
-**Marca.** El símbolo está redibujado a mano como trazo SVG (dos cintas paralelas) y se tiñe con
-`currentColor`, así que sirve en negro dentro de la tarjeta y en el color de la barra del CECOP.
-Es una aproximación del logotipo oficial; si el equipo consigue el SVG oficial, se sustituye en
-`HappyRobotMark` y nada más cambia.
+**Marca.** Es **marca ajena** y vive en un solo fichero, `src/HappyRobot.tsx`, con la geometría
+del SVG que sirve happyrobot.ai: `HappyRobotLogo` (símbolo + nombre) en el cabecero de la tarjeta
+y en la entradilla, y `HappyRobotSymbol` (solo el símbolo) en el botón de la barra donde no cabe
+el logotipo entero. Una sola tinta heredada de `currentColor`, así que vale en claro y en oscuro.
+Si el equipo consigue su archivo oficial se sustituye ese fichero y nada más cambia; **no se
+redibuja la marca en ningún otro sitio**.
 
 **La tarjeta va en claro.** Es la única superficie clara de un CECOP oscuro, y eso es
 deliberado: lo que se ve dentro no es el centro de mando, es HappyRobot. El cuerpo reproduce el
@@ -156,7 +158,7 @@ de la misma tarjeta. Una segunda tarjeta rompería la promesa de que lo blanco e
 
 Pasos, todos en `apps/command-center/src`:
 
-1. **Declara el caso** en `HrView` (`happyrobot.ts`) y añade su entrada a `HR_VIEWS` con
+1. **Declara el caso** en `HrView` (`hrModel.ts`) y añade su entrada a `HR_VIEWS` con
    `title`, `summary` y `coverage` (`real` / `partial` / `planned` / `none`). La cobertura es un
    compromiso: se marca lo que de verdad ejecuta hoy, no lo que va a ejecutar.
 2. **Modela el flujo como datos**, no como JSX: una constante con los nodos (`id`, `kind`,

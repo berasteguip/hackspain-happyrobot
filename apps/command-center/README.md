@@ -1,19 +1,39 @@
-# Vigía — centro de mando
+# router — centro de mando
 
 Frontend del CECOP para el caso de incendios forestales. Mapa Mapbox con focos,
 zonas seguras y población en tránsito (simulada + consentimiento real).
 
 ## Arranque
 
-1. Crea un token público en https://account.mapbox.com/access-tokens/
-2. Opcional: copia `.env.example` a `.env` y pon `VITE_MAPBOX_TOKEN=pk....`
-3. Si no hay `.env`, la app pide el token al abrir y lo guarda en el navegador.
-
 ```bash
 cd apps/command-center
 npm install
 npm run dev
 ```
+
+Arranca y pinta el mapa sin configurar nada: la app lleva un token público de Mapbox
+escrito en `src/token.ts`. **Ese token es de la cuenta personal de alguien del equipo**,
+así que su consumo lo paga esa cuenta. Para tu desarrollo y para el despliegue, pon el
+tuyo: tiene prioridad sobre el del código.
+
+```bash
+cp .env.example .env          # y pega dentro tu VITE_MAPBOX_TOKEN=pk....
+```
+
+El token lo creas en https://account.mapbox.com/access-tokens/. `.env` está en el
+`.gitignore`, así que no viaja al repo, y Vite lo incrusta en el bundle al compilar.
+
+### En el despliegue
+
+`Dockerfile` declara `ARG VITE_MAPBOX_TOKEN`, así que basta con crear la variable
+`VITE_MAPBOX_TOKEN` en el servicio de Railway: llega a la etapa de build, queda dentro del
+bundle y sustituye al que viaja en el código. Sin ella el despliegue sale con el token
+personal de `src/token.ts`, que funciona pero factura a quien no toca.
+
+Un token `pk.` es público por diseño: cualquiera puede leerlo del JavaScript de la página.
+No se protege escondiéndolo, se protege **restringiéndolo por URL** en el panel de Mapbox
+(añade ahí el dominio de Railway y `localhost`). Por eso nunca hay que usar un `sk.`, que
+sí es secreto.
 
 - Centro de mando: http://localhost:5173
 - Página de consentimiento del ciudadano: http://localhost:5173/track

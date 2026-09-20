@@ -12,7 +12,7 @@ const CRISIS_PATHS = ['/api', '/calls', '/positions', '/people', '/instructions'
 
 function locationApi(): Plugin {
   return {
-    name: 'vigia-location-api',
+    name: 'router-location-api',
     configureServer(server) {
       if (CRISIS_API) return
       server.middlewares.use('/api/locations', (req, res, next) => {

@@ -4,8 +4,8 @@
     {
       "name": "command-center",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd apps/command-center && npx vite --port \"${PORT:-5176}\" --strictPort"],
-      "port": 5176,
+      "runtimeArgs": ["-c", "cd apps/command-center && npx vite --port \"${PORT:-5173}\" --strictPort"],
+      "port": 5173,
       "autoPort": true
     }
   ]

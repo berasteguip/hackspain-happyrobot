@@ -15,7 +15,7 @@ DASH_PORT   ?= 8080
 GPS_PORT    ?= 8081
 
 .DEFAULT_GOAL := help
-.PHONY: help check env install api engine dashboard gps data sim test demo ensayo reset vigia stop clean
+.PHONY: help check env install api engine dashboard gps data sim test demo ensayo reset router stop clean
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -62,7 +62,7 @@ data: ## Regenera el dataset sintetico y lo valida
 	cd data && .venv/bin/python generate.py --scenario $(SCENARIO) --seed $(SEED) --houses $(HOUSES) --out scenarios/$(SCENARIO).json
 	cd data && .venv/bin/python validate.py scenarios/$(SCENARIO).json
 
-vigia: ## Compila Vigia (la API lo sirve en / cuando existe apps/command-center/dist)
+router: ## Compila router (la API lo sirve en / cuando existe apps/command-center/dist)
 	cd apps/command-center && npm ci && npm run build
 
 ensayo: ## Arranca la API con el banco de pruebas de la Complutense (telefonos REALES del equipo)
