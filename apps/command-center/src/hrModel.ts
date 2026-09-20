@@ -172,7 +172,7 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   campaign: { title: 'Campaña', summary: 'El círculo va a la API y ella dispara un run por persona. Con «Llamar de verdad» apagado, todo es simulación local.', coverage: 'partial' },
   people: { title: 'Personas', summary: 'El color de cada persona es el extract que el agente postea al colgar. Sin llamada atendida, no hay color.', coverage: 'partial' },
   person: { title: 'Ficha de persona', summary: 'Triaje, motivo y hora salen del extract. Las rutas las calcula Mapbox, no HappyRobot.', coverage: 'partial' },
-  alerts: { title: 'Avisos y medios', summary: 'Avisar a la patrulla sería otro workflow disparado por webhook al escalar una casa sin respuesta. Hoy los medios son simulados.', coverage: 'planned' },
+  alerts: { title: 'Plan operativo', summary: 'Avisar a la patrulla sería otro workflow disparado por webhook al escalar una casa sin respuesta. Hoy los medios son simulados.', coverage: 'planned' },
   centers: { title: 'Centros y coordinación', summary: 'El preaviso al hospital o a bomberos saldría por un agente de voz o SMS de HappyRobot. Hoy es un borrador local.', coverage: 'planned' },
   cop: { title: 'Propagación y viento', summary: 'Un giro de viento reasigna salidas y la API dispararía rellamadas con la instrucción nueva. Hoy no conecta.', coverage: 'planned' },
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },

@@ -134,47 +134,133 @@ export function DispatchActions({ kinds, disabled, onDispatch, scope = 'dispatch
   return <div className="dispatch-actions">{kinds.map(kind => <button type="button" key={kind} data-demo={scope} data-demo-id={kind} className="dispatch-action" disabled={disabled} onClick={() => onDispatch(kind)}><UnitMark kind={kind} /><span>{UNIT_LABEL[kind]}</span></button>)}</div>
 }
 
-export function AlertsPanel({ alerts, units, selectedUnitId, unitsPaused, onToggleUnits, onRetryUnit, onAction, onDispatch, onFocus, onFocusUnit }: {
+type OperationalPlanSnapshot = {
+  status: 'draft' | 'active' | 'stale'
+  revision: number
+  reviewedAt: number
+  recommendedCount: number
+  affectedCount: number
+  campaignCount: number
+  answered: number
+  silent: number
+  moving: number
+  waiting: number
+  live: boolean
+}
+
+export function AlertsPanel({ alerts, units, selectedUnitId, unitsPaused, plan, onToggleUnits, onRetryUnit, onAction, onDispatch, onFocus, onFocusUnit, onAdoptPlan, onStartRecommended, onOpenCampaign }: {
   alerts: CommandAlert[]
   units: DispatchUnit[]
   selectedUnitId: string | null
   unitsPaused: boolean
+  plan: OperationalPlanSnapshot
   onToggleUnits: () => void
   onRetryUnit: (id: string) => void
   onAction: (alert: CommandAlert, action: AlertAction) => void
   onDispatch: (alert: CommandAlert, kind: UnitKind) => void
   onFocus: (alert: CommandAlert) => void
   onFocusUnit: (id: string) => void
+  onAdoptPlan: () => void
+  onStartRecommended: () => void
+  onOpenCampaign: () => void
 }) {
   const sendable = alerts.filter(alert => alert.focus || alert.citizenIds.length > 0)
   const [sendId, setSendId] = useState(sendable[0]?.id)
   const send = sendable.find(alert => alert.id === sendId) ?? sendable[0]
   const selectedUnit = units.find(unit => unit.id === selectedUnitId)
+  const decisive = [...alerts].sort((a, b) => {
+    const rank = { critical: 3, warning: 2, info: 1 }
+    return rank[b.severity] - rank[a.severity] || b.ts - a.ts
+  }).slice(0, 3)
+  const priority = decisive[0]
+  const assignedUnits = units.filter(unit => unit.mission === 'dispatch').length
+  const ambulanceReserve = Math.max(0, units.filter(unit => unit.kind === 'ambulance' && unit.mission === 'patrol').length - 1)
+  const priorityTitle = plan.status === 'stale'
+    ? 'Revisar el plan por el cambio de escenario'
+    : priority?.title ?? (plan.campaignCount ? 'Cerrar los casos pendientes de la campaña' : `Contactar con ${plan.recommendedCount} personas en zona de riesgo`)
+  const priorityDetail = plan.status === 'stale'
+    ? `La proyección actual alcanza a ${plan.affectedCount} personas. El plan anterior queda pendiente de revisión.`
+    : priority?.detail || (plan.campaignCount ? `${plan.silent} sin respuesta · ${plan.waiting} sin ruta.` : 'Todavía no hay campaña activa.')
+  const primaryAction = plan.status === 'stale'
+    ? { label: 'Adoptar plan actualizado', run: onAdoptPlan }
+    : plan.campaignCount === 0 && plan.recommendedCount > 0
+      ? { label: `Llamar zona de riesgo · ${plan.recommendedCount}`, run: onStartRecommended }
+      : priority?.action
+        ? { label: ALERT_ACTION_LABEL[priority.action], run: () => onAction(priority, priority.action!) }
+        : { label: 'Ver campaña', run: onOpenCampaign }
+  const planLabel = plan.status === 'stale' ? 'Revisión requerida' : plan.status === 'active' ? 'En ejecución' : 'Borrador'
+  const planTime = plan.reviewedAt ? new Date(plan.reviewedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : 'sin activar'
+
   return <div className="cop-content">
-    <div className="unit-fleet-toolbar"><span className="eyebrow">Medios de demostración</span><button type="button" data-demo="units-pause" className="cop-secondary" aria-pressed={unitsPaused} onClick={onToggleUnits}>{unitsPaused ? 'Reanudar medios' : 'Pausar medios'}</button></div>
-    <p className="fine">{units.filter(unit => unit.mission === 'patrol').length} sin asignar · {units.filter(unit => unit.mission === 'dispatch').length} asignados. {unitsPaused ? 'Movimiento en pausa.' : 'Patrullaje simulado por calles.'}</p>
+    <section className={`plan-hero ${plan.status}`} aria-labelledby="plan-priority">
+      <div className="plan-status-row"><span>Plan {plan.revision}</span><strong>{planLabel}</strong></div>
+      <p className="plan-kicker">Prioridad actual</p>
+      <h3 id="plan-priority">{priorityTitle}</h3>
+      <p>{priorityDetail}</p>
+      <button type="button" data-demo="plan-primary" className="cop-primary" onClick={primaryAction.run}>{primaryAction.label}</button>
+      <small>Responsable: operador CECOP · ahora</small>
+    </section>
+
+    <section className="plan-section" aria-labelledby="plan-signals">
+      <div className="plan-section-heading"><h3 id="plan-signals">Señales decisivas</h3><span>{decisive.length}/{alerts.length}</span></div>
+      {decisive.length ? <ol className="decision-signals">{decisive.map(alert => <li key={alert.id}>
+        <button type="button" onClick={() => { setSendId(alert.id); onFocus(alert) }}><i className={alert.severity} aria-hidden="true" /><span><strong>{alert.title}</strong><small>{alert.detail}</small></span></button>
+      </li>)}</ol> : <p className="plan-empty">Sin cambios que alteren el plan.</p>}
+      {alerts.length > decisive.length && <p className="plan-muted">{alerts.length - decisive.length} cambios quedan agrupados en el detalle.</p>}
+    </section>
+
+    <section className="plan-section" aria-labelledby="plan-comms">
+      <div className="plan-section-heading"><h3 id="plan-comms">Orden de comunicación</h3><span>{plan.live ? 'HappyRobot' : 'Demo'}</span></div>
+      <ol className="communication-order">
+        <li><span>1</span><p><strong>Vecinos en riesgo</strong><small>{plan.campaignCount ? `${plan.answered}/${plan.campaignCount} respondidas · ${plan.silent} sin respuesta` : `${plan.recommendedCount} por contactar`}</small></p></li>
+        <li><span>2</span><p><strong>Equipos de intervención</strong><small>{assignedUnits ? `${assignedUnits} medios asignados` : 'Pendientes de la primera incidencia confirmada'}</small></p></li>
+        <li><span>3</span><p><strong>Responsable de mando</strong><small>{plan.status === 'stale' ? 'Debe validar el plan actualizado' : `Plan ${plan.revision} · ${planLabel.toLowerCase()}`}</small></p></li>
+      </ol>
+    </section>
+
+    <section className="plan-section" aria-labelledby="plan-resources">
+      <div className="plan-section-heading"><h3 id="plan-resources">Cobertura de recursos</h3><span>{assignedUnits}/{units.length} asignados</span></div>
+      <div className="resource-balance">{(['ambulance', 'police'] as const).map(kind => {
+        const fleet = units.filter(unit => unit.kind === kind)
+        const available = fleet.filter(unit => unit.mission === 'patrol').length
+        return <div key={kind}><UnitMark kind={kind} /><span><strong>{UNIT_LABEL[kind]}</strong><small>{available} disponibles · {fleet.length - available} en misión</small></span></div>
+      })}</div>
+      <p className="plan-muted">La siguiente salida deja {ambulanceReserve} {ambulanceReserve === 1 ? 'ambulancia' : 'ambulancias'} en cobertura.</p>
+    </section>
+
+    <section className={`plan-validity ${plan.status}`}>
+      <span><strong>{plan.status === 'stale' ? 'Plan invalidado' : 'Vigencia del plan'}</strong><small>{plan.status === 'stale' ? 'Ha cambiado una condición decisiva.' : `Revisión ${planTime}.`}</small></span>
+      <small>Se revisa con un giro de viento, una ruta cortada o un aviso crítico.</small>
+    </section>
+
     {selectedUnit && <section className="unit-detail" aria-label={`Unidad ${selectedUnit.callSign}`}><div className="unit-detail-heading"><UnitMark kind={selectedUnit.kind} /><div><strong>{selectedUnit.callSign} · {UNIT_LABEL[selectedUnit.kind]}</strong><span className={`unit-state ${selectedUnit.status}`}>{UNIT_STATUS_LABEL[selectedUnit.status]}</span></div></div><p className="fine">{selectedUnit.mission === 'patrol' ? 'Recorrido urbano · sin tarea asignada' : `Destino: ${selectedUnit.target.label}`}</p>{selectedUnit.mission === 'dispatch' && <p className="fine">{selectedUnit.summary}</p>}{selectedUnit.hold && <p className="need-note">{selectedUnit.hold}</p>}{selectedUnit.status === 'hold' && <button type="button" data-demo="unit-retry" data-demo-id={selectedUnit.id} className="cop-secondary" onClick={() => onRetryUnit(selectedUnit.id)}>Reintentar ruta del medio</button>}<p className="fine">Posición simulada, no GPS real. La decisión del agente no está conectada.</p></section>}
-    {!alerts.length && <p className="fine" role="status">Sin avisos</p>}
-    <ol className="alert-list">{alerts.map(alert => (
-      <li key={alert.id} className={`alert-card ${alert.severity}`}>
-        <button type="button" className="alert-main" data-demo="alert" data-demo-id={alert.id} aria-pressed={send?.id === alert.id} onClick={() => { setSendId(alert.id); onFocus(alert) }}>
-          <span className="alert-severity">{SEVERITY_LABEL[alert.severity]}</span>
-          <strong>{alert.title}</strong>
-          {alert.detail && <p>{alert.detail}</p>}
-        </button>
-        {alert.action && !alert.action.startsWith('dispatch-') && <button type="button" className="alert-action" data-demo="alert-action" data-demo-id={alert.id} onClick={() => onAction(alert, alert.action!)}>{ALERT_ACTION_LABEL[alert.action]}</button>}
-      </li>
-    ))}</ol>
-    <h3>Enviar{send ? ` · ${send.title}` : ''}</h3>
-    {send ? <DispatchActions scope="dispatch-alert" kinds={['ambulance', 'police', 'fire']} onDispatch={kind => onDispatch(send, kind)} /> : <p className="fine">Pulsa un aviso con posición para enviar un medio.</p>}
-    <h3>Medios{units.length ? ` · ${units.length}` : ''}</h3>
-    {!units.length && <p className="fine">Ninguno enviado</p>}
-    <div className="cop-list">{units.map(unit => {
-      const eta = unitEta(unit)
-      return <button type="button" key={unit.id} data-demo="unit" data-demo-id={unit.id} aria-pressed={unit.id === selectedUnitId} onClick={() => onFocusUnit(unit.id)}>
-        <UnitMark kind={unit.kind} />
-        <span><strong>{unit.callSign} · {UNIT_LABEL[unit.kind]}</strong><small>{UNIT_STATUS_LABEL[unit.status]}{eta ? ` · ${eta}` : ''}</small><small>{unit.mission === 'patrol' ? 'Circuito urbano · demo' : unit.target.label}</small></span>
-      </button>
-    })}</div>
+    <details className="plan-detail">
+      <summary>Detalle operativo <span>{alerts.length} avisos · {units.length} medios</span></summary>
+      <div className="plan-detail-body">
+        <div className="unit-fleet-toolbar"><span className="eyebrow">Medios de demostración</span><button type="button" data-demo="units-pause" className="cop-secondary" aria-pressed={unitsPaused} onClick={onToggleUnits}>{unitsPaused ? 'Reanudar medios' : 'Pausar medios'}</button></div>
+        <p className="fine">{units.filter(unit => unit.mission === 'patrol').length} sin asignar · {assignedUnits} asignados.</p>
+        {!alerts.length && <p className="fine" role="status">Sin avisos</p>}
+        <ol className="alert-list">{alerts.map(alert => (
+          <li key={alert.id} className={`alert-card ${alert.severity}`}>
+            <button type="button" className="alert-main" data-demo="alert" data-demo-id={alert.id} aria-pressed={send?.id === alert.id} onClick={() => { setSendId(alert.id); onFocus(alert) }}>
+              <span className="alert-severity">{SEVERITY_LABEL[alert.severity]}</span>
+              <strong>{alert.title}</strong>
+              {alert.detail && <p>{alert.detail}</p>}
+            </button>
+            {alert.action && !alert.action.startsWith('dispatch-') && <button type="button" className="alert-action" data-demo="alert-action" data-demo-id={alert.id} onClick={() => onAction(alert, alert.action!)}>{ALERT_ACTION_LABEL[alert.action]}</button>}
+          </li>
+        ))}</ol>
+        <h3>Enviar{send ? ` · ${send.title}` : ''}</h3>
+        {send ? <DispatchActions scope="dispatch-alert" kinds={['ambulance', 'police', 'fire']} onDispatch={kind => onDispatch(send, kind)} /> : <p className="fine">Selecciona un aviso con posición.</p>}
+        <h3>Medios{units.length ? ` · ${units.length}` : ''}</h3>
+        <div className="cop-list">{units.map(unit => {
+          const eta = unitEta(unit)
+          return <button type="button" key={unit.id} data-demo="unit" data-demo-id={unit.id} aria-pressed={unit.id === selectedUnitId} onClick={() => onFocusUnit(unit.id)}>
+            <UnitMark kind={unit.kind} />
+            <span><strong>{unit.callSign} · {UNIT_LABEL[unit.kind]}</strong><small>{UNIT_STATUS_LABEL[unit.status]}{eta ? ` · ${eta}` : ''}</small><small>{unit.mission === 'patrol' ? 'Circuito urbano · demo' : unit.target.label}</small></span>
+          </button>
+        })}</div>
+      </div>
+    </details>
   </div>
 }

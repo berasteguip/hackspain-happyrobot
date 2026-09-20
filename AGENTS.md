@@ -218,3 +218,17 @@ Antes de construir una tarjeta o un diagrama de HappyRobot, leer
 §«Lenguaje visual» son las siete reglas de estilo (icono y una palabra, iconos de `HR_ICONS`,
 aristas con flujo, cadenas para lo que se dispara detrás, un solo elemento destacado, estado del
 CECOP y no inventado, `prefers-reduced-motion`) y §«Plantilla» los pasos de código.
+
+## 11. Plan operativo — 2026-09-20
+
+Petición posterior del equipo: el antiguo panel «Avisos y medios» pasa a «Plan operativo».
+Debe responder en una sola vista a prioridad actual, señales decisivas, orden de comunicación,
+cobertura de recursos, siguiente acción y vigencia. Presenta como máximo tres señales y agrupa
+el resto en el detalle plegado. Las operaciones anteriores de avisos y medios siguen ahí.
+
+El plan nace como borrador y pasa a ejecución cuando el operador inicia una campaña. Un giro
+de viento, una nueva propagación relevante o un corte de ruta lo deja en revisión; el operador
+adopta una revisión nueva de forma explícita. Los casos sin respuesta suben en la prioridad,
+pero no invalidan por sí solos el plan completo. Este panel organiza datos y controles locales
+ya existentes: no debe presentarse como un motor de decisión operativo ni ejecutar órdenes sin
+acción humana.
