@@ -37,8 +37,13 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 /* El separador y HappyRobot cuelgan fuera de la caja del clon para no ensancharla: la caja
    tiene que seguir siendo la del logotipo de la cabecera o el aterrizaje deja de cuadrar.
    Van en porcentajes del propio clon, así que escalan con él sin cuentas aparte. */
-.intro-sep { position: absolute; left: 100%; top: 19%; height: 62%; width: 1px; margin-left: 20%; background: #ffffff45; }
-.intro-partner { position: absolute; left: 100%; top: 50%; height: 74%; margin-left: 40%; transform: translateY(-50%); color: var(--text); }
+.intro-sep { position: absolute; left: 100%; top: 34%; height: 59%; width: 1px; margin-left: 20%; background: #ffffff45; }
+/* El 35,2 % alinea las LÍNEAS DE BASE, que es como se cuadran dos logotipos: la nuestra cae
+   al 93,22 % de esta caja (y=100 de un viewBox que va de -10 a 108) y la suya al 78,41 % de
+   la suya (y=17,25 de 22), que mide un 74 % de esta. 93,22 − 78,41 × 74 = 35,2.
+   Y va en `top`, no en un `transform`: la animación de salida escribe `transform` y borraría
+   cualquier centrado puesto ahí —que es justo lo que pasaba, y por eso se veía caído. */
+.intro-partner { position: absolute; left: 100%; top: 35.2%; height: 74%; margin-left: 40%; color: var(--text); }
 .intro-partner > svg { display: block; height: 100%; width: auto; }
 @keyframes intro-veil { 0%, 40% { opacity: 1; } 80%, 100% { opacity: 0; } }
 
