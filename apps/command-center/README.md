@@ -37,8 +37,14 @@ sí es secreto.
 
 - Centro de mando: http://localhost:5173
 - Guía del puesto de mando (fuerza el recorrido): http://localhost:5173/?guia=1
+- Onboarding de primera visita: http://localhost:5173/onboarding
+- Volver a verlo con la visita ya marcada: http://localhost:5173/?onboarding=1
 - Página de consentimiento del ciudadano: http://localhost:5173/track
 - Reutilizar un id del escenario: http://localhost:5173/track?id=c-01
+
+La primera visita a `/` se desvía sola a `/onboarding`: el recorrido guiado sobre un escenario de
+práctica del navegador, sin tocar la API. Quien llega con `?p=<id>` nunca se desvía. Decisión y
+alternativas en [`docs/07-decisiones/007-onboarding-de-primera-visita.md`](../../docs/07-decisiones/007-onboarding-de-primera-visita.md).
 
 **Si el mapa sale en negro y se queda en «Cargando cartografía…»**: Mapbox guarda los teselados
 en el Cache Storage del navegador (`mapbox-tiles`) y esa caché se corrompe de vez en cuando; no

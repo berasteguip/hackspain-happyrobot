@@ -38,7 +38,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("crisis.api")
 
 # Rutas que NO piden `x-api-key`: el latido, la documentación y los preflight del navegador.
-PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/favicon.svg", "/people/register"}
+PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/favicon.svg", "/people/register", "/onboarding"}
 
 # Rutas que un ciudadano abre desde el enlace del SMS. No pueden exigir `x-api-key`: la página
 # corre en su móvil y cualquier secreto que le pasáramos sería legible en el código fuente. Se
@@ -58,6 +58,9 @@ PUBLIC_PREFIXES = (
     "/api/roster",
     "/api/anchor",
     "/track",
+    # Las fotos que enseña el recorrido guiado viven en `dist/ines/`, fuera de `/assets`. Sin esto
+    # el navegador se come un 401 por cada una y el paso de Inés sale en blanco.
+    "/ines",
 )
 
 
@@ -184,9 +187,15 @@ for _ruta, _dir in (("/gps", "gps"), ("/dashboard", "dashboard")):
 # lo que no es de la API cae en el SPA.
 _VIGIA = REPO_ROOT / "apps" / "command-center" / "dist"
 if _VIGIA.is_dir():
-    # Rutas del SPA que no son ficheros: `/track` es la página del enlace (teléfono + GPS).
+    # Rutas del SPA que no son ficheros: `/track` es la página del enlace (teléfono + GPS) y
+    # `/onboarding` la primera visita al puesto de mando. El montaje de abajo no hace fallback de
+    # SPA, así que cada una necesita su ruta o devuelve 404.
     @app.get("/track", include_in_schema=False)
     def spa_track():
+        return FileResponse(_VIGIA / "index.html")
+
+    @app.get("/onboarding", include_in_schema=False)
+    def spa_onboarding():
         return FileResponse(_VIGIA / "index.html")
 
     app.mount("/", StaticFiles(directory=_VIGIA, html=True), name="vigia")

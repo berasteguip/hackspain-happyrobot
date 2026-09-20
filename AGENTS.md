@@ -252,3 +252,42 @@ volver a esconder estas claves únicamente dentro de Capas.
 
 Al iniciar la guía, cerrar la Leyenda y la tarjeta HappyRobot. El primer popover va a la derecha
 del fuego para que no aparezca pegado a Memoria compartida.
+
+## 13. Onboarding de primera visita — 2026-09-20
+
+La primera visita a `/` se desvía a `/onboarding`, que es **este mismo `CommandCenter`** con la
+prop `onboarding`: arranca en `scenario-onboarding.ts`, no abre una conexión con la API y lanza
+solo el recorrido de `demoTour.ts`. Decisión completa y alternativas descartadas en
+[`docs/07-decisiones/007-onboarding-de-primera-visita.md`](docs/07-decisiones/007-onboarding-de-primera-visita.md).
+
+Reglas que no se tocan al trabajar aquí:
+
+- **Quien llega con `?p=` nunca se desvía**, ni con `?onboarding=1` en la misma URL: viene del SMS
+  o de `/track` en mitad de una evacuación. Sin `localStorage` tampoco se desvía a nadie (bucle).
+- **El onboarding no habla con la API.** El interruptor es `offline = DEMO_ONLY || onboarding` en
+  `CommandCenter.tsx`; censo, posiciones, ancla y GPS de la pestaña cuelgan de él. Si se añade una
+  llamada al backend, va detrás de `offline`.
+- **El escenario de bienvenida no se cuelga del selector del mapa** (`SELECTABLE_SCENARIOS`):
+  cambiar de escenario en caliente deja el censo de la API fuera hasta recargar.
+- **Siempre hay salida:** botón de saltar visible por encima del velo de Driver
+  (`pointer-events: auto !important`, que `.driver-active *` apaga los clics de toda la página) y
+  `?onboarding=1` para volver a verlo. Al salir se marcan las dos visitas, para que `/` no reciba
+  con la tarjeta del mismo recorrido a quien acaba de saltárselo.
+- **De `api/` solo la ruta estática:** `spa_onboarding`, `/onboarding` en `PUBLIC_PATHS` y `/ines`
+  en `PUBLIC_PREFIXES` (las fotos del recorrido daban 401 con `HR_SHARED_SECRET` puesto). Nada de
+  planner, llamadas ni estado. No se cambia ninguna variable de Railway.
+
+Convive con el modo guía de `?guia=1` (`2ea233d`, Luis), que enciende `DEMO_ONLY` en ejecución
+para que el recorrido no corra sobre el censo real de `/`. Son dos puertas distintas: `?guia=1`
+es para quien ya está dentro y pide ver el recorrido, `/onboarding` para quien llega por primera
+vez. El punto de contacto es `launchTour`: el rebote a `guideUrl()` mira `offline`, no
+`DEMO_ONLY`, porque en `/onboarding` no hay censo real del que protegerse.
+
+Verificación: 59 tests, lint y build en `apps/command-center`; 143 tests de `api/` y 20 de `data/`;
+y 20 comprobaciones de navegador con Mapbox y FIRMS interceptados, sobre primera visita, segunda
+visita, `/?p=<id>`, `?onboarding=1`, botón de saltar, fin del recorrido y móvil de 390 px. Script
+temporal en `/tmp/pw-onb/onboarding-ui.mjs` en este equipo. Sin llamadas reales.
+
+**Abierto para el equipo:** el contenido de los pasos. El recorrido es el de la demo del jurado y
+nadie ha decidido si el onboarding de un mando debe contar esa misma historia. Se edita en
+`DEMO_TOUR_STEPS`.

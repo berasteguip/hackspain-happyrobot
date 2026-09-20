@@ -26,3 +26,4 @@ Formato ADR ligero, un fichero por decisión: `NNN-decision-en-una-frase.md`.
 | 004 | [La UI de Vigía entra en `main` sin sustituir HappyRobot](004-cecop-ui-sobre-happyrobot.md) | 2026-09-19 | aceptada |
 | 005 | [Twin guarda el padrón; `api/` guarda el estado](005-padron-en-twin-estado-en-api.md) | 2026-09-19 | aceptada |
 | 006 | [El agente da el número de un organismo público, pero nunca lo marca](006-el-agente-no-marca-a-organismos-publicos.md) | 2026-09-19 | aceptada a medias (la lista blanca se retiró) |
+| 007 | [El onboarding es el recorrido que ya existe, sobre un escenario del navegador, en `/onboarding`](007-onboarding-de-primera-visita.md) | 2026-09-20 | aceptada |

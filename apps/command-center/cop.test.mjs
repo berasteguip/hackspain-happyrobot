@@ -15,7 +15,7 @@ const { moveEvacuees, advanceProtocol, prepareAreaCampaign, selectAreaIds } = aw
 const { RESPONSE_CENTERS, createNotice, transitionNotice } = await server.ssrLoadModule('/src/response.ts')
 const { SAFE_ZONES, INITIAL_CITIZENS, SCENARIO_FIRE_CELLS, INCIDENT, GREDOS_SCENARIO } = await server.ssrLoadModule('/src/scenario.ts')
 const { MADRID_SCENARIO, ETSIT } = await server.ssrLoadModule('/src/scenario-madrid.ts')
-const { SCENARIOS, DEFAULT_SCENARIO_ID, scenarioById } = await server.ssrLoadModule('/src/scenarios.ts')
+const { SCENARIOS, SELECTABLE_SCENARIOS, DEFAULT_SCENARIO_ID, ONBOARDING_SCENARIO_ID, scenarioById } = await server.ssrLoadModule('/src/scenarios.ts')
 const { haversineMeters } = await server.ssrLoadModule('/src/geo.ts')
 const footprint = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-5, 40], [-4.9999, 40], [-4.9999, 40.0001], [-5, 40.0001], [-5, 40]]] } }] }
 const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
@@ -119,6 +119,80 @@ test('el escenario de Madrid trae el grupo guiado: veinte casas apartadas, una q
   assert.equal(inside.length, 20)
   assert.ok(MADRID_SCENARIO.citizens.every((citizen) => citizen.speedKmh <= 6), 'en ciudad se evacúa a pie')
   assert.equal(MADRID_SCENARIO.clockScale, 6)
+})
+
+test('la primera visita va al onboarding, pero el enlace del SMS y la segunda visita no', async () => {
+  const { shouldEnterOnboarding, isOnboardingPath, ONBOARDING_PATH, ONBOARDING_STORAGE_KEY } = await server.ssrLoadModule('/src/onboarding.ts')
+  assert.equal(ONBOARDING_PATH, '/onboarding')
+  assert.equal(ONBOARDING_STORAGE_KEY, 'router.onboarding-seen')
+  assert.equal(shouldEnterOnboarding('/', '', false), true, 'primera visita')
+  assert.equal(shouldEnterOnboarding('/', '', true), false, 'segunda visita entra directa al mando')
+  // Quien viene del SMS o de /track está en mitad de una evacuación: no se le desvía nunca, ni
+  // siquiera con la marca de repetición puesta a mano en la URL.
+  for (const search of ['?p=p-091', '?p=p-091&onboarding=1', '?onboarding=1&p=p-091']) {
+    assert.equal(shouldEnterOnboarding('/', search, false), false, search)
+  }
+  assert.equal(shouldEnterOnboarding('/', '?onboarding=1', true), true, 'la salida de vuelta: ?onboarding=1')
+  assert.equal(shouldEnterOnboarding('/', '?guia=1', false), false, 'la guía se pide sobre el mando real')
+  // Ni bucles ni desvíos desde otras páginas.
+  assert.equal(shouldEnterOnboarding('/onboarding', '', false), false)
+  assert.equal(shouldEnterOnboarding('/track', '', false), false)
+  assert.equal(isOnboardingPath('/onboarding'), true)
+  assert.equal(isOnboardingPath('/onboarding/'), true)
+  assert.equal(isOnboardingPath('/'), false)
+  // Sin almacenamiento no se desvía: `seen` se da por visto y `/` sirve el puesto de mando.
+  const source = readFileSync(new URL('./src/onboarding.ts', import.meta.url), 'utf8')
+  assert.match(source, /catch \{\s*\n\s*return false/, 'localStorage roto no provoca un bucle de redirecciones')
+  // Quien sale del onboarding no aterriza en la tarjeta que le invita a ese mismo recorrido.
+  assert.match(source, /markOnboardingSeen\(\)\s*\n\s*markTourSeen\(\)\s*\n\s*window\.location\.assign\('\/'\)/)
+  // El salto se decide antes de montar React para que nadie vea medio puesto de mando.
+  const main = readFileSync(new URL('./src/main.tsx', import.meta.url), 'utf8')
+  assert.ok(main.includes('shouldRedirectToOnboarding()') && main.includes('window.location.replace(ONBOARDING_PATH)'))
+  assert.ok(readFileSync(new URL('./src/App.tsx', import.meta.url), 'utf8').includes('onboarding={isOnboarding}'))
+  // Y FastAPI tiene que servir esa ruta: el montaje estático no hace fallback de SPA (da 404) y
+  // el guardián de `x-api-key` la dejaría en 401.
+  const api = readFileSync(new URL('../../api/main.py', import.meta.url), 'utf8')
+  assert.ok(api.includes('@app.get("/onboarding"'), 'api/main.py sirve /onboarding')
+  assert.match(api.match(/^PUBLIC_PATHS = .*$/m)[0], /"\/onboarding"/, '/onboarding es pública')
+  assert.ok(api.includes('"/ines",'), 'las fotos del recorrido tampoco piden clave')
+})
+
+test('el onboarding es el recorrido de siempre sobre un escenario propio, sin una línea hacia la API', async () => {
+  const { ONBOARDING_SCENARIO } = await server.ssrLoadModule('/src/scenario-onboarding.ts')
+  assert.equal(ONBOARDING_SCENARIO_ID, 'onboarding')
+  assert.equal(scenarioById(ONBOARDING_SCENARIO_ID).id, ONBOARDING_SCENARIO.id)
+  // Menos vecinos que Madrid, pero el grupo guiado intacto: el recorrido señala a los mismos.
+  assert.ok(ONBOARDING_SCENARIO.citizens.length < MADRID_SCENARIO.citizens.length)
+  const group = ONBOARDING_SCENARIO.citizens.filter(citizen => citizen.locality === ONBOARDING_SCENARIO.guided.locality)
+  assert.equal(group.length, 20)
+  assert.equal(group.filter(citizen => citizen.outcome === 'no_answer').length, 1)
+  assert.equal(group.at(-1).id, ONBOARDING_SCENARIO.guided.silentId)
+  assert.equal(ONBOARDING_SCENARIO.safeZones.length, 3)
+  assert.ok(ONBOARDING_SCENARIO.incident.area.includes('práctica'))
+  // La vista: el recorrido arranca solo, el escenario no se cambia y la salida está siempre a mano.
+  const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
+  const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test', onboarding: true }))
+  assert.ok(html.includes('Simulacro de bienvenida'))
+  assert.ok(html.includes('data-demo="onboarding-skip"') && html.includes('Saltar e ir al puesto de mando'))
+  assert.ok(html.includes('data-demo="incident-static"') && !html.includes('data-demo="incident-trigger"'))
+  assert.ok(!html.includes('data-demo="tour-start"'), 'no se ofrece repetir un recorrido que está corriendo')
+  assert.ok(html.includes('Simulación local') && !html.includes('REAL'))
+  // Y no hay forma de que dispare una llamada: el modo sin backend cubre el onboarding entero.
+  const source = readFileSync(new URL('./src/CommandCenter.tsx', import.meta.url), 'utf8')
+  assert.ok(source.includes('const offline = DEMO_ONLY || onboarding'))
+  assert.equal(source.match(/if \(offline\) return/g).length, 2, 'censo y posiciones de la API, fuera')
+  assert.ok(source.includes('if (offline || !beaconId'), 'y el GPS de la pestaña, también')
+  assert.ok(source.includes('if (liveMode && !offline)'), 'la campaña real depende del mismo interruptor')
+  // El modo guía de `?guia=1` manda el recorrido a otra URL cuando hay censo real detrás; en
+  // `/onboarding` ya no lo hay, así que el recorrido corre donde está en vez de rebotar.
+  assert.ok(source.includes('if (!offline) { window.location.assign(guideUrl()); return }'))
+  assert.ok(source.includes('if (onboarding) { leaveOnboarding(); return }'), 'al terminar el recorrido se aterriza en /')
+  // La salida tiene que quedar por encima del velo de Driver y recuperar el puntero: Driver apaga
+  // los clics de toda la página con `.driver-active *`, y sin esto el botón se ve pero no se pulsa.
+  const css = readFileSync(new URL('./src/index.css', import.meta.url), 'utf8')
+  const skip = css.match(/\.onboarding-skip \{[^}]+\}/)[0]
+  assert.match(skip, /z-index: 1000[3-9]/)
+  assert.match(skip, /pointer-events: auto !important/)
 })
 
 test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {
@@ -739,7 +813,9 @@ test('mergeAlerts antepone lo nuevo y recorta el historial', () => {
 test('el catálogo abre en Madrid junto a ETSIT y conserva Gredos', () => {
   assert.equal(DEFAULT_SCENARIO_ID, 'madrid-etsit')
   assert.equal(scenarioById('madrid-etsit').id, MADRID_SCENARIO.id)
-  assert.equal(SCENARIOS.map(item => item.id).join(','), 'madrid-etsit,gredos')
+  assert.equal(SCENARIOS.map(item => item.id).join(','), 'madrid-etsit,gredos,onboarding')
+  // El de bienvenida se resuelve por id pero no se ofrece: el selector reemplaza el censo de la API.
+  assert.equal(SELECTABLE_SCENARIOS.map(item => item.id).join(','), 'madrid-etsit,gredos')
   assert.equal(GREDOS_SCENARIO.citizens.length, INITIAL_CITIZENS.length)
   assert.equal(MADRID_SCENARIO.citizens.length, 110)
   // El campus (90) junto a la ETSIT; el grupo guiado (20) aparte, a poco más de un kilómetro.

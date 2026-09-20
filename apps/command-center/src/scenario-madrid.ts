@@ -1,6 +1,6 @@
 import type { ResponseCenter } from './response'
 import { buildCitizens, buildFireCells } from './scenario'
-import type { FireScenario, Settlement } from './scenario'
+import type { FireScenario, GuidedGroup, Settlement } from './scenario'
 import type { Citizen, FireSpot, SafeZone } from './types'
 
 /** ETSIT-UPM, Avenida Complutense 30. Fuente: etsit.upm.es, 2026-09-19. */
@@ -11,7 +11,7 @@ const FIRE_SCALE = 0.03
 
 /** Entorno del metro Francos Rodríguez, al este de la Dehesa. Fuente: OSM, 2026-09-20. */
 const GUIDED = { lng: -3.7120, lat: 40.4535 }
-const GUIDED_LOCALITY = 'Colonia de Francos Rodríguez'
+export const GUIDED_LOCALITY = 'Colonia de Francos Rodríguez'
 
 const SETTLEMENTS: Settlement[] = [
   { name: 'ETSIT', lng: ETSIT.lng, lat: ETSIT.lat, count: 90, radiusM: 80 },
@@ -57,9 +57,12 @@ const OUTSIDE: [number, number, string][] = []
  * grupo guiado contestan todas las casas menos una, Angustias Herrera, 84 años, que vive sola y no
  * descuelga: es la que el visitante tiene que encontrar en rojo. Va la última de su grupo para que
  * el rojo aparezca cuando ya se han visto contestar las demás.
+ *
+ * Acepta otros núcleos para que el escenario de bienvenida (`scenario-onboarding.ts`) herede esta
+ * regla en vez de reescribirla: quién no descuelga se decide en un solo sitio.
  */
-function madridCitizens(): Citizen[] {
-  const base = buildCitizens(SETTLEMENTS, OUTSIDE)
+export function madridCitizens(settlements: Settlement[] = SETTLEMENTS): Citizen[] {
+  const base = buildCitizens(settlements, OUTSIDE)
   const guided = base.filter(citizen => citizen.locality === GUIDED_LOCALITY)
   const silentId = guided[guided.length - 1]?.id
   return base.map((citizen, index): Citizen => {
@@ -71,6 +74,15 @@ function madridCitizens(): Citizen[] {
 }
 
 const MADRID_CITIZENS = madridCitizens()
+
+/** El grupo que señala el recorrido guiado, leído de un censo ya construido. */
+export function guidedFrom(citizens: Citizen[], radiusM = 230): GuidedGroup {
+  return {
+    locality: GUIDED_LOCALITY,
+    silentId: citizens.filter(citizen => citizen.locality === GUIDED_LOCALITY).at(-1)?.id ?? '',
+    radiusM,
+  }
+}
 
 const CENTERS: ResponseCenter[] = [
   {
@@ -127,5 +139,5 @@ export const MADRID_SCENARIO: FireScenario = {
   // Salidas a un kilómetro y a pie: a 12x el grupo llega antes de que nadie pueda pintarle nada delante.
   clockScale: 6,
   onFoot: true,
-  guided: { locality: GUIDED_LOCALITY, silentId: MADRID_CITIZENS.filter(citizen => citizen.locality === GUIDED_LOCALITY).at(-1)?.id ?? '', radiusM: 230 },
+  guided: guidedFrom(MADRID_CITIZENS),
 }
