@@ -1,6 +1,13 @@
 # 006 — El agente da el número de un organismo público, pero nunca lo marca
 
-> **Fecha:** 2026-09-19 · **Estado:** aceptada (implementada el mismo día)
+> **Fecha:** 2026-09-19 · **Estado:** aceptada en su parte de datos; **la parte de `api/` se
+> retiró el 2026-09-20 sin llegar a fusionarse**.
+>
+> Esta decisión proponía dos cosas. La primera —dos columnas de teléfono en `official_contact`, con
+> una `CHECK` que impide meter un número real en la marcable— sigue en pie y está implementada. La
+> segunda era una lista blanca `REAL_CALL_ALLOWLIST` en `api/`, y **se ha quitado**: mientras esta
+> rama estaba abierta, `main` eliminó por su cuenta una lista blanca equivalente (`CALL_ALLOWLIST`,
+> commit `052c776`) con un argumento que también derriba la mía y que no había visto.
 
 ## Contexto
 
@@ -23,11 +30,20 @@ Se separan dos capacidades que estaban confundidas en una:
 - **Llamar a un tercero.** El sistema marca. Solo contra contrapartes simuladas. Columna
   `official_contact.phone_sim`, restringida por `CHECK` al rango reservado `+3460099%`.
 
-Y se añade un segundo cerrojo en `api/`: `REAL_CALL_ALLOWLIST`. Para que salga una llamada real
-hacen falta la bandera **y** que el número esté en la lista. Vacía = nadie.
+~~Y se añade un segundo cerrojo en `api/`: `REAL_CALL_ALLOWLIST`.~~ **Retirado.** Una lista blanca
+es incompatible con lo que hace el agente: cuando un vecino cuenta que su madre está sola en otra
+casa, el agente le pide el móvil y la llama. Ese número no puede estar escrito de antemano —si
+estuviera, no haría falta preguntárselo—. `main` ya se topó con esto en runtime: el nodo rechazaba
+esas llamadas con «Destino no autorizado para el simulacro» y la rama entera moría.
 
-La regla, en una frase: **el agente puede decir cualquier número; solo puede marcar los que alguien
-ha escrito a mano en una lista.**
+Los cerrojos que quedan en `api/`, que son de `main` y no de esta decisión: `ALLOW_REAL_CALLS`,
+`PHONE_OVERRIDES` (sustituye el teléfono de una persona concreta al cargar el escenario, y es donde
+viven los móviles reales de los ensayos), `REGISTER_ONLY_CALLS`, los topes de lote y radio, y que
+los teléfonos del dataset estén en el rango reservado.
+
+La regla que sí sobrevive, y es la de esta decisión: **el agente puede decir el número de un
+organismo público; el sistema nunca lo marca.** Eso se sostiene en la `CHECK` de `phone_sim`, que
+no depende de ninguna lista.
 
 ## Alternativas descartadas
 
@@ -39,14 +55,13 @@ ha escrito a mano en una lista.**
   escribe igualmente; lo que decide es la `CHECK` y la lista blanca.
 - **Un flag por contacto** (`dialable bool`). Mismo agujero: una columna que alguien puede poner a
   `true` por error. El rango reservado no se puede poner a `true` por error.
+- **La lista blanca de números marcables.** Descartada por lo de arriba. El error de diseño fue
+  tratar «a quién se puede llamar» como un conjunto cerrado, cuando media gracia del producto es
+  que el agente descubre teléfonos hablando.
 
 ## Consecuencias
 
 - Los números reales de organismos se pueden guardar sin peligro, que era lo que se quería.
-- Encender `ALLOW_REAL_CALLS` con la lista vacía ya no llama a nadie. El banner de arranque de
-  `api/main.py` lo dice en voz alta para que no sorprenda en la demo.
-- Para las llamadas reales de la demo: el móvil del compañero va a `REAL_CALL_ALLOWLIST` (en
-  `.env`, no versionado) y el teléfono de la persona se cambia con `POST /human/override`, que ya
-  existe y deja rastro en el `decision_log`. Así no entra un número real en el repo.
+- Para las llamadas reales de la demo se usa `PHONE_OVERRIDES` de `main`, no nada de esta rama.
 - `name` en `official_contact` es el organismo, nunca una persona con nombre: un cuartel publicado
   es información pública, el móvil de quien lo atiende no.

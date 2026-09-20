@@ -1,16 +1,8 @@
 """La capa que "mueve cosas fuera del sistema": llamadas y SMS vía HappyRobot.
 
-DOS CERROJOS, y hacen falta los dos (contrato §6.3):
-
-1. `ALLOW_REAL_CALLS` — si no es `true`, no se llama de verdad. Se simula, se registra en el
-   decision_log y se devuelve éxito.
-2. `REAL_CALL_ALLOWLIST` — la lista de números que sí se marcan. El primer cerrojo es **global**:
-   en la demo se enciende para hacer 3-4 llamadas de voz reales, y en ese instante quedarían vivos
-   también los 120 vecinos y cualquier teléfono de un organismo público. La lista blanca es lo que
-   impide que eso pase. Vacía = nadie se marca, aunque la bandera esté encendida.
-
-Un bucle que llame a 120 teléfonos reales por accidente arruina el proyecto y algo más; marcar el
-cuartel de la Guardia Civil en mitad del pitch, más.
+REGLA DURA (contrato §6.3): si `ALLOW_REAL_CALLS` no es `true`, **no se llama de verdad**. Se
+simula, se registra en el decision_log y se devuelve éxito. Un bucle que llame a 120 teléfonos
+reales por accidente arruina el proyecto y algo más.
 
 `notify` no toca el estado: recibe el `state` y registra a través de `state.mutate()`, como todo
 lo demás.
@@ -123,16 +115,6 @@ def _dispatch(
         ok = False
         detail = "sin teléfono en la ficha"
         log.warning("no se puede contactar a %s: sin teléfono", person.id)
-    elif person.phone not in settings.real_call_allowlist:
-        simulated = True
-        ok = True
-        detail = f"SIMULADO ({person.phone} no está en REAL_CALL_ALLOWLIST)"
-        log.info(
-            "[SIMULADO] %s a %s: el número no está en la lista blanca · %s",
-            "llamada" if channel == Channel.call else "SMS",
-            person.phone,
-            reason,
-        )
     else:
         simulated = False
         ok, detail = _post_to_happyrobot(payload, client=client)

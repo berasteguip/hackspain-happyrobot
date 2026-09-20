@@ -56,18 +56,7 @@ async def lifespan(app: FastAPI):
     if not settings.allow_real_calls:
         log.info("  ⚠️  ALLOW_REAL_CALLS=false → llamadas y SMS SIMULADOS (nadie recibe nada)")
     else:
-        permitidos = len(settings.real_call_allowlist)
-        if permitidos:
-            log.warning(
-                "  ☎️  ALLOW_REAL_CALLS=TRUE → se llamará DE VERDAD a los %d número(s) de "
-                "REAL_CALL_ALLOWLIST. El resto se simula.",
-                permitidos,
-            )
-        else:
-            log.warning(
-                "  ☎️  ALLOW_REAL_CALLS=TRUE pero REAL_CALL_ALLOWLIST está VACÍA → "
-                "no se marcará ningún número. Rellénala si esperabas llamadas reales."
-            )
+        log.warning("  ☎️  ALLOW_REAL_CALLS=TRUE → se llamará a teléfonos DE VERDAD")
     log.info("=" * 78)
     yield
     log.info("API parada. El estado vivía en memoria: no queda nada que cerrar.")

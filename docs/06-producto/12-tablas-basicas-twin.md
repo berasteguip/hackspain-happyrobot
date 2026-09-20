@@ -302,20 +302,6 @@ depende de que nadie se acuerde a las cuatro de la mañana.
 `v_contact_lookup` es lo que devuelve la tool `buscar_contacto`: **no expone `phone_sim`**, solo un
 booleano `dialable` que dice si el sistema puede marcar o si únicamente puede dar el número.
 
-### El segundo cerrojo, en `api/`
-
-El freno que ya existía, `ALLOW_REAL_CALLS`, es **global**: en la demo se enciende para hacer 3-4
-llamadas de voz reales (decisión 002) y en ese mismo instante quedarían marcables los 120 vecinos
-y cualquier organismo de esta tabla. No protege justo cuando hace falta.
-
-Se añade `REAL_CALL_ALLOWLIST` en `api/settings.py`: una lista explícita de números marcables.
-Para que salga una llamada de verdad hacen falta **los dos**: bandera encendida **y** número en la
-lista. Vacía = nadie, aunque la bandera esté a `true`. Va en `.env` y no en el repo porque son
-móviles reales del equipo, y el contrato §1 prohíbe versionar un teléfono fuera del rango reservado.
-
-Dos tests nuevos en `api/tests/test_notify.py` lo fijan, y uno de ellos es literalmente el caso
-temido: bandera encendida, `+34980123456` de un cuartel, y no sale ni una petición.
-
 ### Qué hay cargado hoy
 
 `source` con 11 filas (el vocabulario) y `official_contact` con **una**: el 112, cuyo número es
