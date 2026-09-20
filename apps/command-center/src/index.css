@@ -503,6 +503,10 @@ button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
 .hr-cnode[data-state="active"] .hr-chain, .hr-cnode[data-state="done"] .hr-chain { color: var(--hr-soft); }
 /* Las dos tools que acaban en otra llamada son lo más fuerte del workflow: el teléfono se tiñe. */
 .hr-chain-link[data-kind="voice"] { color: var(--hr-move); }
+/* Un nodo previsto no tiene arista que corra: ni la que sale de él, ni la que le llega
+   (`data-edge="still"` en el nodo anterior), ni las de las tools que cuelgan de él. */
+.hr-tree-node[data-state="mock"]::before, .hr-tree-node[data-edge="still"]::before,
+.hr-tree-node[data-state="mock"] .hr-tools::before, .hr-tree-node[data-state="mock"] .hr-tools > li::before, .hr-tree-node[data-state="mock"] .hr-tools > li::after { animation: none; }
 .hr-pulse-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; border: 1px solid #2c738744; background: #2c73870d; color: var(--hr-move); font-size: 10.5px; font-weight: 550; font-variant-numeric: tabular-nums; }
 .hr-pulse-chip .hr-icon { width: 11px; height: 11px; }
 /* El bucle de la vista general: anillo, cinco paradas, una palabra por parada. El anillo también

@@ -12,8 +12,9 @@
 
 import type { ReactNode } from 'react'
 import { HappyRobotLogo } from './HappyRobot'
-import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_VIEWS } from './hrModel'
-import type { HrCallNode, HrChainLink, HrDiagramProps, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrView } from './hrModel'
+import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_UNIT_TOOLS, HR_UNIT_TRUNK, HR_VIEWS } from './hrModel'
+import type { HrCallNode, HrChainLink, HrDiagramProps, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrUnitNode, HrUnitPulse, HrView } from './hrModel'
+import { UNIT_LABEL, UNIT_STATUS_LABEL } from './units'
 
 // --------------------------------------------------------------------------- primitivas del diagrama
 
@@ -111,12 +112,12 @@ export function LoopDiagram({ active }: HrDiagramProps & { active?: HrLoopStep['
  * en el Twin…): se pintan como iconos pequeños en fila, porque lo que importa es que la tool no
  * contesta, dispara algo fuera. Cada eslabón lleva su propio `title` con el nombre real del nodo.
  */
-function CompactNode({ node, state = 'idle', count, chain }: { node: HrCallNode; state?: HrNodeState; count?: number; chain?: HrChainLink[] }) {
+function CompactNode({ node, state = 'idle', count, chain, demo = 'hr-call-node' }: { node: HrCallNode; state?: HrNodeState; count?: number | string; chain?: HrChainLink[]; demo?: string }) {
   return (
-    <span className="hr-cnode" data-state={state} title={node.hint} data-demo="hr-call-node" data-demo-id={node.id}>
+    <span className="hr-cnode" data-state={state} title={node.hint} data-demo={demo} data-demo-id={node.id}>
       <span className="hr-node-icon"><HrIcon kind={node.kind} />{state === 'active' && <i className="hr-node-pulse" aria-hidden="true" />}</span>
       <strong>{node.word}</strong>
-      {count !== undefined && count > 0 && <b>{count}</b>}
+      {count !== undefined && count !== 0 && count !== '' && <b>{count}</b>}
       {chain && chain.length > 0 && (
         <span className="hr-chain">
           {chain.map((link, index) => (
@@ -166,6 +167,67 @@ export function CallDiagram({ calls }: HrDiagramProps) {
 }
 
 /**
+ * El despacho de un medio, con el formato de la llamada: tronco (disparo → elegir → ruta →
+ * aprobar → conductor → vigilar → parte) y las tools del agente colgando de «Conductor». Se
+ * dibuja para el vehículo pulsado y se ilumina con lo que el CECOP sabe de él: en patrulla nada
+ * ha disparado y todo está en reposo; con destino, el disparo y la elección están hechos y la
+ * ruta late mientras calcula o avanza (con su ETA), acaba en verde al llegar al acceso y en
+ * ámbar si no hay carretera. Lo que no está construido (de «Aprobar» hacia abajo) va discontinuo
+ * y con la arista quieta: nada corre por donde no hay nada.
+ */
+export function UnitDiagram({ unit }: HrDiagramProps) {
+  const status = unit?.status
+  const dispatched = Boolean(unit && unit.mission === 'dispatch')
+  const trunkState = (node: HrUnitNode): HrNodeState => {
+    if (!node.built) return 'mock'
+    if (!dispatched) return 'idle'
+    if (node.id !== 'route') return 'done'
+    if (status === 'hold') return 'error'
+    if (status === 'on_scene') return 'done'
+    return 'active'
+  }
+  const trunkCount = (node: HrUnitNode) => node.id === 'route' && status === 'en_route' && unit?.etaMin ? `${unit.etaMin} min` : undefined
+  const trunkHint = (node: HrUnitNode) => {
+    if (!unit || !dispatched) return node.hint
+    if (node.id === 'hook' && unit.target) return `${node.hint} · Destino: ${unit.target}`
+    if (node.id === 'pick' && unit.revision > 1) return `${node.hint} · Revisión ${unit.revision}: redirigido desde su posición actual`
+    if (node.id === 'route' && status === 'hold' && unit.hold) return `${node.hint} · ${unit.hold}`
+    return node.hint
+  }
+  return (
+    <ol className="hr-tree" aria-label="Despacho de un medio">
+      {HR_UNIT_TRUNK.map((node, index) => {
+        const state = trunkState(node)
+        const next = HR_UNIT_TRUNK[index + 1]
+        return (
+          <li key={node.id} className="hr-tree-node" data-state={state} data-edge={next && !next.built ? 'still' : undefined}>
+            <CompactNode node={{ ...node, hint: trunkHint(node) }} state={state} count={trunkCount(node)} chain={node.chain} demo="hr-unit-node" />
+            {node.id === 'driver' && (
+              <ol className="hr-tools" aria-label="Herramientas del agente">
+                {HR_UNIT_TOOLS.map(tool => <li key={tool.id}><CompactNode node={tool} state="mock" chain={tool.chain} demo="hr-unit-node" /></li>)}
+              </ol>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+/**
+ * La fila de contexto de un medio: distintivo y cuerpo, con el estado real en el `title`. Como en
+ * la campaña, el chip lleva solo el número que importa ahora: los minutos que quedan por carretera.
+ * El resto del estado lo cuenta el diagrama (la ruta late, acaba en verde o en ámbar).
+ */
+function UnitContext({ unit }: { unit: HrUnitPulse }) {
+  const status = `${UNIT_STATUS_LABEL[unit.status]}${unit.target ? ` · Destino: ${unit.target}` : ''}`
+  return <>
+    <strong title={status}>{unit.callSign} · {UNIT_LABEL[unit.kind]}</strong>
+    {unit.status === 'en_route' && unit.etaMin ? <span className="hr-pulse-chip" title={status}>{unit.etaMin} min</span> : null}
+  </>
+}
+
+/**
  * Qué diagrama enseña cada ficha. Las que no tienen el suyo todavía enseñan el resumen y
  * «en preparación»; las fichas en las que HappyRobot no interviene enseñan el circuito completo.
  * No se exporta a propósito: es el único sitio donde se registra un diagrama nuevo.
@@ -175,6 +237,7 @@ const HR_DIAGRAMS: Partial<Record<HrView, (props: HrDiagramProps) => ReactNode>>
   incidents: LoopDiagram,
   layers: LoopDiagram,
   campaign: CallDiagram,
+  unit: UnitDiagram,
 }
 
 // --------------------------------------------------------------------------- la tarjeta
@@ -186,7 +249,7 @@ export type HappyRobotCardProps = HrDiagramProps & {
   onClose: () => void
 }
 
-export function HappyRobotCard({ view, connected, live, calls, collapsed, onToggleCollapse, onClose }: HappyRobotCardProps) {
+export function HappyRobotCard({ view, connected, live, calls, unit, collapsed, onToggleCollapse, onClose }: HappyRobotCardProps) {
   const spec = HR_VIEWS[view]
   const Diagram = HR_DIAGRAMS[view]
   const status = connected && live ? { key: 'live', label: 'Llamadas reales' } : connected ? { key: 'connected', label: 'API conectada' } : { key: 'demo', label: 'Modo demo' }
@@ -205,13 +268,13 @@ export function HappyRobotCard({ view, connected, live, calls, collapsed, onTogg
       <div id="hr-card-content" className="hr-card-content" hidden={collapsed}>
         <div className="hr-card-context">
           <span className="eyebrow">Detrás de</span>
-          <strong>{spec.title}</strong>
+          {view === 'unit' && unit ? <UnitContext unit={unit} /> : <strong>{spec.title}</strong>}
           {calls && calls.total > 0 && <span className="hr-pulse-chip" title={`${calls.total} llamadas · ${calls.open} en curso · ${calls.answered} contestadas`}><HrIcon kind="voice" />{calls.total}</span>}
           <span className={`hr-tag coverage ${spec.coverage}`}>{HR_COVERAGE_LABEL[spec.coverage]}</span>
         </div>
         <div className="hr-card-body">
           {Diagram
-            ? <Diagram connected={connected} live={live} calls={calls} />
+            ? <Diagram connected={connected} live={live} calls={calls} unit={unit} />
             : <div className="hr-pending"><p>{spec.summary}</p><span className="hr-tag">Diagrama en preparación</span></div>}
         </div>
       </div>

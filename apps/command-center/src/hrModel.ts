@@ -10,6 +10,8 @@
  * igual que uno real. Ver `docs/06-producto/06-workflow-happyrobot-vs-contrato.md`.
  */
 
+import type { UnitKind, UnitMission, UnitStatus } from './units'
+
 /**
  * El workflow desplegado en la organización del equipo. Leído de la plataforma vía MCP el
  * 2026-09-19 (`docs/06-producto/06-workflow-happyrobot-vs-contrato.md` §1 y §5). Si alguien
@@ -23,7 +25,7 @@ export const HR_WORKFLOW = {
 }
 
 /** Tipo de nodo. Decide el icono; el resto de la fila es texto. */
-export type HrNodeKind = 'trigger' | 'lock' | 'voice' | 'extract' | 'webhook' | 'api' | 'map' | 'zone' | 'human' | 'sms' | 'loop' | 'route' | 'building' | 'note' | 'search' | 'code' | 'db' | 'dbWrite' | 'send'
+export type HrNodeKind = 'trigger' | 'lock' | 'voice' | 'extract' | 'webhook' | 'api' | 'map' | 'zone' | 'human' | 'sms' | 'loop' | 'route' | 'building' | 'note' | 'search' | 'code' | 'db' | 'dbWrite' | 'send' | 'clock' | 'unit'
 
 /**
  * Estado visual de un nodo.
@@ -65,6 +67,10 @@ export const HR_ICONS: Record<HrNodeKind, string> = {
   dbWrite: 'M20 5.5c0 1.4-3.6 2.5-8 2.5S4 6.9 4 5.5 7.6 3 12 3s8 1.1 8 2.5ZM4 5.5v13C4 19.9 7.6 21 12 21s8-1.1 8-2.5v-13M9 14l3 3 3-3M12 17v-6',
   // Send direct message: el enlace sale por mensaje.
   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4Z',
+  // Loop que vigila con el tiempo: la ETA frente al frente, minuto a minuto.
+  clock: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM12 7v5l3 2',
+  // El mismo trazo que el botón «Medios» de la barra de herramientas: el vehículo.
+  unit: 'M3 6h11v12H3Zm11 4h4l3 4v4h-7M5 18v2m12-2v2M7 10h3M8.5 8.5v3',
 }
 
 /**
@@ -125,8 +131,68 @@ export const HR_CALL_TOOLS: HrCallTool[] = [
   },
 ]
 
+/**
+ * El despacho de un medio: el flujo que seguiría el agente que gestiona patrullas y ambulancias,
+ * con el mismo formato que la llamada (tronco + tools colgando del agente de voz). Se enseña al
+ * pulsar un vehículo en el mapa o en el plan operativo.
+ *
+ * `built` es la regla de honestidad aplicada nodo a nodo: lo que el CECOP hace hoy de verdad
+ * (el mando pide, se elige el medio libre más cercano, Mapbox traza la carretera) se ilumina con
+ * el estado real del vehículo; de «Aprobar» hacia abajo es HappyRobot y no está construido, así
+ * que va discontinuo y con la arista quieta. Ver `docs/06-producto/07-tarjeta-que-hace-happyrobot.md`.
+ */
+export type HrUnitNode = HrCallNode & { built: boolean; chain?: HrChainLink[] }
+
+export const HR_UNIT_TRUNK: HrUnitNode[] = [
+  { id: 'hook', kind: 'trigger', word: 'Disparo', built: true, hint: 'El mando pide un medio desde una ficha, una alerta o una zona. En el flujo completo lo dispara el webhook house_escalated_to_patrol de la API' },
+  { id: 'pick', kind: 'unit', word: 'Elegir', built: true, hint: 'El medio libre más cercano al destino. Previsto: ETA del medio frente a minutos hasta el frente (priority_rank), para no mandar a nadie adonde el fuego llega antes' },
+  { id: 'route', kind: 'route', word: 'Ruta', built: true, hint: 'Mapbox Directions · carretera desde la posición actual hasta el acceso, con su ETA. Sin carretera el medio se detiene y el mando reintenta' },
+  { id: 'approve', kind: 'human', word: 'Aprobar', built: false, hint: 'Approval Process · el mando aprueba antes de mandar un medio a un sector amenazado (POST /human/approve). Hoy el clic de «Enviar» hace de aprobación' },
+  { id: 'driver', kind: 'voice', word: 'Conductor', built: false, hint: 'Outbound Voice Agent «Aviso al medio» · llama al conductor con la dirección exacta, las personas esperadas, los vulnerables y los minutos hasta el frente' },
+  {
+    id: 'watch', kind: 'clock', word: 'Vigilar', built: false, hint: 'Loop · compara la ETA con el frente mientras el medio va de camino. Si el fuego entra en la carretera: ruta nueva y rellamada route_recalculated',
+    chain: [
+      { kind: 'route', hint: 'Ruta nueva desde la posición actual del medio' },
+      { kind: 'voice', hint: 'Outbound Voice Agent «Ruta nueva» · la única llamada que nace sola del bucle: el plan de hace veinte minutos ya no vale' },
+    ],
+  },
+  {
+    id: 'report', kind: 'extract', word: 'Parte', built: false, hint: 'Extract «Parte» al colgar · en el acceso, casa vaciada, personas recogidas, medio libre',
+    chain: [
+      { kind: 'webhook', hint: 'POST «Parte → Vigía» · el medio y la casa cambian de estado en el mapa' },
+      { kind: 'send', hint: 'Mensaje al puesto de mando (Slack)' },
+    ],
+  },
+]
+
+/** Las tools del agente que habla con el conductor, con lo que cada una dispara detrás. */
+export const HR_UNIT_TOOLS: HrCallTool[] = [
+  {
+    id: 'link', kind: 'map', word: 'Enlace', hint: 'enviar_enlace_ruta · destino exacto y ruta al móvil del medio, para no dictar direcciones por teléfono',
+    chain: [{ kind: 'send', hint: 'Send direct message «Destino y ruta»' }],
+  },
+  {
+    id: 'census', kind: 'human', word: 'Censo', hint: 'quien_espera · personas esperadas según censo, vulnerables y casas cercanas también sin respuesta, para un solo viaje',
+    chain: [{ kind: 'api', hint: 'GET /houses/no-answer · la lista viva ordenada por priority_rank' }],
+  },
+  {
+    id: 'result', kind: 'note', word: 'Resultado', hint: 'cerrar_destino · lo que el medio encuentra: casa vaciada, nadie vive, se niegan, persona recogida',
+    chain: [
+      { kind: 'dbWrite', hint: 'Write to Twin · unit_log' },
+      { kind: 'webhook', hint: 'POST «Resultado → Vigía» · la casa sale de la lista de la patrulla' },
+    ],
+  },
+  {
+    id: 'handoff', kind: 'loop', word: 'Relevo', hint: 'no_disponible · el medio no puede o no llega antes que el fuego: se tira el plan y otro medio recibe el aviso',
+    chain: [
+      { kind: 'webhook', hint: 'POST «Medio no disponible → Vigía» · la API lo libera' },
+      { kind: 'trigger', hint: 'Incoming hook · la API dispara otro run con el siguiente medio' },
+    ],
+  },
+]
+
 /** Qué ficha del CECOP está abierta. `overview` es «ninguna»: se enseña el circuito completo. */
-export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'centers' | 'cop' | 'incidents' | 'layers'
+export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'unit' | 'centers' | 'cop' | 'incidents' | 'layers'
 
 /**
  * Cuánto de esta ficha pasa de verdad por HappyRobot hoy.
@@ -144,6 +210,26 @@ export type HrViewSpec = { title: string; summary: string; coverage: HrCoverage 
 /** El pulso de la campaña, para iluminar el flujo: cuántas llamadas hay y en qué punto están. */
 export type HrCallsPulse = { total: number; open: number; answered: number }
 
+/**
+ * El pulso de un medio: lo que el CECOP sabe de verdad del vehículo pulsado. Es lo único que
+ * ilumina el despacho; el diagrama no inventa ni ETA ni estado.
+ */
+export type HrUnitPulse = {
+  id: string
+  callSign: string
+  kind: UnitKind
+  status: UnitStatus
+  mission: UnitMission
+  /** Sube con cada redirección: revisión 2 es «se tiró el plan y salió otro». */
+  revision: number
+  /** Etiqueta del destino asignado; en patrulla no hay. */
+  target?: string
+  /** Minutos que quedan por carretera, solo en camino. */
+  etaMin?: number
+  /** Por qué está detenido, solo en `hold`. */
+  hold?: string
+}
+
 export type HrDiagramProps = {
   /** La API de crisis responde (`/api/roster`). */
   connected: boolean
@@ -151,6 +237,8 @@ export type HrDiagramProps = {
   live: boolean
   /** Solo mientras hay una campaña: sin llamadas, el diagrama es la anatomía en reposo. */
   calls?: HrCallsPulse
+  /** Solo con un vehículo pulsado: su despacho se ilumina con lo que el CECOP sabe de él. */
+  unit?: HrUnitPulse
 }
 
 /**
@@ -173,6 +261,7 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   people: { title: 'Personas', summary: 'El color de cada persona es el extract que el agente postea al colgar. Sin llamada atendida, no hay color.', coverage: 'partial' },
   person: { title: 'Ficha de persona', summary: 'Triaje, motivo y hora salen del extract. Las rutas las calcula Mapbox, no HappyRobot.', coverage: 'partial' },
   alerts: { title: 'Plan operativo', summary: 'Avisar a la patrulla sería otro workflow disparado por webhook al escalar una casa sin respuesta. Hoy los medios son simulados.', coverage: 'planned' },
+  unit: { title: 'Medio', summary: 'El CECOP elige el medio libre más cercano y Mapbox traza la carretera. La llamada al conductor, la vigilancia de la ETA frente al fuego y el parte de vuelta son HappyRobot y están previstos.', coverage: 'planned' },
   centers: { title: 'Centros y coordinación', summary: 'El preaviso al hospital o a bomberos saldría por un agente de voz o SMS de HappyRobot. Hoy es un borrador local.', coverage: 'planned' },
   cop: { title: 'Propagación y viento', summary: 'Un giro de viento reasigna salidas y la API dispararía rellamadas con la instrucción nueva. Hoy no conecta.', coverage: 'planned' },
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },

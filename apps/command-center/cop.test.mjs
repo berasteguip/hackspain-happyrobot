@@ -711,3 +711,27 @@ test('la zona recomendada envuelve el fuego a favor del viento y la afectada la 
   const movedAreas = recommendAreas(moved.fireCells, buildFireForecast(moved.fireCells, { windTowardDeg: 180, windKmh: 20, spreadMPerMin: 8 }), 180)
   assert.ok(haversineMeters(movedAreas.risk.lng, movedAreas.risk.lat, -3.6844, 40.4153) < 2000, 'anclado, la recomendación sigue al mundo')
 })
+
+test('la tarjeta de HappyRobot enseña el despacho del vehículo pulsado: lo real encendido, lo previsto discontinuo', async () => {
+  const { HappyRobotCard } = await server.ssrLoadModule('/src/HappyRobotCard.tsx')
+  const render = unit => renderToStaticMarkup(createElement(HappyRobotCard, { view: 'unit', connected: false, live: false, unit, collapsed: false, onToggleCollapse() {}, onClose() {} }))
+  const base = { id: 'u-1', callSign: 'A-01', kind: 'ambulance', mission: 'dispatch', revision: 2, target: 'Rosa Gil' }
+  const state = (html, id) => html.match(new RegExp(`data-state="([a-z]+)"[^>]*data-demo-id="${id}"`))?.[1]
+  const onWay = render({ ...base, status: 'en_route', etaMin: 7 })
+  assert.ok(onWay.includes('A-01 · Ambulancia') && onWay.includes('title="En camino · Destino: Rosa Gil"'), 'la fila de contexto es el vehículo, con su estado real en el title')
+  assert.ok(onWay.includes('class="hr-pulse-chip"') && onWay.split('7 min').length === 3, 'el chip de contexto y la ruta llevan la ETA')
+  for (const word of ['Disparo', 'Elegir', 'Ruta', 'Aprobar', 'Conductor', 'Vigilar', 'Parte', 'Enlace', 'Censo', 'Resultado', 'Relevo']) assert.ok(onWay.includes(`<strong>${word}</strong>`), word)
+  assert.equal(state(onWay, 'hook'), 'done')
+  assert.equal(state(onWay, 'pick'), 'done')
+  assert.equal(state(onWay, 'route'), 'active')
+  assert.ok(onWay.includes('<b>7 min</b>'), 'la ruta lleva la ETA')
+  assert.ok(onWay.includes('Revisión 2'), 'la redirección se cuenta en Elegir')
+  for (const id of ['approve', 'driver', 'watch', 'report', 'link', 'census', 'result', 'handoff']) assert.equal(state(onWay, id), 'mock', `${id} es previsto`)
+  assert.ok(onWay.includes('data-edge="still"'), 'la arista hacia lo previsto no corre')
+  assert.equal(state(render({ ...base, status: 'on_scene' }), 'route'), 'done')
+  const held = render({ ...base, status: 'hold', hold: 'Sin carretera disponible.' })
+  assert.equal(state(held, 'route'), 'error')
+  assert.ok(held.includes('Sin carretera disponible.'), 'el motivo del hold va al title')
+  const patrol = render({ ...base, mission: 'patrol', revision: 1, target: undefined, status: 'patrolling' })
+  for (const id of ['hook', 'pick', 'route']) assert.equal(state(patrol, id), 'idle', `${id} en reposo en patrulla`)
+})

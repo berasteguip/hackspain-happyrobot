@@ -34,7 +34,7 @@ import { TourIntro } from './TourIntro'
 import { markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
-import type { HrCallsPulse, HrView } from './hrModel'
+import type { HrCallsPulse, HrUnitPulse, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
@@ -781,8 +781,16 @@ export function CommandCenter({ token }: { token: string }) {
     if (!campaignIds.length) return undefined
     return { total: campaignIds.length, open: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.status === 'ringing').length, answered: counts.answered }
   }, [liveBatch, liveCalls, campaignIds.length, citizens, campaignSet, counts.answered])
+  // El medio pulsado, para la tarjeta de HappyRobot: solo lo que el CECOP sabe de él de verdad.
+  const hrUnit: HrUnitPulse | undefined = useMemo(() => {
+    const unit = selectedUnitId ? units.find(item => item.id === selectedUnitId) : undefined
+    if (!unit) return undefined
+    const etaSec = unit.status === 'en_route' ? unit.etaSec ?? unit.route?.durationSec : undefined
+    return { id: unit.id, callSign: unit.callSign, kind: unit.kind, status: unit.status, mission: unit.mission, revision: unit.revision, target: unit.mission === 'dispatch' ? unit.target.label : undefined, etaMin: etaSec === undefined ? undefined : Math.max(1, Math.ceil(etaSec / 60)), hold: unit.hold }
+  }, [units, selectedUnitId])
   // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
-  const hrView: HrView = selected ? 'person' : panel ?? (hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
+  // Con un vehículo pulsado en el plan operativo, manda su despacho.
+  const hrView: HrView = selected ? 'person' : panel === 'alerts' && hrUnit ? 'unit' : panel ?? (hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
   const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Plan operativo' : 'Personas'
   const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
   const playFire = () => {
@@ -873,7 +881,7 @@ export function CommandCenter({ token }: { token: string }) {
           )}
         </div>
       </aside>}
-      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => setHrCard('hidden')} />}
+      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} unit={hrUnit} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => setHrCard('hidden')} />}
       <section className={`campaign-dock ${liveMode && !DEMO_ONLY ? 'is-live' : ''}`} data-demo="campaign-dock" aria-label="Campaña de llamadas por zona">
         <button ref={campaignButtonRef} type="button" data-demo="campaign-settings" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
         <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{DEMO_ONLY || !liveMode ? 'Simulación local' : 'Llamadas reales · HappyRobot'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>

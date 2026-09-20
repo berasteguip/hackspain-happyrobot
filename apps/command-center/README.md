@@ -150,7 +150,7 @@ Los elementos de lista añaden `data-demo-id` con el identificador de dominio:
 | Mapa | `map` (contenedor) · `framing-menu` (botón de diana sobre el zoom; el menú sale hacia la izquierda) · `framing-fire` · `framing-person` · `framing-route` · `framing-all` · `map-error-dismiss` |
 | Barra de herramientas | `incident-trigger` · `tool-area` · `tool-fire` · `tool-centers` · `tool-alerts` · `tool-people` · `tool-layers` · `tool-happyrobot` |
 | Panel | `panel` (contenedor) · `panel-close` · `scenario`+id |
-| Tarjeta HappyRobot | `hr-card` (contenedor) · `hr-collapse` · `hr-close` · `hr-loop-step`+id (paradas del bucle) · `hr-call-node`+id (nodos de la anatomía de la llamada) · `hr-node`+id (solo los nodos pulsables) |
+| Tarjeta HappyRobot | `hr-card` (contenedor) · `hr-collapse` · `hr-close` · `hr-loop-step`+id (paradas del bucle) · `hr-call-node`+id (nodos de la anatomía de la llamada) · `hr-unit-node`+id (nodos del despacho de un medio) · `hr-node`+id (solo los nodos pulsables) |
 | Propagación | `fire-play` · `fire-wind-shift` · `fire-reset` · `fire-wind-toggle` · `fire-zone`+id |
 | Rutas | `route-profile`+id (`driving`/`walking`) · `route-compare` · `route-option`+id |
 | Centros | `center-filter`+id · `center`+id · `center-source` · `notice-sector` · `notice-message` · `notice-create` · `notice-advance`+id |
