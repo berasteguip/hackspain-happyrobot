@@ -97,3 +97,30 @@ def test_se_puede_filtrar_por_carretera_que_es_lo_que_mas_se_pregunta(client):
 
     solo_una = client.get("/calls/log?road=N-631").json()["entries"]
     assert len(solo_una) == 1 and solo_una[0]["answer"] == "cortada"
+
+
+def test_los_campos_vacios_del_webhook_no_revientan(client):
+    """El cuerpo del webhook va en JSON crudo: un parámetro que el agente no rellenó llega
+    como cadena vacía. Sin tolerarlo, `vigencia_min: ""` es un 422 en mitad de una llamada."""
+    respuesta = client.post(
+        "/calls/log",
+        json={
+            "question": "¿está cortada la ZA-P-2434?",
+            "answer": "",
+            "validity_min": "",
+            "locality_id": "",
+            "road": "ZA-P-2434",
+            "place_text": "",
+            "source_detail": "",
+            "source_id": "vecino",
+            "simulated": "true",
+        },
+    )
+    assert respuesta.status_code == 200, respuesta.text
+
+    fila = client.get("/calls/log?limit=1").json()["entries"][0]
+    assert fila["answer"] is None, "vacío es sin rellenar, no una respuesta en blanco"
+    assert fila["valid_until"] is None
+    assert fila["locality_id"] is None, "una zona vacía no casa con ninguna zona"
+    assert fila["road"] == "ZA-P-2434"
+    assert fila["simulated"] is True

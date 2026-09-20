@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # --------------------------------------------------------------------------------------
 # Utilidades de tiempo
@@ -463,6 +463,18 @@ class CallLogWrite(Base):
     run_id: str | None = None
     answer_run_id: str | None = None
     simulated: bool = True
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _vacio_es_nulo(cls, valor):
+        """Una cadena vacía es un campo sin rellenar, no un valor.
+
+        El cuerpo del webhook va en JSON crudo con plantillas, así que un parámetro que el
+        agente no rellenó llega como `""`. Sin esto, `validity_min: ""` devuelve un 422 en
+        mitad de una llamada de voz, y `locality_id: ""` guardaría una cadena vacía que no
+        casa con ninguna zona. Los dos fallos son silenciosos para quien está al teléfono.
+        """
+        return None if isinstance(valor, str) and not valor.strip() else valor
 
 
 class FireEvent(Base):
