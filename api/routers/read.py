@@ -97,10 +97,16 @@ def api_roster() -> list[RosterEntry]:
                 locality=(casa.village if casa else None) or state.scenario,
                 address=casa.address if casa else None,
                 vulnerable=bool(casa.vulnerable) if casa else False,
-                dialable=bool(person.phone) and notify.phone_allowed(person.phone),
+                dialable=bool(person.phone),
                 status=person.status,
                 call_state=ultima.state if ultima else None,
                 location_source=person.position_source,
+                # Lo que el agente concluyó al colgar (`POST /calls/observation`). Es lo que
+                # tiñe el punto: sin llamada no hay color, y eso también es información.
+                triage_level=person.triage.level if person.triage else None,
+                triage_reason=person.triage.reason if person.triage else None,
+                triage_confidence=person.triage.confidence if person.triage else None,
+                triage_at=person.triage.at if person.triage else None,
             )
         )
     return sorted(filas, key=lambda f: f.id)

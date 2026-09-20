@@ -1,27 +1,52 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import { CommandMap } from './CommandMap'
+import { HappyRobotLogo, HappyRobotSymbol } from './HappyRobot'
+import { Wordmark } from './Logo'
+
+/** Lo que dura la entradilla. El velo la acompaña desde el CSS: --intro. */
+const INTRO_MS = 1700
 import { fetchFirmsSpain } from './firms'
-import { INITIAL_CITIZENS, SAFE_ZONES, SCENARIO_FIRES, SCENARIO_FIRE_CELLS, INCIDENT } from './scenario'
-import { buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
+import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
+import { anchorScenario } from './scenario'
+import { recommendAreas } from './risk'
+import type { FireScenario } from './scenario'
+import { MAX_FORECAST_MIN, PLANNED_FIRE_MIN, buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
 import type { FireSettings } from './fire-model'
-import { FireControls, RefugeRoutesPanel, ResponsePanel } from './CopPanels'
-import { RESPONSE_CENTERS } from './response'
+import { CallLog } from './CallLog'
+import { FireControls, RefugeRoutesPanel, ResponsePanel, AlertsPanel, DispatchActions } from './CopPanels'
 import type { DemoNotice } from './response'
+import { SITE_EMOJI } from './response'
 import type { RefugeRoute } from './routing'
-import { planCitizenRoute } from './routing'
+import { planCitizenRoute, positionAt } from './routing'
 import type { RouteIndex } from './routing'
+import { detectAlerts, initialWatch, mergeAlerts } from './alerts'
+import type { AlertAction, AlertWatch, CommandAlert } from './alerts'
+import { UNIT_LABEL, UNIT_STATUS_LABEL, applyUnitPlan, createDispatch, createPatrolFleet, moveUnits, originsFrom, pickAvailableUnit, planUnitRoute, redirectUnit, retryUnitRoute, unitEta } from './units'
+import type { DispatchTarget, DispatchUnit, UnitKind } from './units'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
 import {
-  CALL_STATE_LABEL, CALL_STATE_OPEN, DispatchFailed, dispatchCircle, fetchCalls, fetchRoster,
-  readOperatorKey, saveOperatorKey,
+  CALL_STATE_LABEL, CALL_STATE_OPEN, DispatchFailed, dispatchCircle, fetchAnchor, fetchCalls, fetchRoster,
+  TRIAGE_COLOR, TRIAGE_LABEL,
+  postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
+import { DEMO_ONLY } from './demoMode'
+import { flushSync } from 'react-dom'
+import { TourIntro } from './TourIntro'
+import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
+import type { TourView } from './demoTour'
+import { focusPersonFromUrl, readMe } from './me'
+import { HappyRobotCard } from './HappyRobotCard'
+import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_REROUTE_RELEASE_STEP, HR_REROUTE_STEPS } from './hrModel'
+import type { HrCallsPulse, HrEscalationRun, HrRerouteOutcome, HrRerouteRun, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
-import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers } from './types'
+import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, PaintedFire, SafeZone } from './types'
+import type { FeatureCollection, Polygon } from 'geojson'
 
 /**
  * El censo que sirve la API (`/api/roster`) sustituye al de `scenario.ts` en cuanto responde.
  *
- * Sin backend, Vigía sigue pintando su población de Gredos y su campaña sigue siendo local:
+ * Sin backend, router sigue pintando su población de Gredos y su campaña sigue siendo local:
  * eso es lo que se enseña cuando no hay API levantada. Con backend, los puntos del mapa son
  * las personas que la API puede llamar de verdad, y rodearlas significa marcar sus teléfonos.
  */
@@ -34,39 +59,94 @@ function citizenFromRoster(row: RosterEntry, index: number): Citizen {
     lat: row.lat as number,
     locality: row.locality || row.address || 'Escenario de la API',
     resident: true,
-    status: row.call_state === 'answered' ? 'informed' : 'pending',
+    status: statusFromRoster(row),
     vulnerable: row.vulnerable,
     safeZoneId: '',
     speedKmh: 26 + (index % 7) * 4,
     callDelaySec: 1 + (index % 48) * 1.4,
     outcome: 'tracking',
     locationSource: row.location_source === 'gps' ? 'gps' : 'reference',
+    // Quien comparte GPS real es una persona de verdad: nunca entra en la simulación local.
+    live: row.location_source === 'gps' || undefined,
     callState: row.call_state ?? undefined,
     dialable: row.dialable,
+    triage: triageFromRoster(row),
+  }
+}
+
+/**
+ * Qué se enseña del estado de alguien. Manda lo último que se sabe de la llamada, y lo último
+ * suele ser el triaje: una observación llega aunque nadie haya rodeado un círculo en el mapa
+ * —el agente puede haber llamado desde su propio workflow— y entonces no hay fila en el tablero
+ * de llamadas de la que deducir nada.
+ */
+function statusFromRoster(row: RosterEntry): Citizen['status'] {
+  if (row.status === 'no_answer') return 'no_answer'
+  if (row.triage_level && row.triage_level !== 'unknown') return 'informed'
+  return row.call_state === 'answered' ? 'informed' : 'pending'
+}
+
+/** El veredicto del agente, si es que alguien ha hablado ya con esta persona. */
+function triageFromRoster(row: RosterEntry): Citizen['triage'] {
+  if (!row.triage_level) return undefined
+  return {
+    level: row.triage_level,
+    reason: row.triage_reason,
+    confidence: row.triage_confidence,
+    at: row.triage_at,
   }
 }
 
 const STATUS_LABEL: Record<Citizen['status'], string> = {
   pending: 'Sin contactar', ringing: 'En llamada', no_answer: 'Sin respuesta',
-  informed: 'Aviso recibido', tracking: 'Ubicación compartida', evacuating: 'En tránsito · sim.',
-  safe: 'En punto de encuentro · sim.', refused: 'No comparte ubicación', assistance: 'Ruta pendiente de revisión', routing: 'Calculando ruta individual',
+  informed: 'Aviso recibido', tracking: 'Ubicación compartida', evacuating: 'En tránsito',
+  safe: 'En punto de encuentro', refused: 'No comparte ubicación', assistance: 'Sin ruta', routing: 'Calculando ruta',
 }
 const LOCATION_LABEL = {
-  reference: 'Referencia residencial aproximada', simulation: 'Ubicación compartida · demo',
-  gps: 'Geolocalización del dispositivo', unknown: 'Origen no especificado',
+  reference: 'Referencia residencial', simulation: 'Ubicación compartida',
+  gps: 'GPS del dispositivo', unknown: 'Origen no especificado',
 }
-const LAYER_OPTIONS: { key: keyof MapLayers; name: string; detail: string; symbol: string }[] = [
-  { key: 'perimeter', name: 'Huella térmica', detail: 'Manchas de celdas · escenario simulado', symbol: 'perimeter' },
-  { key: 'spread', name: 'Propagación temporal', detail: 'Escenario configurable · no es un pronóstico', symbol: 'spread' },
-  { key: 'routes', name: 'Ruta seleccionada', detail: 'Comparación por tiempo · filtro de exposición', symbol: 'spread' },
-  { key: 'hospitals', name: 'Hospitales', detail: 'Posición de demo · centro real en Talavera', symbol: 'zone' },
-  { key: 'healthCenters', name: 'Centros de salud', detail: 'No equivalen a hospitales', symbol: 'zone' },
-  { key: 'fireStations', name: 'Bomberos', detail: 'Posición de demo · sin despliegues reales', symbol: 'zone' },
-  { key: 'thermal', name: 'Detecciones térmicas', detail: 'Focos puntuales, no perímetros', symbol: 'thermal' },
-  { key: 'citizens', name: 'Personas', detail: 'Ubicación y estado de contacto', symbol: 'person' },
-  { key: 'references', name: 'Referencias residenciales', detail: 'No confirman presencia', symbol: 'reference' },
-  { key: 'zones', name: 'Puntos de encuentro', detail: 'Lugares reales · uso como refugio simulado', symbol: 'zone' },
-]
+function layerOptions(scenario: FireScenario): { key: keyof MapLayers; name: string; detail: string; symbol: keyof typeof ICONS }[] {
+  const hospital = scenario.centers.find(center => center.kind === 'hospital')
+  const health = scenario.centers.find(center => center.kind === 'health')
+  const park = scenario.centers.find(center => center.kind === 'fire')
+  return [
+    { key: 'perimeter', name: 'Huella térmica', detail: 'Celdas del incendio', symbol: 'fire' },
+    { key: 'spread', name: 'Propagación', detail: 'Avance desde el foco', symbol: 'wind' },
+    { key: 'plannedFire', name: 'Frente previsto', detail: 'Pintado por el mando · +15 min', symbol: 'fire' },
+    { key: 'routes', name: 'Ruta seleccionada', detail: 'Recorrido comparado', symbol: 'routes' },
+    { key: 'hospitals', name: 'Hospitales', detail: hospital?.name ?? 'Hospital', symbol: 'centers' },
+    { key: 'healthCenters', name: 'Centros de salud', detail: health?.name ?? 'Centro de salud', symbol: 'centers' },
+    { key: 'fireStations', name: 'Bomberos', detail: park?.name ?? 'Bomberos', symbol: 'fire' },
+    { key: 'thermal', name: 'Detecciones térmicas', detail: 'Focos puntuales', symbol: 'thermal' },
+    { key: 'citizens', name: 'Personas', detail: 'Contacto y ubicación', symbol: 'people' },
+    { key: 'references', name: 'Referencias residenciales', detail: 'Punto de partida', symbol: 'pin' },
+    { key: 'zones', name: 'Puntos de encuentro', detail: 'Destinos de evacuación', symbol: 'pin' },
+    { key: 'callArea', name: 'Zona de llamadas', detail: 'Círculo de la selección', symbol: 'zone' },
+    { key: 'units', name: 'Medios', detail: 'Ambulancia, patrulla, bomberos', symbol: 'units' },
+  ]
+}
+const INITIAL_WIND = 225
+const SHIFTED_WIND = 45
+const MAX_UNITS = 12
+/** Cómo dejó el operador la tarjeta de HappyRobot: se recuerda por navegador, como el token. */
+const HR_CARD_KEY = 'router.hrCard'
+type HrCardState = 'open' | 'collapsed' | 'hidden'
+function readHrCardState(): HrCardState {
+  try {
+    const saved = localStorage.getItem(HR_CARD_KEY)
+    return saved === 'collapsed' || saved === 'hidden' ? saved : 'open'
+  } catch {
+    return 'open'
+  }
+}
+/** Los frentes pintados como colección de polígonos cerrados, que es lo que el modelo de fuego entiende. */
+function paintedFootprint(fires: PaintedFire[]): FeatureCollection<Polygon> {
+  return {
+    type: 'FeatureCollection',
+    features: fires.filter(fire => fire.ring.length >= 3).map(fire => ({ type: 'Feature', properties: { id: fire.id }, geometry: { type: 'Polygon', coordinates: [[...fire.ring, fire.ring[0]]] } })),
+  }
+}
 function formatClock(date: Date) {
   return date.toLocaleTimeString('es-ES', { hour12: false })
 }
@@ -80,7 +160,12 @@ function locationAge(ts: number | undefined, now: number) {
 
 export function CommandCenter({ token }: { token: string }) {
   const [now, setNow] = useState(() => new Date())
-  const [citizens, setCitizens] = useState<Citizen[]>(INITIAL_CITIZENS)
+  const [scenarioId, setScenarioId] = useState(DEFAULT_SCENARIO_ID)
+  // Mundo del ensayo anclado a la persona registrada desde el enlace: el escenario se desplaza entero.
+  const [anchor, setAnchor] = useState<{ lng: number; lat: number } | null>(null)
+  const scenario = useMemo(() => anchor ? anchorScenario(scenarioById(scenarioId), anchor) : scenarioById(scenarioId), [scenarioId, anchor])
+  const origins = useMemo(() => originsFrom(scenario.centers, scenario.police), [scenario])
+  const [citizens, setCitizens] = useState<Citizen[]>(() => scenarioById(DEFAULT_SCENARIO_ID).citizens)
   const [events, setEvents] = useState<CallEvent[]>([])
   const [protocolOn, setProtocolOn] = useState(false)
   const [callArea, setCallArea] = useState<CallArea | null>(null)
@@ -94,31 +179,79 @@ export function CommandCenter({ token }: { token: string }) {
   const [liveCalls, setLiveCalls] = useState<CallRun[]>([])
   const [dispatchError, setDispatchError] = useState('')
   const [dispatching, setDispatching] = useState(false)
+  const [forceRecall, setForceRecall] = useState(false)
+  const [showTourIntro, setShowTourIntro] = useState(false)
+  const [touring, setTouring] = useState(false)
   const [apiRoster, setApiRoster] = useState(false)
+  // Abierto desde el enlace: `?p=<id>` centra el mapa en esa persona; si además se registró en
+  // este navegador, la pestaña emite su GPS.
+  const [focusPersonId] = useState(() => focusPersonFromUrl())
+  const [beaconId] = useState(() => { const me = readMe(); return me && me.id === focusPersonFromUrl() ? me.id : null })
+  const [beaconState, setBeaconState] = useState<'starting' | 'on' | 'error' | 'denied'>('starting')
   const campaignRef = useRef<ReadonlySet<string>>(new Set())
   const campaignSet = useMemo(() => new Set(campaignIds), [campaignIds])
   const [planningCount, setPlanningCount] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
-  const [panel, setPanel] = useState<'people' | 'layers' | 'cop' | 'centers' | null>(null)
-  const [fireSettings] = useState<FireSettings>({ windTowardDeg: 225, windKmh: 20, spreadMPerMin: 5 })
+  const [panel, setPanel] = useState<'people' | 'layers' | 'cop' | 'centers' | 'alerts' | 'campaign' | 'incidents' | null>(null)
+  // La tarjeta «qué hace HappyRobot detrás»: abierta, plegada al cabecero u oculta.
+  const [hrCard, setHrCard] = useState<HrCardState>(readHrCardState)
+  // Run de escalada a fuerzas de seguridad: la tarjeta de HappyRobot lo dibuja paso a paso y, al
+  // terminar, salen los medios. Uno a la vez: es una decisión del mando, no una cola.
+  const [escalation, setEscalation] = useState<HrEscalationRun | null>(null)
+  // Frentes previstos pintados a mano y el run de rerruta que disparan cuando cortan un camino.
+  const [paintedFires, setPaintedFires] = useState<PaintedFire[]>([])
+  const [fireStroke, setFireStroke] = useState<[number, number][] | null>(null)
+  const [drawingFire, setDrawingFire] = useState(false)
+  const [reroute, setReroute] = useState<HrRerouteRun | null>(null)
+  useEffect(() => {
+    try { localStorage.setItem(HR_CARD_KEY, hrCard) } catch { /* sin almacenamiento: no se recuerda */ }
+  }, [hrCard])
+  const [fireSettings, setFireSettings] = useState<FireSettings>({ windTowardDeg: INITIAL_WIND, windKmh: 20, spreadMPerMin: 8 })
   const [horizon, setHorizon] = useState(0)
+  const [firePlaying, setFirePlaying] = useState(false)
+  const horizonRef = useRef(0)
   const [showWind, setShowWind] = useState(false)
   const marginM = 150
   const [selectedCenterId, setSelectedCenterId] = useState<string | null>(null)
-  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number; zoom?: number } | null>(null)
+  const [focusTarget, setFocusTarget] = useState<{ lng: number; lat: number; zoom?: number; bounds?: [[number, number], [number, number]] } | null>(null)
   const [mapRoute, setMapRoute] = useState<RefugeRoute | null>(null)
   const [notices, setNotices] = useState<DemoNotice[]>([])
-  const forecast = useMemo(() => buildFireForecast(SCENARIO_FIRE_CELLS, fireSettings), [fireSettings])
+  const plannedFootprint = useMemo(() => paintedFires.length ? { footprint: paintedFootprint(paintedFires), minute: PLANNED_FIRE_MIN } : undefined, [paintedFires])
+  const forecast = useMemo(() => buildFireForecast(scenario.fireCells, fireSettings, plannedFootprint), [scenario.fireCells, fireSettings, plannedFootprint])
   const projection = useMemo(() => forecastGeo(forecast, horizon), [forecast, horizon])
-  const zoneExposure = useMemo(() => Object.fromEntries(SAFE_ZONES.map(zone => [zone.id, exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)])), [forecast, horizon, marginM])
+  const recommended = useMemo(() => recommendAreas(scenario.fireCells, forecast, fireSettings.windTowardDeg), [scenario.fireCells, forecast, fireSettings.windTowardDeg])
+  const zoneExposure = useMemo(() => Object.fromEntries(scenario.safeZones.map(zone => [zone.id, exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)])), [forecast, horizon, marginM, scenario.safeZones])
   const forecastRef = useRef({ forecast, horizon, marginM })
   useEffect(() => { forecastRef.current = { forecast, horizon, marginM } }, [forecast, horizon, marginM])
+  useEffect(() => { horizonRef.current = horizon }, [horizon])
   const [firms, setFirms] = useState<FireSpot[]>([])
   const [showFirms, setShowFirms] = useState(false)
   const [firmsState, setFirmsState] = useState('Sin consultar · detecciones de las últimas 24 h')
-  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: true, thermal: false, citizens: true, references: true, zones: true, hospitals: true, healthCenters: true, fireStations: true, routes: true })
+  const [layers, setLayers] = useState<MapLayers>({ perimeter: true, spread: true, plannedFire: true, thermal: false, citizens: true, references: true, zones: true, hospitals: true, healthCenters: true, fireStations: true, routes: true, callArea: true, units: true })
+  useEffect(() => {
+    if (!firePlaying) return
+    const origin = horizonRef.current
+    const started = performance.now()
+    const timer = window.setInterval(() => {
+      const next = Math.min(MAX_FORECAST_MIN, origin + (performance.now() - started) / 1000 * 8)
+      horizonRef.current = next
+      setHorizon(next)
+      if (next >= MAX_FORECAST_MIN) setFirePlaying(false)
+    }, 80)
+    return () => window.clearInterval(timer)
+  }, [firePlaying])
+  const [alerts, setAlerts] = useState<CommandAlert[]>([])
+  const [planReview, setPlanReview] = useState({ windTowardDeg: INITIAL_WIND, reviewedAt: 0, revision: 1 })
+  const [readAlertIds, setReadAlertIds] = useState<Set<string>>(() => new Set())
+  const [units, setUnits] = useState<DispatchUnit[]>(() => createPatrolFleet(scenarioById(DEFAULT_SCENARIO_ID)))
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
+  const [unitsPaused, setUnitsPaused] = useState(false)
+  const watchRef = useRef<AlertWatch | null>(null)
+  const unitsRef = useRef<DispatchUnit[]>(units)
+  const unitSeqRef = useRef(4)
+  const unitFlightRef = useRef(new Map<string, { revision: number; controller: AbortController }>())
   const citizensRef = useRef(citizens)
   const routesRef = useRef<RouteIndex>(new Map())
   const plannedRef = useRef(new Set<string>())
@@ -133,7 +266,21 @@ export function CommandCenter({ token }: { token: string }) {
   const layersButtonRef = useRef<HTMLButtonElement>(null)
   const copButtonRef = useRef<HTMLButtonElement>(null)
   const centersButtonRef = useRef<HTMLButtonElement>(null)
+  const alertsButtonRef = useRef<HTMLButtonElement>(null)
+  const campaignButtonRef = useRef<HTMLButtonElement>(null)
+  const incidentButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { citizensRef.current = citizens }, [citizens])
+  useEffect(() => { unitsRef.current = units }, [units])
+  useEffect(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const id = window.setTimeout(() => {
+      if (shouldShowTourIntro()) setShowTourIntro(true)
+    }, reduced ? 400 : INTRO_MS)
+    return () => {
+      window.clearTimeout(id)
+      stopDemoTour()
+    }
+  }, [])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000)
@@ -142,17 +289,23 @@ export function CommandCenter({ token }: { token: string }) {
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
+      if (touring) return // Driver gestiona su propio Escape y restaura la vista al cerrarse.
       if (drawingArea) { setDrawingArea(false); setCallArea(null); setAreaIds([]); return }
+      if (drawingFire) { setDrawingFire(false); setFireStroke(null); return }
       setSelectedId(null)
       setPanel(null)
-      if (panel === 'cop') copButtonRef.current?.focus()
+      if (hrCard !== 'hidden') { setHrCard('hidden'); return }
+      if (panel === 'campaign') campaignButtonRef.current?.focus()
+      else if (panel === 'incidents') incidentButtonRef.current?.focus()
+      else if (panel === 'cop') copButtonRef.current?.focus()
       else if (panel === 'centers') centersButtonRef.current?.focus()
+      else if (panel === 'alerts') alertsButtonRef.current?.focus()
       else if (panel === 'layers') layersButtonRef.current?.focus()
       else peopleButtonRef.current?.focus()
     }
     window.addEventListener('keydown', close)
     return () => window.removeEventListener('keydown', close)
-  }, [panel, drawingArea])
+  }, [panel, drawingArea, drawingFire, hrCard, touring])
   useEffect(() => {
     if (!showFirms) return
     let cancelled = false
@@ -175,12 +328,14 @@ export function CommandCenter({ token }: { token: string }) {
         inFlightRef.current.add(citizen.id)
         setPlanningCount(inFlightRef.current.size)
         updatePopulation(current => current.map(item => item.id === citizen.id ? { ...item, status: 'routing', routeHoldReason: 'Consultando una ruta desde su posición…' } : item))
-        void planCitizenRoute(token, citizen, SAFE_ZONES, forecast, marginM, controller.signal).then(plan => {
+        void planCitizenRoute(token, citizen, scenario.safeZones, forecast, marginM, controller.signal).then(plan => {
           if (controller.signal.aborted) return
           updatePopulation(current => current.map(item => {
             if (item.id !== citizen.id || item.live || item.call?.consent !== 'granted') return item
             if (plan.route) routesRef.current.set(plan.route.id, plan.route)
-            return { ...item, status: plan.citizen.status, safeZoneId: plan.citizen.safeZoneId, routeId: plan.citizen.routeId, routeProgressM: plan.citizen.routeProgressM, routePhase: plan.citizen.routePhase, routeHoldReason: plan.citizen.routeHoldReason }
+            // Si venía de una rerruta, aquí se sabe por fin a dónde va: la tarjeta lo enseña.
+            const rerouted = item.reroute && !item.reroute.toZoneId && plan.citizen.safeZoneId ? { ...item.reroute, toZoneId: plan.citizen.safeZoneId } : item.reroute
+            return { ...item, status: plan.citizen.status, safeZoneId: plan.citizen.safeZoneId, routeId: plan.citizen.routeId, routeProgressM: plan.citizen.routeProgressM, routePhase: plan.citizen.routePhase, routeHoldReason: plan.citizen.routeHoldReason, reroute: rerouted }
           }))
         }).catch(() => {
           if (!controller.signal.aborted) updatePopulation(current => current.map(item => item.id === citizen.id && !item.live ? { ...item, status: 'assistance', routeHoldReason: 'No se pudo calcular la ruta individual. Puede reintentar la consulta.' } : item))
@@ -196,7 +351,7 @@ export function CommandCenter({ token }: { token: string }) {
     }
     const timer = window.setInterval(schedule, 250)
     return () => { window.clearInterval(timer); controller.abort() }
-  }, [protocolOn, token, forecast, marginM, updatePopulation])
+  }, [protocolOn, token, forecast, marginM, updatePopulation, scenario.safeZones])
   useEffect(() => {
     if (!protocolOn) return
     const started = performance.now()
@@ -207,13 +362,13 @@ export function CommandCenter({ token }: { token: string }) {
       const dt = nextElapsed - previousElapsed
       previousElapsed = nextElapsed
       elapsedRef.current = nextElapsed
-      const advanced = advanceProtocol(citizensRef.current, nextElapsed, [], campaignRef.current)
       const risk = forecastRef.current
+      const advanced = advanceProtocol(citizensRef.current, nextElapsed, [], campaignRef.current, risk)
       const ready = advanced.citizens
-      const moved = moveEvacuees(ready, routesRef.current, SAFE_ZONES, dt).map((next, index) => {
+      const moved = moveEvacuees(ready, routesRef.current, scenario.safeZones, dt).map((next, index) => {
         const previous = ready[index]
         if (next === previous || previous.live) return next
-        const zone = SAFE_ZONES.find(item => item.id === next.safeZoneId)
+        const zone = scenario.safeZones.find(item => item.id === next.safeZoneId)
         const road = next.routeId ? routesRef.current.get(next.routeId) : undefined
         const hasRoad = road?.zoneId === next.safeZoneId && road?.group === (next.locality ?? '')
         const throughMinute = Math.max(60, risk.horizon)
@@ -227,24 +382,75 @@ export function CommandCenter({ token }: { token: string }) {
       if (advanced.events.length) setEvents((previous) => [...advanced.events.reverse(), ...previous].slice(0, 700))
     }, 100)
     return () => window.clearInterval(timer)
-  }, [protocolOn])
-  // El censo de la API manda sobre el de `scenario.ts` en cuanto responde.
+  }, [protocolOn, scenario.safeZones])
+  // El censo de la API manda sobre el de `scenario.ts` en cuanto responde, y después se
+  // relee en bucle: es por donde entra el veredicto del agente cuando cuelga una llamada
+  // (`POST /calls/observation` → `triage_level`). Sin este refresco el mapa se queda con la
+  // foto del arranque y el color nunca cambia aunque el agente haya hablado con medio pueblo.
   useEffect(() => {
+    if (DEMO_ONLY) return
     let cancelled = false
-    void fetchRoster().then((rows) => {
+    let primera = true
+    const cargar = async () => {
+      const rows = await fetchRoster()
       if (cancelled || !rows || !rows.length) return
-      const desdeApi = rows.map(citizenFromRoster)
-      citizensRef.current = desdeApi
-      setCitizens(desdeApi)
-      setApiRoster(true)
-      const centro = desdeApi.reduce(
-        (acc, c) => ({ lng: acc.lng + c.lng / desdeApi.length, lat: acc.lat + c.lat / desdeApi.length }),
-        { lng: 0, lat: 0 },
-      )
-      setFocusTarget({ ...centro, zoom: 14 })
-    })
-    return () => { cancelled = true }
-  }, [])
+      if (primera) {
+        primera = false
+        const desdeApi = rows.map(citizenFromRoster)
+        citizensRef.current = desdeApi
+        setCitizens(desdeApi)
+        setApiRoster(true)
+        setLiveMode(true)
+        // Abierto desde el enlace (`?p=<id>`): el mapa arranca sobre esa persona, no sobre el centroide.
+        const yo = focusPersonId ? desdeApi.find((c) => c.id === focusPersonId) : undefined
+        if (yo) {
+          setFocusTarget({ lng: yo.lng, lat: yo.lat, zoom: 15 })
+          setSelectedId(yo.id)
+          setPanel(null)
+          return
+        }
+        const centro = desdeApi.reduce(
+          (acc, c) => ({ lng: acc.lng + c.lng / desdeApi.length, lat: acc.lat + c.lat / desdeApi.length }),
+          { lng: 0, lat: 0 },
+        )
+        setFocusTarget({ ...centro, zoom: 14 })
+        return
+      }
+      // En los refrescos solo entra el triaje. La posición la manda `/api/locations` y quien
+      // comparte GPS ya está en `tracking`: pisar eso aquí haría parpadear el mapa cada cuatro
+      // segundos y borraría la trayectoria que el operador está mirando.
+      const porId = new Map(rows.map((row) => [row.id, row]))
+      updatePopulation((current) => current.map((citizen) => {
+        const fila = porId.get(citizen.id)
+        const triage = fila && triageFromRoster(fila)
+        if (!fila || !triage || triage.at === citizen.triage?.at) return citizen
+        // Quien comparte GPS se queda en `tracking`: eso lo sabe el mapa mejor que el roster.
+        const status = citizen.live ? citizen.status : statusFromRoster(fila)
+        return { ...citizen, triage, callState: fila.call_state ?? citizen.callState, status }
+      }))
+    }
+    void cargar()
+    const id = window.setInterval(() => void cargar(), 4000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [updatePopulation, focusPersonId])
+
+  // Esta pestaña es el dispositivo de la persona registrada desde el enlace: emite su GPS a la
+  // API mientras siga abierta. Solo si el `?p=` coincide con quien se registró en este navegador.
+  useEffect(() => {
+    if (DEMO_ONLY || !beaconId || !('geolocation' in navigator)) return
+    let last = 0
+    let lastOk = true
+    const watch = navigator.geolocation.watchPosition((position) => {
+      const at = Date.now()
+      if (at - last < 5000) return
+      last = at
+      void postPosition(beaconId, position.coords.latitude, position.coords.longitude, position.coords.accuracy).then((ok) => {
+        if (ok !== lastOk) { lastOk = ok; setBeaconState(ok ? 'on' : 'error') }
+        else if (ok) setBeaconState('on')
+      })
+    }, () => setBeaconState('denied'), { enableHighAccuracy: true, maximumAge: 4000 })
+    return () => navigator.geolocation.clearWatch(watch)
+  }, [beaconId])
 
   // El tablero de la ráfaga viva: se refresca hasta que no quede ninguna llamada abierta.
   useEffect(() => {
@@ -275,6 +481,7 @@ export function CommandCenter({ token }: { token: string }) {
   }, [liveBatch, operatorKey, updatePopulation])
 
   useEffect(() => {
+    if (DEMO_ONLY) return
     let cancelled = false
     const poll = async () => {
       try {
@@ -291,9 +498,75 @@ export function CommandCenter({ token }: { token: string }) {
     void poll()
     return () => { cancelled = true; window.clearInterval(id) }
   }, [])
+  useEffect(() => {
+    const input = { citizens, forecast, marginM, horizon, windTowardDeg: fireSettings.windTowardDeg, campaignIds: campaignRef.current, now: Date.now(), settlements: scenario.settlements, safeZones: scenario.safeZones }
+    if (!watchRef.current) watchRef.current = initialWatch(input)
+    const detected = detectAlerts(input, watchRef.current)
+    watchRef.current = detected.watch
+    if (detected.alerts.length) setAlerts(previous => mergeAlerts(previous, detected.alerts))
+  }, [citizens, forecast, horizon, marginM, fireSettings.windTowardDeg, scenario.settlements, scenario.safeZones])
+  useEffect(() => {
+    const flights = unitFlightRef.current
+    const timer = window.setInterval(() => {
+      for (const [id, flight] of flights) {
+        if (!unitsRef.current.some(unit => unit.id === id && unit.revision === flight.revision)) {
+          flight.controller.abort()
+          flights.delete(id)
+        }
+      }
+      const pending = unitsRef.current.filter(unit => unit.status === 'requested' && !flights.has(unit.id)).slice(0, Math.max(0, 2 - flights.size))
+      for (const unit of pending) {
+        const controller = new AbortController()
+        flights.set(unit.id, { revision: unit.revision, controller })
+        void planUnitRoute(token, unit, controller.signal).then(planned => {
+          if (controller.signal.aborted) return
+          unitsRef.current = applyUnitPlan(unitsRef.current, planned)
+          setUnits(unitsRef.current)
+        }).catch(() => {
+          if (controller.signal.aborted) return
+          unitsRef.current = applyUnitPlan(unitsRef.current, { ...unit, status: 'hold', hold: 'No se pudo calcular el acceso. Puede reintentar la ruta.' })
+          setUnits(unitsRef.current)
+        }).finally(() => { if (flights.get(unit.id)?.controller === controller) flights.delete(unit.id) })
+      }
+    }, 250)
+    return () => { window.clearInterval(timer); for (const flight of flights.values()) flight.controller.abort(); flights.clear() }
+  }, [token, scenario.id])
+  // El mundo se ancla a una persona real: el escenario se desplaza y la flota vuelve a nacer en él.
+  const anchorWorld = (ancla: { lng: number; lat: number }) => {
+    setAnchor(ancla)
+    for (const flight of unitFlightRef.current.values()) flight.controller.abort()
+    unitFlightRef.current.clear()
+    const fleet = createPatrolFleet(anchorScenario(scenarioById(scenarioId), ancla))
+    unitsRef.current = fleet
+    setUnits(fleet)
+    setSelectedUnitId(null)
+    unitSeqRef.current = fleet.length
+    routesRef.current = new Map()
+    plannedRef.current.clear()
+  }
+  useEffect(() => {
+    if (!apiRoster) return
+    let cancelled = false
+    void fetchAnchor().then((ancla) => { if (!cancelled && ancla) anchorWorld(ancla) })
+    return () => { cancelled = true }
+    // Solo al conectar la API: el ancla se fija una vez por sesión del mapa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiRoster])
+  useEffect(() => {
+    let previous = performance.now()
+    const timer = window.setInterval(() => {
+      const now = performance.now()
+      const dt = Math.min(1, (now - previous) / 1000)
+      previous = now
+      if (document.hidden || unitsPaused || !unitsRef.current.some(unit => unit.status === 'en_route' || unit.status === 'patrolling')) return
+      const next = moveUnits(unitsRef.current, dt)
+      unitsRef.current = next
+      setUnits(next)
+    }, 100)
+    return () => window.clearInterval(timer)
+  }, [unitsPaused])
 
-  const fires = useMemo(() => showFirms ? [...SCENARIO_FIRES, ...firms] : SCENARIO_FIRES, [showFirms, firms])
-  /** Centro del censo que sirve la API. `null` mientras Vigía siga con su población local. */
+  const fires = useMemo(() => showFirms ? [...scenario.fires, ...firms] : scenario.fires, [showFirms, firms, scenario.fires])
   const rosterCenter = useMemo(() => {
     if (!apiRoster || !citizens.length) return null
     return {
@@ -301,16 +574,15 @@ export function CommandCenter({ token }: { token: string }) {
       lat: citizens.reduce((total, citizen) => total + citizen.lat, 0) / citizens.length,
     }
   }, [apiRoster, citizens])
-  /** El rótulo de la cabecera miente si el censo ya no es el de Gredos. */
   const placeName = useMemo(() => {
-    if (!apiRoster) return 'Sierra de Gredos'
+    if (!apiRoster) return scenario.incident.area
     const porLocalidad = new Map<string, number>()
     for (const citizen of citizens) {
       const clave = citizen.locality ?? ''
       if (clave) porLocalidad.set(clave, (porLocalidad.get(clave) ?? 0) + 1)
     }
     return [...porLocalidad.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Escenario de la API'
-  }, [apiRoster, citizens])
+  }, [apiRoster, citizens, scenario.incident.area])
   const counts = useMemo(() => ({
     total: citizens.length,
     answered: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.call).length,
@@ -334,21 +606,46 @@ export function CommandCenter({ token }: { token: string }) {
   const beginArea = () => {
     setSelectedId(null)
     setPanel(null)
+    setHrCard('hidden')
+    setDrawingFire(false)
+    setFireStroke(null)
+    if (drawingArea) {
+      setDrawingArea(false)
+      updateArea(null)
+      return
+    }
     updateArea(null)
     setDrawingArea(true)
     setLayers(previous => ({ ...previous, citizens: true, references: true }))
   }
+  const adoptCurrentPlan = (nextRevision = false) => setPlanReview(previous => ({
+    windTowardDeg: fireSettings.windTowardDeg,
+    reviewedAt: Date.now(),
+    revision: previous.revision + (nextRevision && previous.reviewedAt ? 1 : 0),
+  }))
   /** Modo real: el círculo va a la API y vuelve un tablero de llamadas de verdad. */
-  const launchLiveCampaign = async () => {
-    if (drawingArea || !callArea || dispatching) return
+  const launchLiveCampaign = async (area: CallArea, ids: string[], reason?: string) => {
+    if (drawingArea || dispatching) return
     setDispatching(true)
     setDispatchError('')
+    setSelectedId(null)
+    setHrCard('hidden')
+    setPanel('campaign')
     try {
-      const resultado = await dispatchCircle(operatorKey, callArea, { operator: 'puesto de mando' })
+      const resultado = await dispatchCircle(operatorKey, area, { operator: 'puesto de mando', force: forceRecall, reason })
       setLiveBatch({ id: resultado.batch_id, skipped: resultado.skipped_detail })
       setLiveCalls(resultado.calls)
-      setCampaignIds(resultado.calls.map((call) => call.person_id))
-      campaignRef.current = new Set(resultado.calls.map((call) => call.person_id))
+      // Híbrido: la API marca los teléfonos reales; los vecinos demo del círculo (sin GPS real)
+      // arrancan a la vez la simulación local para que el mapa se mueva mientras suena la llamada.
+      const realIds = resultado.calls.map((call) => call.person_id)
+      const campaign = prepareAreaCampaign(citizensRef.current, ids, elapsedRef.current, campaignRef.current)
+      const enrolled = new Set([...campaign.ids, ...realIds])
+      campaignRef.current = enrolled
+      citizensRef.current = campaign.citizens
+      setCitizens(campaign.citizens)
+      setCampaignIds([...enrolled])
+      if (resultado.dispatched || campaign.addedIds.length) adoptCurrentPlan()
+      if (campaign.addedIds.length) setProtocolOn(true)
       if (!resultado.dispatched) {
         setDispatchError('Nadie en esta zona se puede llamar ahora mismo. Mira el detalle de abajo.')
       }
@@ -359,17 +656,32 @@ export function CommandCenter({ token }: { token: string }) {
     }
   }
 
-  const launchAreaCampaign = () => {
-    if (liveMode) { void launchLiveCampaign(); return }
-    if (drawingArea || !callArea) return
-    const campaign = prepareAreaCampaign(citizensRef.current, areaIds, elapsedRef.current, campaignRef.current)
+  const launchCampaignIn = (area: CallArea, ids: string[], reason?: string) => {
+    if (liveMode && !DEMO_ONLY) { void launchLiveCampaign(area, ids, reason); return }
+    if (drawingArea) return
+    const campaign = prepareAreaCampaign(citizensRef.current, ids, elapsedRef.current, campaignRef.current)
     if (!campaign.addedIds.length) return
     campaignRef.current = new Set(campaign.ids)
     citizensRef.current = campaign.citizens
     setCitizens(campaign.citizens)
     setCampaignIds(campaign.ids)
+    adoptCurrentPlan()
     setProtocolOn(true)
   }
+  const launchAreaCampaign = () => { if (callArea) launchCampaignIn(callArea, areaIds) }
+  /** Zona recomendada: se adopta como círculo de la campaña y se lanza en el mismo gesto. */
+  const launchRecommended = (kind: 'risk' | 'affected') => {
+    if (!recommended || drawingArea || dispatching) return
+    const area = recommended[kind]
+    const ids = selectAreaIds(citizensRef.current, area)
+    setCallArea(area)
+    setAreaIds(ids)
+    launchCampaignIn(area, ids, kind === 'risk' ? 'zona de riesgo recomendada junto al fuego' : `zona posiblemente afectada en ${recommended.affectedMinutes} min`)
+  }
+  const recommendedCounts = useMemo(() => recommended ? {
+    risk: selectAreaIds(citizens, recommended.risk).length,
+    affected: selectAreaIds(citizens, recommended.affected).length,
+  } : null, [recommended, citizens])
   const retryRoutes = () => {
     for (const citizen of citizensRef.current) {
       if (campaignRef.current.has(citizen.id) && !citizen.live && citizen.call?.consent === 'granted' && citizen.status === 'assistance') {
@@ -380,109 +692,539 @@ export function CommandCenter({ token }: { token: string }) {
     updatePopulation(current => current.map(citizen => campaignRef.current.has(citizen.id) && !citizen.live && citizen.call?.consent === 'granted' && citizen.status === 'assistance' ? { ...citizen, status: 'tracking', routeId: undefined, safeZoneId: '', routeProgressM: undefined, routePhase: undefined, routeHoldReason: undefined } : citizen))
     setProtocolOn(true)
   }
+  /** Crea o redirige un medio hacia el destino. Devuelve el medio, o nada si no hay hueco o el destino no vale. */
+  const spawnUnit = (kind: UnitKind, target: DispatchTarget, agent = 'Operador · demo'): DispatchUnit | null => {
+    const available = pickAvailableUnit(unitsRef.current, kind, target)
+    if (!available && unitsRef.current.length >= MAX_UNITS) return null
+    try {
+      const unit = available ? redirectUnit(available, target, Date.now(), agent) : createDispatch(kind, target, Date.now(), unitSeqRef.current++, origins, agent)
+      if (!available) unit.id = `${scenario.id}-${unit.id}`
+      unitsRef.current = available ? unitsRef.current.map(item => item.id === unit.id ? unit : item) : [unit, ...unitsRef.current]
+      setUnits(unitsRef.current)
+      setLayers(previous => ({ ...previous, units: true }))
+      return unit
+    } catch {
+      return null // destino inválido: no se crea el medio
+    }
+  }
+  const dispatchUnit = (kind: UnitKind, target: DispatchTarget) => {
+    const unit = spawnUnit(kind, target)
+    if (!unit) return
+    setSelectedUnitId(unit.id)
+    setFocusTarget({ lng: unit.lng, lat: unit.lat, bounds: [[unit.lng, unit.lat], [target.lng, target.lat]] })
+    setSelectedId(null)
+    setDrawingArea(false)
+    setHrCard('hidden')
+    setPanel('alerts')
+  }
+  const targetFromCitizens = (ids: string[], fallback?: { lng: number; lat: number }, label = 'zona seleccionada'): DispatchTarget | null => {
+    const group = ids.map(id => citizensRef.current.find(citizen => citizen.id === id)).filter((citizen): citizen is Citizen => Boolean(citizen))
+    if (group.length) {
+      return { lng: group.reduce((sum, citizen) => sum + citizen.lng, 0) / group.length, lat: group.reduce((sum, citizen) => sum + citizen.lat, 0) / group.length, label: group.length === 1 ? group[0].name : `${group.length} personas · ${label}`, citizenId: group[0].id }
+    }
+    if (fallback) return { ...fallback, label }
+    return null
+  }
+  // --- escalada a fuerzas de seguridad -------------------------------------------------------
+  /** Casas sin respuesta que aún no se han escalado, dentro del círculo si lo hay o de la campaña si no. */
+  const silentIds = useMemo(() => citizens.filter(citizen => citizen.status === 'no_answer' && !citizen.escalation && (areaIds.length ? areaIds.includes(citizen.id) : campaignSet.has(citizen.id))).map(citizen => citizen.id), [citizens, areaIds, campaignSet])
+  const startEscalation = (ids: string[], label: string) => {
+    if (escalation || !ids.length) return
+    setEscalation({ id: crypto.randomUUID(), citizenIds: ids, label, startedAt: Date.now(), step: 0, unitIds: [] })
+    setHrCard('open')
+  }
+  /** Último paso del run: salen los medios, las casas quedan marcadas y el mapa encuadra el vuelo. */
+  const completeEscalation = (run: HrEscalationRun): string[] => {
+    const target = targetFromCitizens(run.citizenIds, undefined, 'sin respuesta')
+    if (!target) return []
+    const agent = 'HappyRobot · Escalada'
+    const spawned = HR_ESCALATION_UNITS.map(kind => spawnUnit(kind, target, agent)).filter((unit): unit is DispatchUnit => Boolean(unit))
+    const unitIds = spawned.map(unit => unit.id)
+    const now = Date.now()
+    updatePopulation(current => current.map(citizen => run.citizenIds.includes(citizen.id) ? { ...citizen, escalation: { at: now, runId: run.id, unitIds } } : citizen))
+    setEvents(previous => [...previous, ...run.citizenIds.map(id => {
+      const citizen = citizensRef.current.find(item => item.id === id)
+      return { id: `${id}-escalated-${run.id}`, ts: now, agent, citizenId: id, name: citizen?.name ?? id, detail: `escalado · ${spawned.map(unit => unit.callSign).join(' y ') || 'sin medios libres'} en camino` }
+    })])
+    if (spawned.length) {
+      const lngs = [target.lng, ...spawned.map(unit => unit.lng)]
+      const lats = [target.lat, ...spawned.map(unit => unit.lat)]
+      setFocusTarget({ lng: target.lng, lat: target.lat, bounds: [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]] })
+    }
+    return unitIds
+  }
+  // El cierre lee refs y estado del turno actual; el efecto solo necesita la versión más reciente.
+  const completeEscalationRef = useRef(completeEscalation)
+  completeEscalationRef.current = completeEscalation
+  useEffect(() => {
+    if (!escalation) return
+    const step = HR_ESCALATION_STEPS[escalation.step]
+    // Terminado: la tarjeta enseña el resultado un rato y vuelve a su ficha. Los medios siguen en el mapa.
+    if (!step) {
+      const timer = window.setTimeout(() => setEscalation(current => current?.id === escalation.id ? null : current), 9000)
+      return () => window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(() => {
+      const last = escalation.step === HR_ESCALATION_STEPS.length - 1
+      const unitIds = last ? completeEscalationRef.current(escalation) : escalation.unitIds
+      setEscalation(current => current?.id === escalation.id ? { ...current, step: current.step + 1, unitIds } : current)
+    }, step.ms)
+    return () => window.clearTimeout(timer)
+  }, [escalation])
+  const escalationUnits = useMemo(() => escalation ? escalation.unitIds.map(id => units.find(unit => unit.id === id)).filter((unit): unit is DispatchUnit => Boolean(unit)).map(unit => ({ callSign: unit.callSign, label: `${UNIT_LABEL[unit.kind]} · ${UNIT_STATUS_LABEL[unit.status]}`, eta: unitEta(unit) })) : [], [escalation, units])
+  // --- frente previsto pintado a mano y rerruta ------------------------------------------------
+  const beginFirePaint = () => {
+    setSelectedId(null)
+    setPanel(null)
+    setHrCard('hidden')
+    setDrawingArea(false)
+    setFireStroke(null)
+    setDrawingFire(active => !active)
+    setLayers(previous => ({ ...previous, plannedFire: true, citizens: true, zones: true }))
+  }
+  const clearPlannedFires = () => {
+    setPaintedFires([])
+    setFireStroke(null)
+    setDrawingFire(false)
+  }
+  /**
+   * El trazo se cierra: entra en el modelo como fuego a +15 min y se mira a quién le corta el
+   * camino. La prueba se hace contra un pronóstico hecho SOLO con el frente pintado, para que la
+   * culpa sea del trazo y no del fuego real: alguien cuya ruta ya rozaba la proyección vieja no
+   * se rerruta por pintar en la otra punta del mapa.
+   */
+  const finishFireStroke = (ring: [number, number][]) => {
+    const painted: PaintedFire = { id: crypto.randomUUID(), ring, at: Date.now() }
+    setPaintedFires(previous => [...previous, painted])
+    setFireStroke(null)
+    setDrawingFire(false)
+    const paintedOnly = buildFireForecast({ type: 'FeatureCollection', features: [] }, fireSettings, { footprint: paintedFootprint([painted]), minute: PLANNED_FIRE_MIN })
+    const through = Math.max(60, horizonRef.current)
+    const affected = citizensRef.current.filter(citizen => {
+      if (citizen.live || citizen.reroute && !citizen.reroute.toZoneId) return false
+      if (!['evacuating', 'tracking', 'routing'].includes(citizen.status) || !citizen.routeId) return false
+      const route = routesRef.current.get(citizen.routeId)
+      const zone = scenario.safeZones.find(item => item.id === citizen.safeZoneId)
+      if (!route || !zone) return false
+      if (exposureAt(paintedOnly, zone.lng, zone.lat, through, marginM + zone.radiusM).level !== 'clear') return true
+      // Lo que le queda de camino, desde donde está: lo andado ya no lo cruza nadie.
+      const progress = citizen.routeProgressM ?? 0
+      const ahead = route.coords.filter((_, index) => route.cumulative[index] >= progress)
+      const remaining: [number, number][] = [[citizen.lng, citizen.lat], positionAt(route, progress), ...ahead]
+      return routeBlocked(paintedOnly, remaining, through, marginM)
+    })
+    if (!affected.length || reroute) return
+    const run: HrRerouteRun = { id: crypto.randomUUID(), citizenIds: affected.map(citizen => citizen.id), label: `${affected.length} ${affected.length === 1 ? 'persona' : 'personas'} con el camino cortado`, startedAt: Date.now(), step: 0 }
+    const at = Date.now()
+    // Se paran donde están mientras el run decide. Conservan la ruta vieja para que el planificador
+    // no les busque salida antes de que HappyRobot «se lo diga»; se suelta en el paso del aviso.
+    updatePopulation(current => current.map(citizen => run.citizenIds.includes(citizen.id)
+      ? { ...citizen, status: 'routing', routeHoldReason: 'Frente previsto en su camino. HappyRobot recalcula el destino…', reroute: { at, runId: run.id, fromZoneId: citizen.safeZoneId } }
+      : citizen))
+    setEvents(previous => [...previous, ...affected.map(citizen => ({ id: `${citizen.id}-reroute-${run.id}`, ts: at, agent: 'HappyRobot · Rerruta', citizenId: citizen.id, name: citizen.name, detail: 'alto: frente previsto en su camino · recalculando destino' }))])
+    setReroute(run)
+    setHrCard('open')
+    const lngs = affected.map(citizen => citizen.lng).concat(ring.map(([lng]) => lng))
+    const lats = affected.map(citizen => citizen.lat).concat(ring.map(([, lat]) => lat))
+    setFocusTarget({ lng: (Math.min(...lngs) + Math.max(...lngs)) / 2, lat: (Math.min(...lats) + Math.max(...lats)) / 2, bounds: [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]] })
+  }
+  /** Paso del aviso: los vecinos «reciben» la ruta nueva, así que ahora sí se pide a Directions desde donde están. */
+  const releaseReroute = (run: HrRerouteRun) => {
+    for (const id of run.citizenIds) plannedRef.current.delete(id)
+    updatePopulation(current => current.map(citizen => run.citizenIds.includes(citizen.id) && citizen.reroute?.runId === run.id
+      ? { ...citizen, status: 'routing', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: 'Buscando la salida más rápida desde su posición actual…' }
+      : citizen))
+    setProtocolOn(true)
+  }
+  const releaseRerouteRef = useRef(releaseReroute)
+  releaseRerouteRef.current = releaseReroute
+  useEffect(() => {
+    if (!reroute) return
+    const step = HR_REROUTE_STEPS[reroute.step]
+    if (!step) {
+      const timer = window.setTimeout(() => setReroute(current => current?.id === reroute.id ? null : current), 10000)
+      return () => window.clearTimeout(timer)
+    }
+    const timer = window.setTimeout(() => {
+      if (reroute.step + 1 === HR_REROUTE_RELEASE_STEP) releaseRerouteRef.current(reroute)
+      setReroute(current => current?.id === reroute.id ? { ...current, step: current.step + 1 } : current)
+    }, step.ms)
+    return () => window.clearTimeout(timer)
+  }, [reroute])
+  const rerouteOutcome = useMemo(() => {
+    if (!reroute) return null
+    const mine = citizens.filter(citizen => reroute.citizenIds.includes(citizen.id))
+    const outcomes: HrRerouteOutcome[] = scenario.safeZones.map(zone => ({ zoneId: zone.id, code: zone.code, name: zone.name, count: mine.filter(citizen => citizen.reroute?.toZoneId === zone.id).length })).filter(item => item.count > 0)
+    const pending = mine.filter(citizen => !citizen.reroute?.toZoneId && citizen.status !== 'assistance').length
+    const stuck = mine.filter(citizen => !citizen.reroute?.toZoneId && citizen.status === 'assistance').length
+    return { run: reroute, outcomes: stuck ? [...outcomes, { zoneId: 'none', code: '—', name: 'Sin salida segura · revisión del mando', count: stuck }] : outcomes, pending }
+  }, [reroute, citizens, scenario.safeZones])
+  const handleAlertAction = (alert: CommandAlert, action: AlertAction) => {
+    if (action === 'call-area' && alert.focus) {
+      finishArea({ lng: alert.focus.lng, lat: alert.focus.lat, radiusM: alert.radiusM ?? 1200 })
+      setPanel(null)
+      return
+    }
+    if (action === 'review-routes') {
+      setFilter('assistance')
+      setDrawingArea(false)
+      setHrCard('hidden')
+      setPanel('people')
+      if (alert.focus) setFocusTarget(alert.focus)
+      return
+    }
+    const kind: UnitKind | undefined = action === 'dispatch-police' ? 'police' : action === 'dispatch-ambulance' ? 'ambulance' : action === 'dispatch-fire' ? 'fire' : undefined
+    const target = kind ? targetFromCitizens(alert.citizenIds, alert.focus, alert.title) : null
+    if (kind && target) dispatchUnit(kind, target)
+  }
+  const retryUnit = (id: string) => {
+    unitsRef.current = unitsRef.current.map(unit => unit.id === id && unit.status === 'hold' ? retryUnitRoute(unit) : unit)
+    setUnits(unitsRef.current)
+  }
+  const selectUnit = (id: string) => {
+    const unit = unitsRef.current.find(item => item.id === id)
+    if (!unit) return
+    setSelectedId(null)
+    setSelectedUnitId(id)
+    setDrawingArea(false)
+    setHrCard('hidden')
+    setPanel('alerts')
+    setFocusTarget({ lng: unit.lng, lat: unit.lat, zoom: 14 })
+  }
   const selectCitizen = (id: string | null) => {
     setSelectedId(id)
     setPanel(null)
-    if (id) setLayers((previous) => ({ ...previous, citizens: true, references: true }))
+    setDrawingArea(false)
+    if (id) {
+      setHrCard('hidden')
+      setLayers((previous) => ({ ...previous, citizens: true, references: true }))
+    }
   }
-  const togglePanel = (next: 'people' | 'layers' | 'cop' | 'centers') => { setSelectedId(null); setPanel((current) => current === next ? null : next) }
+  const togglePanel = (next: 'people' | 'layers' | 'cop' | 'centers' | 'alerts' | 'campaign' | 'incidents') => {
+    setSelectedId(null)
+    setDrawingArea(false)
+    setHrCard('hidden')
+    if (next === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
+    setPanel((current) => current === next ? null : next)
+  }
+  const toggleHappyRobot = () => {
+    setSelectedId(null)
+    setDrawingArea(false)
+    setPanel(null)
+    setHrCard((value) => value === 'hidden' ? 'open' : 'hidden')
+  }
+  const selectScenario = (id: string) => {
+    if (id === scenarioId) return
+    const next = scenarioById(id)
+    setScenarioId(id)
+    setEscalation(null)
+    setProtocolOn(false)
+    setDrawingArea(false)
+    setCallArea(null)
+    setAreaIds([])
+    campaignRef.current = new Set()
+    setCampaignIds([])
+    setPlanningCount(0)
+    setSelectedId(null)
+    setQuery('')
+    setFilter('all')
+    setPanel(null)
+    setHorizon(0)
+    setFirePlaying(false)
+    setShowWind(false)
+    setFireSettings({ windTowardDeg: INITIAL_WIND, windKmh: 20, spreadMPerMin: 8 })
+    setSelectedCenterId(null)
+    setFocusTarget({ lng: next.incident.center[0], lat: next.incident.center[1], zoom: next.incident.zoom })
+    setMapRoute(null)
+    setNotices([])
+    setAlerts([])
+    setPlanReview({ windTowardDeg: INITIAL_WIND, reviewedAt: 0, revision: 1 })
+    setReadAlertIds(new Set())
+    const fleet = createPatrolFleet(next)
+    setUnits(fleet)
+    unitsRef.current = fleet
+    setSelectedUnitId(null)
+    setUnitsPaused(false)
+    unitSeqRef.current = fleet.length
+    for (const flight of unitFlightRef.current.values()) flight.controller.abort()
+    unitFlightRef.current.clear()
+    setLiveBatch(null)
+    setLiveCalls([])
+    setDispatchError('')
+    watchRef.current = null
+    routesRef.current = new Map()
+    plannedRef.current.clear()
+    inFlightRef.current.clear()
+    elapsedRef.current = 0
+    citizensRef.current = next.citizens
+    setCitizens(next.citizens)
+    setEvents([])
+  }
   const selectCenter = (id: string) => {
-    const center = RESPONSE_CENTERS.find(item => item.id === id)
+    const center = scenario.centers.find(item => item.id === id)
     if (!center) return
     setSelectedId(null)
     setSelectedCenterId(id)
+    setDrawingArea(false)
+    setHrCard('hidden')
     setPanel('centers')
     setFocusTarget({ lng: center.lng, lat: center.lat })
     setLayers(previous => ({ ...previous, [center.kind === 'hospital' ? 'hospitals' : center.kind === 'health' ? 'healthCenters' : 'fireStations']: true }))
   }
-  const panelTitle = selected ? 'Ficha de persona' : panel === 'layers' ? 'Capas del mapa' : panel === 'cop' ? 'Simulación del incendio' : panel === 'centers' ? 'Centros y coordinación' : 'Personas'
-  const scenarioLabel = `Escenario +${horizon} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
-  const simulateFire = () => { setHorizon(60); setLayers(previous => ({ ...previous, spread: true })); setFocusTarget({ lng: INCIDENT.center[0], lat: INCIDENT.center[1], zoom: 12 }) }
-  const resetFire = () => setHorizon(0)
+  // El pulso de la campaña para la tarjeta de HappyRobot: con la ráfaga viva manda el tablero de la
+  // API; en simulación local, los vecinos del círculo. Sin campaña, no hay pulso.
+  const hrCalls: HrCallsPulse | undefined = useMemo(() => {
+    if (liveBatch) return { total: liveCalls.length, open: liveCalls.filter(call => CALL_STATE_OPEN.includes(call.state)).length, answered: liveCalls.filter(call => call.state === 'answered').length }
+    if (!campaignIds.length) return undefined
+    return { total: campaignIds.length, open: citizens.filter(citizen => campaignSet.has(citizen.id) && citizen.status === 'ringing').length, answered: counts.answered }
+  }, [liveBatch, liveCalls, campaignIds.length, citizens, campaignSet, counts.answered])
+  // Con llamadas en marcha y ninguna ficha abierta, la tarjeta enseña la anatomía de la llamada.
+  const hrView: HrView = escalation ? 'escalation' : reroute ? 'reroute' : selected ? 'person' : panel ?? (hrCalls && (hrCalls.open > 0 || campaignRunning) ? 'campaign' : 'overview')
+  const panelTitle = selected ? 'Ficha de persona' : panel === 'incidents' ? 'Escenarios' : panel === 'layers' ? 'Capas y leyenda' : panel === 'cop' ? 'Propagación y viento' : panel === 'centers' ? 'Centros y coordinación' : panel === 'alerts' ? 'Plan operativo' : 'Personas'
+  const panelKicker = selected ? 'Censo' : panel === 'incidents' ? 'Escenario' : panel === 'layers' ? 'Mapa' : panel === 'cop' ? 'Modelo' : panel === 'centers' ? 'Coordinación' : panel === 'alerts' ? 'Operación' : 'Censo'
+  const scenarioLabel = `Escenario +${Math.round(horizon)} min · viento hacia ${fireSettings.windTowardDeg}° a ${fireSettings.windKmh} km/h · avance base ${fireSettings.spreadMPerMin} m/min · margen ${marginM} m`
+  const playFire = () => {
+    setLayers(previous => ({ ...previous, spread: true, perimeter: true }))
+    setFirePlaying(active => !active)
+  }
+  const shiftWind = () => {
+    setFireSettings(previous => ({ ...previous, windTowardDeg: SHIFTED_WIND }))
+    setShowWind(true)
+    setLayers(previous => ({ ...previous, spread: true }))
+  }
+  const resetFire = () => {
+    setFirePlaying(false)
+    setHorizon(0)
+    setFireSettings(previous => ({ ...previous, windTowardDeg: INITIAL_WIND }))
+  }
   const toggleWind = () => setShowWind(value => !value)
   const closePanel = () => {
-    if (panel === 'cop') copButtonRef.current?.focus()
+    if (panel === 'campaign') campaignButtonRef.current?.focus()
+    else if (panel === 'incidents') incidentButtonRef.current?.focus()
+    else if (panel === 'cop') copButtonRef.current?.focus()
     else if (panel === 'centers') centersButtonRef.current?.focus()
+    else if (panel === 'alerts') alertsButtonRef.current?.focus()
     else if (panel === 'layers') layersButtonRef.current?.focus()
     else peopleButtonRef.current?.focus()
     setSelectedId(null)
     setPanel(null)
   }
+  // El recorrido lee el estado del turno actual desde el temporizador de Driver, fuera de React:
+  // las refs le dan siempre la versión más reciente sin rehacer el tour en cada render.
+  const tourStateRef = useRef({ escalation, alerts, fireSettings, selectedId, silentIds, recommended, escalationUnits })
+  tourStateRef.current = { escalation, alerts, fireSettings, selectedId, silentIds, recommended, escalationUnits }
+  const launchRecommendedRef = useRef(launchRecommended)
+  launchRecommendedRef.current = launchRecommended
+  const startEscalationRef = useRef(startEscalation)
+  startEscalationRef.current = startEscalation
+  const tourWindShiftAtRef = useRef(0)
+  /** Primera casa sin respuesta de la campaña; si aún no la hay, la primera que está sonando o en la cola. */
+  const tourSilentPerson = () => {
+    const enrolled = citizensRef.current.filter(citizen => campaignRef.current.has(citizen.id) && !citizen.live)
+    return (enrolled.find(citizen => citizen.status === 'no_answer') ?? enrolled.find(citizen => citizen.status === 'ringing') ?? enrolled[0] ?? citizensRef.current[0])?.id ?? null
+  }
+  const tourCallCounts = () => {
+    const enrolled = citizensRef.current.filter(citizen => campaignRef.current.has(citizen.id))
+    const answered = enrolled.filter(citizen => citizen.call).length
+    const ringing = enrolled.filter(citizen => citizen.status === 'ringing').length
+    const silent = enrolled.filter(citizen => citizen.status === 'no_answer').length
+    return { total: enrolled.length, answered, ringing, silent }
+  }
+  const launchTour = () => {
+    setShowTourIntro(false)
+    // Al terminar, el visitante vuelve a encontrarse lo que tenía abierto. Lo que la demo ha
+    // puesto en marcha (llamadas, medios, viento) se queda: es el punto de partida para explorar.
+    const previous = { panel, selectedId, hrCard }
+    const personId = selectedId ?? filtered[0]?.id ?? citizens[0]?.id ?? null
+    setTouring(true)
+    void startDemoTour({
+      // flushSync: Driver mide el anclaje justo después, así que la vista tiene que estar ya en el DOM.
+      open: (view: TourView) => flushSync(() => {
+        setDrawingArea(false)
+        if (view.focus === 'risk' && tourStateRef.current.recommended) setFocusTarget({ lng: tourStateRef.current.recommended.risk.lng, lat: tourStateRef.current.recommended.risk.lat, zoom: 13.6 })
+        if (view.run === 'call-risk' && !campaignRef.current.size) launchRecommendedRef.current('risk')
+        if (view.run === 'shift-wind' && tourStateRef.current.fireSettings.windTowardDeg === INITIAL_WIND) {
+          tourWindShiftAtRef.current = Date.now()
+          shiftWind()
+        }
+        if (view.run === 'escalate' && !tourStateRef.current.escalation && tourStateRef.current.silentIds.length) startEscalationRef.current(tourStateRef.current.silentIds, 'recorrido')
+        setHrCard(view.happyRobot ? 'open' : 'hidden')
+        setSelectedId(view.person ? (view.silent ? tourSilentPerson() : personId) : null)
+        setPanel(view.person ? 'people' : view.panel ?? null)
+        if (view.panel === 'alerts') setReadAlertIds(new Set(alerts.map(alert => alert.id)))
+      }),
+      tick: (stepId) => {
+        const state = tourStateRef.current
+        const calls = tourCallCounts()
+        const callsLine = calls.total ? `${calls.answered} de ${calls.total} han contestado · ${calls.ringing} sonando · ${calls.silent} sin respuesta` : null
+        switch (stepId) {
+          case 'personas':
+            return state.recommended ? `${selectAreaIds(citizensRef.current, state.recommended.risk).length} casas en la zona de riesgo recomendada` : null
+          case 'llamar':
+          case 'happyrobot':
+          case 'cola':
+            return callsLine ?? 'Lanzando las llamadas…'
+          case 'ficha': {
+            // Si la ficha abierta aún no es una casa sin respuesta y ya hay una, cambiamos a ella una vez.
+            const current = citizensRef.current.find(citizen => citizen.id === state.selectedId)
+            if (current?.status !== 'no_answer') {
+              const silent = citizensRef.current.find(citizen => campaignRef.current.has(citizen.id) && citizen.status === 'no_answer')
+              if (silent) { setSelectedId(silent.id); return `${silent.name} · sin respuesta tras dos intentos` }
+              return calls.total ? 'Esperando a la primera casa que no descuelgue…' : null
+            }
+            return `${current.name} · sin respuesta tras dos intentos · ${calls.silent} casas en rojo`
+          }
+          case 'escalada': {
+            if (!state.escalation) {
+              if (state.silentIds.length) { startEscalationRef.current(state.silentIds, 'recorrido'); return 'Arrancando el run…' }
+              const escalated = citizensRef.current.filter(citizen => citizen.escalation).length
+              return escalated ? `${escalated} casas con fuerzas de seguridad en camino` : (calls.total ? 'Aún no hay casas sin respuesta: espera a que acaben de sonar.' : 'Sin llamadas en marcha: vuelve al paso 3.')
+            }
+            const step = HR_ESCALATION_STEPS[state.escalation.step]
+            if (step) return `Paso ${state.escalation.step + 1} de ${HR_ESCALATION_STEPS.length} · ${step.label}`
+            return state.escalationUnits.length ? `Enviado · ${state.escalationUnits.map(unit => `${unit.callSign} ${unit.eta}`).join(' · ')}` : 'Enviado'
+          }
+          case 'viento': {
+            const since = tourWindShiftAtRef.current
+            const fresh = state.alerts.filter(alert => alert.ts >= since).length
+            return since ? `Viento hacia ${state.fireSettings.windTowardDeg}° · ${fresh} ${fresh === 1 ? 'aviso nuevo' : 'avisos nuevos'} desde el giro` : 'El viento ya estaba girado'
+          }
+          case 'plan':
+            return `${state.alerts.length} avisos · ${unitsRef.current.filter(unit => unit.mission !== 'patrol').length} medios con misión`
+          default:
+            return null
+        }
+      },
+      close: () => {
+        setTouring(false)
+        setPanel(previous.panel)
+        setSelectedId(previous.selectedId)
+        setHrCard(previous.hrCard)
+      },
+    })
+  }
+  const unreadAlerts = alerts.filter(alert => !readAlertIds.has(alert.id))
+  const toasts = unreadAlerts.slice(0, 3)
+  const windShifted = fireSettings.windTowardDeg !== INITIAL_WIND
+  const planStale = Boolean(planReview.reviewedAt) && (
+    planReview.windTowardDeg !== fireSettings.windTowardDeg
+    || alerts.some(alert => ['fire-spread', 'route-cut'].includes(alert.kind) && alert.ts > planReview.reviewedAt)
+  )
+
+  const brandRef = useRef<HTMLDivElement>(null)
 
   return (
-    <div className="map-app">
+    <div className={`map-app${panel || selected ? ' has-panel' : ''}${hrCard !== 'hidden' ? ' has-hr' : ''}`}>
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap token={token} citizens={citizens} fires={fires} zones={SAFE_ZONES} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} />
+        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} plannedFires={paintedFires} fireStroke={fireStroke} drawingFire={drawingFire} onFireStroke={setFireStroke} onFireComplete={finishFireStroke} recommended={recommended} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
+      <Intro brand={brandRef} />
       <header className="floating-brand">
-        <span className="brand-symbol" aria-hidden="true">V</span><strong>vigía</strong><span className="brand-divider" /><span className="place-name">{placeName}</span><span className="demo-badge">DEMO</span>
+        <div className="brand-row" ref={brandRef}><Wordmark className="brand-logo" /></div>
+        <span className="brand-divider" aria-hidden="true" />
+        <button ref={incidentButtonRef} type="button" data-demo="incident-trigger" className="incident-trigger" aria-label="Cambiar escenario" aria-expanded={panel === 'incidents'} aria-controls="map-panel" onClick={() => togglePanel('incidents')}>
+          <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${!DEMO_ONLY && apiRoster ? 'connected' : ''}`} aria-hidden="true" />{DEMO_ONLY ? 'Demo fija · sin backend' : apiRoster ? 'API conectada' : 'Escenario de demo'} · {DEMO_ONLY || !apiRoster ? scenario.incident.area : placeName}</small></span><Icon name="chevron" />
+        </button>
+        {beaconId && <span className={`beacon-chip ${beaconState}`} role="status">{beaconState === 'on' ? 'Compartiendo tu ubicación' : beaconState === 'denied' ? 'Ubicación denegada' : beaconState === 'error' ? 'Sin conexión con la API' : 'Leyendo tu ubicación…'}</span>}
       </header>
-      <nav className="floating-actions" aria-label="Herramientas del mapa">
-        <button type="button" aria-label="Dibujar zona de llamadas" aria-pressed={drawingArea} className={drawingArea ? 'active' : ''} onClick={beginArea}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><circle cx="12" cy="12" r="8" strokeDasharray="3 2" /><path d="M12 8v8M8 12h8" /></svg><span>Zona</span></button>
-        <button ref={copButtonRef} type="button" aria-label="Simulación del incendio" className={panel === 'cop' ? 'active' : ''} aria-expanded={panel === 'cop'} aria-controls="map-panel" onClick={() => togglePanel('cop')}><Icon name="layers" /><span>Propagación</span></button>
-        <button ref={centersButtonRef} type="button" aria-label="Centros y coordinación" className={panel === 'centers' ? 'active' : ''} aria-expanded={panel === 'centers'} aria-controls="map-panel" onClick={() => togglePanel('centers')}><Icon name="people" /><span>Centros</span></button>
-        <button ref={peopleButtonRef} type="button" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
-        <button ref={layersButtonRef} type="button" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
+      <nav className="floating-actions" data-demo="tools" aria-label="Herramientas del mapa">
+        <button type="button" data-demo="tool-area" aria-label="Dibujar zona de llamadas" aria-pressed={drawingArea} className={drawingArea ? 'active' : ''} onClick={beginArea}><Icon name="zone" /><span>Zona</span></button>
+        <button type="button" data-demo="tool-paint-fire" aria-label="Pintar un frente previsto" aria-pressed={drawingFire} className={`paint-fire ${drawingFire ? 'active' : ''}`} onClick={beginFirePaint}><Icon name="brush" /><span>Frente</span>{paintedFires.length > 0 && <small>{paintedFires.length}</small>}</button>
+        <button ref={copButtonRef} type="button" data-demo="tool-fire" aria-label="Propagación" className={panel === 'cop' ? 'active' : ''} aria-expanded={panel === 'cop'} aria-controls="map-panel" onClick={() => togglePanel('cop')}><Icon name="fire" /><span>Propagación</span></button>
+        <button ref={centersButtonRef} type="button" data-demo="tool-centers" aria-label="Centros y coordinación" className={panel === 'centers' ? 'active' : ''} aria-expanded={panel === 'centers'} aria-controls="map-panel" onClick={() => togglePanel('centers')}><Icon name="centers" /><span>Centros</span></button>
+        <button ref={alertsButtonRef} type="button" data-demo="tool-alerts" aria-label={`Plan operativo · ${unreadAlerts.length} cambios nuevos`} className={panel === 'alerts' ? 'active' : ''} aria-expanded={panel === 'alerts'} aria-controls="map-panel" onClick={() => togglePanel('alerts')}><Icon name="alerts" /><span>Plan</span>{unreadAlerts.length > 0 && <small>{unreadAlerts.length}</small>}</button>
+        <button ref={peopleButtonRef} type="button" data-demo="tool-people" aria-label={`Personas ${counts.total}`} className={panel === 'people' || selected ? 'active' : ''} aria-expanded={panel === 'people' || Boolean(selected)} aria-controls="map-panel" onClick={() => togglePanel('people')}><Icon name="people" /><span>Personas</span><small>{counts.total}</small></button>
+        <button ref={layersButtonRef} type="button" data-demo="tool-layers" aria-label="Capas" className={panel === 'layers' ? 'active' : ''} aria-expanded={panel === 'layers'} aria-controls="map-panel" onClick={() => togglePanel('layers')}><Icon name="layers" /><span>Capas</span></button>
+        <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={toggleHappyRobot}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
-      <div className="minimal-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><i className="legend-zone" />Punto de encuentro</span><span><i className="legend-fire" />Huella térmica · demo</span></div>
-      <section className="forecast-summary" aria-label="Viento y simulación rápida"><div className="wind-heading"><span><span className="eyebrow">VIENTO · DEMO</span><strong>Hacia SO · {fireSettings.windKmh} km/h</strong></span><button type="button" className="wind-toggle" role="switch" aria-label="Mostrar viento en el mapa" aria-checked={showWind} onClick={toggleWind}>{showWind ? 'ON' : 'OFF'}</button></div><button type="button" className="cop-primary" onClick={simulateFire}>Simular incendio dentro de 1 hora</button>{horizon > 0 && <button type="button" className="cop-secondary" onClick={resetFire}>Volver al incendio inicial</button>}<small role="status">{horizon ? 'Posible extensión a +1 h · no es un pronóstico' : 'Incendio inicial · viento prefijado del escenario'}</small></section>
-      {(panel || selected) && <aside id="map-panel" className="floating-panel" aria-label={panelTitle}>
-        <div className="floating-panel-heading"><h2>{panelTitle}</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
+      <CallLog />
+      {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setDrawingArea(false); setHrCard('hidden'); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
+      {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label={panelTitle}>
+        <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">{panelKicker}</p><h2>{panelTitle}</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>
         <div className="floating-panel-body" key={selected?.id ?? panel}>
-          {selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} onSimulate={simulateFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} marginM={marginM} forecast={forecast} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} /> : panel === 'centers' ? <ResponsePanel selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} /> : panel === 'layers' ? (
+          {panel === 'incidents' && !selected ? <div className="cop-content"><p className="panel-intro">Selecciona el escenario que quieres gestionar.</p><nav className="incident-list" aria-label="Incendios activos">{SCENARIOS.map(item => <button type="button" key={item.id} data-demo="scenario" data-demo-id={item.id} aria-pressed={item.id === scenario.id} onClick={() => selectScenario(item.id)}><span className="row-mark"><i className="incident-dot" aria-hidden="true" /></span><span><strong>{item.incident.name}</strong><small>{item.incident.area}</small></span>{item.id === scenario.id && <span className="selected-label">Activo</span>}</button>)}</nav><p className="fine">Cambiar de escenario reinicia la campaña y los medios de esta vista.</p></div> : selected ? <><PersonDetail citizen={selected} events={events.filter((event) => event.citizenId === selected.id)} now={now.getTime()} onClose={() => { setSelectedId(null); setPanel('people') }} onDispatch={kind => dispatchUnit(kind, { lng: selected.lng, lat: selected.lat, label: selected.name, citizenId: selected.id })} onEscalate={() => startEscalation([selected.id], selected.name)} escalating={Boolean(escalation)} unitLimit={units.length >= MAX_UNITS} zones={scenario.safeZones} units={units} /><RefugeRoutesPanel key={selected.id} citizen={selected} token={token} forecast={forecast} horizon={horizon} marginM={marginM} onRoute={setMapRoute} zones={scenario.safeZones} /></> : panel === 'cop' ? <FireControls settings={fireSettings} horizon={horizon} playing={firePlaying} onPlay={playFire} onReset={resetFire} showWind={showWind} onWind={toggleWind} onShiftWind={shiftWind} windShifted={windShifted} marginM={marginM} forecast={forecast} plannedCount={paintedFires.length} onPaintFire={beginFirePaint} onClearPlanned={clearPlannedFires} onFocus={point => { setFocusTarget({ lng: point.lng, lat: point.lat }); setLayers(previous => ({ ...previous, zones: true })) }} zones={scenario.safeZones} /> : panel === 'centers' ? <ResponsePanel key={scenario.id} selectedId={selectedCenterId} onSelect={selectCenter} scenario={scenarioLabel} notices={notices} onNotices={setNotices} centers={scenario.centers} settlements={scenario.settlements} /> : panel === 'alerts' ? <AlertsPanel alerts={alerts} units={units} selectedUnitId={selectedUnitId} unitsPaused={unitsPaused} plan={{ status: planStale ? 'stale' : planReview.reviewedAt ? 'active' : 'draft', revision: planReview.revision, reviewedAt: planReview.reviewedAt, recommendedCount: recommendedCounts?.risk ?? 0, affectedCount: recommendedCounts?.affected ?? 0, campaignCount: campaignIds.length, answered: counts.answered, silent: counts.silent, moving: counts.moving, waiting: counts.waiting, live: liveMode }} onToggleUnits={() => setUnitsPaused(value => !value)} onRetryUnit={retryUnit} onAction={handleAlertAction} onDispatch={(alert, kind) => handleAlertAction(alert, kind === 'police' ? 'dispatch-police' : kind === 'ambulance' ? 'dispatch-ambulance' : 'dispatch-fire')} onFocus={alert => { if (alert.focus) setFocusTarget(alert.focus) }} onFocusUnit={selectUnit} onAdoptPlan={() => adoptCurrentPlan(true)} onStartRecommended={() => launchRecommended('risk')} onOpenCampaign={() => { setDrawingArea(false); setHrCard('hidden'); setPanel('campaign') }} /> : panel === 'layers' ? (
             <div className="layer-content">
-              {LAYER_OPTIONS.map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><span className={`layer-symbol ${layer.symbol}`} aria-hidden="true" /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}
-              <details className="source-details"><summary>Fuente externa · NASA FIRMS</summary><label className="source-toggle"><span>Mostrar detecciones satélite</span><input type="checkbox" checked={showFirms} onChange={(event) => { setShowFirms(event.target.checked); if (event.target.checked) { setFirmsState('Consultando detecciones…'); setLayers((previous) => ({ ...previous, thermal: true })) } }} /></label><p className="fine" role="status">{firmsState}</p><p className="fine">No son datos en tiempo real ni delimitan un incendio.</p></details>
-              <p className="panel-footnote">Las celdas rojas son ilustrativas: no delimitan una superficie quemada confirmada. La propagación opcional no procede de un modelo predictivo.</p>
+              <div className="map-legend" aria-label="Leyenda"><span><i className="legend-point" />Sin contactar</span><span><i className="legend-point no_answer" />Sin respuesta</span><span><i className="legend-point answered" />Llamada respondida</span><span><span className="site-emoji" aria-hidden="true">{SITE_EMOJI.meeting}</span>Punto de encuentro</span><span><Icon name="units" />Medios</span><span><i className="legend-fire" />Huella térmica</span></div>
+              {layerOptions(scenario).map((layer) => <label className={`layer-row ${!layers[layer.key] ? 'muted-layer' : ''}`} key={layer.key}><LayerMark layer={layer.key} symbol={layer.symbol} /><span className="layer-copy"><strong>{layer.name}</strong><small>{layer.detail}</small></span><input type="checkbox" data-demo="layer-toggle" data-demo-id={layer.key} aria-label={layer.name} checked={layers[layer.key]} onChange={(event) => setLayers((previous) => ({ ...previous, [layer.key]: event.target.checked }))} /></label>)}
+              <details className="source-details"><summary data-demo="firms-details">Fuente externa · NASA FIRMS</summary><label className="source-toggle"><span>Mostrar detecciones satélite</span><input type="checkbox" data-demo="firms-toggle" checked={showFirms} onChange={(event) => { setShowFirms(event.target.checked); if (event.target.checked) { setFirmsState('Consultando detecciones…'); setLayers((previous) => ({ ...previous, thermal: true })) } }} /></label><p className="fine" role="status">{firmsState}</p><p className="fine">No son datos en tiempo real ni delimitan un incendio.</p></details>
+              <p className="panel-footnote">La huella y la proyección son del escenario. No delimitan un perímetro confirmado.</p>
             </div>
           ) : (
             <>
-              <label className="search-label"><span className="sr-only">Buscar persona o localidad</span><input autoFocus className="search" placeholder="Nombre, localidad o ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-              <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todas'], ['outside', 'Fuera del núcleo'], ['no_answer', 'Sin respuesta'], ['assistance', 'Revisión de ruta']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
-              <div className="list-summary"><span>{filtered.length} personas</span><span>{counts.located} ubicaciones compartidas</span></div>
-              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" onClick={() => selectCitizen(citizen.id)}><span className={`dot ${citizen.call ? 'answered' : citizen.status}`} /><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
-              {!filtered.length && <div className="empty-state"><strong>No hay coincidencias</strong><button type="button" onClick={() => { setFilter('all'); setQuery('') }}>Limpiar filtros</button></div>}
+              <label className="search-label"><span className="sr-only">Buscar persona o localidad</span><input className="search" data-demo="people-search" placeholder="Nombre, localidad o ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+              <div className="filter-bar" role="group" aria-label="Filtrar personas">{[['all', 'Todas'], ['outside', 'Fuera del núcleo'], ['no_answer', 'Sin respuesta'], ['assistance', 'Revisión de ruta']].map(([value, label]) => <button type="button" key={value} data-demo="people-filter" data-demo-id={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
+              <div className="list-summary"><span>{filtered.length} {filtered.length === 1 ? 'persona' : 'personas'}</span><span>{counts.located} ubicaciones compartidas</span></div>
+              <ul className="people">{filtered.map((citizen) => <li key={citizen.id}><button type="button" data-demo="person" data-demo-id={citizen.id} onClick={() => selectCitizen(citizen.id)}><span className="row-mark"><span className={`dot ${citizen.call ? 'answered' : citizen.status}`} style={citizen.triage ? { background: TRIAGE_COLOR[citizen.triage.level] } : undefined} /></span><span className="person-row-copy"><strong>{citizen.name}</strong><em>{citizen.locality}</em></span><span className="person-row-meta"><small>{citizen.locationSource === 'gps' ? 'GPS' : citizen.locationSource === 'simulation' ? 'SIM' : 'REF'}</small><span>{citizen.triage ? TRIAGE_LABEL[citizen.triage.level] : citizen.status === 'pending' ? '' : STATUS_LABEL[citizen.status]}</span></span><span className="row-chevron" aria-hidden="true">›</span></button></li>)}</ul>
+              {!filtered.length && <div className="empty-state"><strong>No hay coincidencias</strong><button type="button" data-demo="people-clear" onClick={() => { setFilter('all'); setQuery('') }}>Limpiar filtros</button></div>}
             </>
           )}
         </div>
       </aside>}
-      <section className="simulation-dock campaign-dock" aria-label="Campaña de llamadas por zona">
-        <div className="campaign-heading"><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas seleccionadas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><small>{liveMode ? `HappyRobot · llamadas reales${apiRoster ? '' : ' · SIN censo de la API'}` : 'HappyRobot · simulación local'}</small></div>
-        <label className="row live-toggle"><input type="checkbox" checked={liveMode} onChange={(event) => { setLiveMode(event.target.checked); setDispatchError('') }} />Llamar de verdad por HappyRobot</label>
-        {liveMode && <label className="search-label"><span className="sr-only">Clave de operador</span><input className="search" type="password" autoComplete="off" placeholder="Clave de operador (HR_SHARED_SECRET)" value={operatorKey} onChange={(event) => { setOperatorKey(event.target.value); saveOperatorKey(event.target.value) }} /></label>}
-        {liveMode && <p className="fine">Se manda el círculo a la API de crisis y es ella quien dispara HappyRobot. Los cerrojos <code>ALLOW_REAL_CALLS</code> y <code>CALL_ALLOWLIST</code> siguen mandando: un punto que no esté en la lista aparecerá como bloqueado.</p>}
+      {hrCard !== 'hidden' && <HappyRobotCard view={hrView} connected={apiRoster} live={liveMode && !DEMO_ONLY} calls={hrCalls} escalation={escalation ? { run: escalation, units: escalationUnits } : null} reroute={rerouteOutcome} collapsed={hrCard === 'collapsed'} onToggleCollapse={() => setHrCard(value => value === 'collapsed' ? 'open' : 'collapsed')} onClose={() => setHrCard('hidden')} />}
+      <section className={`campaign-dock ${liveMode && !DEMO_ONLY ? 'is-live' : ''}`} data-demo="campaign-dock" aria-label="Campaña de llamadas por zona">
+        <button ref={campaignButtonRef} type="button" data-demo="campaign-settings" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
+        <button type="button" data-demo="campaign-summary" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingFire ? 'Pinta el frente previsto sobre el mapa' : drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{DEMO_ONLY || !liveMode ? 'Simulación local' : 'Llamadas reales · HappyRobot'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>
+        {silentIds.length > 0 && <button type="button" data-demo="campaign-escalate" className="escalate-button dock-escalate" disabled={Boolean(escalation)} onClick={() => startEscalation(silentIds, `${silentIds.length} ${silentIds.length === 1 ? 'casa' : 'casas'} sin respuesta`)} aria-label={`Enviar fuerzas de seguridad a ${silentIds.length} sin respuesta`}><Icon name="alerts" /><span>{escalation ? escalation.step >= HR_ESCALATION_STEPS.length ? 'Enviado' : 'Escalando…' : `Fuerzas · ${silentIds.length} sin respuesta`}</span></button>}
+        {!liveMode && campaignRunning && <button type="button" data-demo="campaign-pause" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} /></button>}
+        {!drawingArea && !callArea && recommended && recommendedCounts && <>
+          <button type="button" className="cop-secondary dock-secondary" data-demo="campaign-affected" onClick={() => launchRecommended('affected')} disabled={dispatching || !recommendedCounts.affected} aria-label={`Llamar a la zona posiblemente afectada · ${recommendedCounts.affected}`}><span>Zona afectada · {recommendedCounts.affected}</span></button>
+          <button type="button" className="cop-secondary dock-secondary" data-demo="campaign-draw" onClick={beginArea} aria-label="Dibujar zona de llamadas a mano"><Icon name="zone" /></button>
+        </>}
+        {drawingFire ? <button type="button" data-demo="paint-fire-cancel" className="cop-secondary dock-cancel" onClick={() => { setDrawingFire(false); setFireStroke(null) }}>Cancelar</button>
+          : drawingArea ? <button type="button" data-demo="campaign-cancel" className="cop-secondary dock-cancel" onClick={() => { setDrawingArea(false); updateArea(null) }}>Cancelar</button>
+          : callArea ? <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={launchAreaCampaign} disabled={dispatching || (liveMode && !DEMO_ONLY ? !areaIds.length : !callableCount)}><Icon name="phone" /><span>{dispatching ? 'Enviando…' : liveMode && !DEMO_ONLY ? 'Llamar · REAL' : 'Llamar · demo'}</span></button>
+          : recommended && recommendedCounts ? <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={() => launchRecommended('risk')} disabled={dispatching || !recommendedCounts.risk}><Icon name="phone" /><span>{dispatching ? 'Enviando…' : `Llamar zona de riesgo · ${recommendedCounts.risk}${liveMode && !DEMO_ONLY ? ' · REAL' : ''}`}</span></button>
+          : <button type="button" data-demo="campaign-primary" className="cop-primary dock-primary" onClick={beginArea}><Icon name="zone" /><span>Dibujar zona</span></button>}
+      </section>
+      {panel === 'campaign' && !selected && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label="Campaña de llamadas">
+        <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">Llamadas</p><h2>Campaña de llamadas</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>
+        <div className="panel-context"><span className="eyebrow">Selección</span><strong>{drawingArea ? 'Arrastra para dibujar un círculo' : callArea ? `${areaIds.length} personas · radio ${Math.round(callArea.radiusM)} m` : 'Selecciona a quién llamar'}</strong><span className={`status-pill ${liveMode && !DEMO_ONLY ? 'live' : ''}`}>{DEMO_ONLY || !liveMode ? 'Demo' : 'Real'}</span></div>
+        <div className="floating-panel-body"><section className="campaign-settings">
+        <p className="fine">{DEMO_ONLY ? 'Simulación local · datos fijos del escenario' : liveMode ? `HappyRobot · llamadas reales${apiRoster ? '' : ' · SIN censo de la API'}` : 'HappyRobot · simulación local'}</p>
+        {DEMO_ONLY ? <p className="fine">Modo demo: 110 vecinos sintéticos, triaje simulado y evacuación en el navegador. No requiere API ni HappyRobot.</p> : <>
+        <label className="row live-toggle"><input type="checkbox" data-demo="campaign-live" checked={liveMode} onChange={(event) => { setLiveMode(event.target.checked); setDispatchError('') }} />Llamar de verdad por HappyRobot</label>
+        {liveMode && <label className="search-label"><span className="sr-only">Clave de operador</span><input className="search" data-demo="campaign-operator-key" type="password" autoComplete="off" placeholder="Clave de operador (HR_SHARED_SECRET)" value={operatorKey} onChange={(event) => { setOperatorKey(event.target.value); saveOperatorKey(event.target.value) }} /></label>}
+        {liveMode && <label className="row live-toggle"><input type="checkbox" data-demo="campaign-force-recall" checked={forceRecall} onChange={(event) => setForceRecall(event.target.checked)} />Volver a llamar aunque ya tengan un intento</label>}
+        {liveMode && <p className="fine">Se manda el círculo a la API de crisis y es ella quien dispara HappyRobot. El cerrojo <code>ALLOW_REAL_CALLS</code> sigue mandando, y los topes de lote y radio limitan la ráfaga: un punto sin teléfono aparecerá como no llamable.</p>}
+        </>}
         {drawingArea && <p className="fine">Pulsa en el centro y arrastra hasta el borde. Mínimo 50 m. Escape cancela.</p>}
         <div className="campaign-actions">
-          <button type="button" className="cop-primary" onClick={callArea && !drawingArea ? launchAreaCampaign : beginArea} disabled={dispatching || Boolean(callArea && !drawingArea && (liveMode ? !areaIds.length : !callableCount))}>{!callArea || drawingArea ? 'Dibujar zona' : dispatching ? 'Lanzando llamadas…' : liveMode ? areaIds.length ? `Llamar a ${areaIds.length} seleccionados · REAL` : 'Nadie dentro del círculo' : callableCount ? `Llamar a ${callableCount} seleccionados · demo` : 'Sin contactos nuevos'}</button>
-          {(callArea || drawingArea) && <button type="button" className="cop-secondary" onClick={() => { setDrawingArea(false); updateArea(null) }}>Borrar selección</button>}
-          {!liveMode && campaignRunning && <button type="button" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} />{protocolOn ? 'Pausar' : 'Reanudar'}</button>}
+          <button type="button" data-demo="campaign-launch" className="cop-primary" onClick={callArea && !drawingArea ? launchAreaCampaign : beginArea} disabled={dispatching || Boolean(callArea && !drawingArea && (liveMode && !DEMO_ONLY ? !areaIds.length : !callableCount))}>{!callArea || drawingArea ? 'Dibujar zona' : dispatching ? 'Lanzando llamadas…' : liveMode && !DEMO_ONLY ? areaIds.length ? `Llamar a ${areaIds.length} seleccionados · REAL` : 'Nadie dentro del círculo' : callableCount ? `Llamar a ${callableCount} seleccionados · demo` : 'Sin contactos nuevos'}</button>
+          {(callArea || drawingArea) && <button type="button" data-demo="campaign-clear" className="cop-secondary" onClick={() => { setDrawingArea(false); updateArea(null) }}>Borrar selección</button>}
+          {!liveMode && campaignRunning && <button type="button" data-demo="campaign-pause-panel" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} />{protocolOn ? 'Pausar' : 'Reanudar'}</button>}
         </div>
-        {!callArea && <button type="button" className="cop-secondary" onClick={() => finishArea({ ...(rosterCenter ?? { lng: INCIDENT.center[0], lat: INCIDENT.center[1] }), radiusM: rosterCenter ? 1000 : 3000 })}>{rosterCenter ? 'Usar todo el censo · 1 km' : 'Usar entorno del incendio · 3 km'}</button>}
+        {!callArea && !drawingArea && recommended && recommendedCounts && <div className="recommended-areas" role="group" aria-label="Zonas recomendadas">
+          <button type="button" className="cop-secondary" data-demo="campaign-recommended-risk" onClick={() => finishArea(recommended.risk)}><strong>Zona de riesgo</strong><span>{recommendedCounts.risk} posibles víctimas · {(recommended.risk.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km junto al fuego, a favor del viento</span></button>
+          <button type="button" className="cop-secondary" data-demo="campaign-recommended-affected" onClick={() => finishArea(recommended.affected)}><strong>Posible afectación · +{recommended.affectedMinutes} min</strong><span>{recommendedCounts.affected} personas · {(recommended.affected.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km según la previsión de propagación</span></button>
+          <p className="fine">Recomendación del modelo de propagación de la demo; no es un perímetro oficial. Al elegir una, revisa la selección y pulsa llamar.</p>
+        </div>}
+        {!callArea && <button type="button" data-demo="campaign-preset-area" className="cop-secondary" onClick={() => finishArea({ ...(rosterCenter ?? { lng: scenario.incident.center[0], lat: scenario.incident.center[1] }), radiusM: rosterCenter ? 1000 : 3000 })}>{rosterCenter ? 'Usar todo el censo · 1 km' : 'Usar entorno del incendio · 3 km'}</button>}
         {!liveMode && callArea && !callableCount && !drawingArea && <p className="fine" role="status">No hay nuevos contactos pendientes en esta selección. Puedes dibujar otra zona; las sesiones GPS quedan excluidas.</p>}
         {dispatchError && <p className="fine" role="alert">{dispatchError}</p>}
         {liveBatch && <CallBoard calls={liveCalls} skipped={liveBatch.skipped} onSelect={selectCitizen} />}
         {!liveMode && campaignIds.length > 0 && <div className="campaign-stats" role="status"><span><strong>{counts.answered}</strong>/{campaignIds.length} respondidas</span><span>{counts.moving} en movimiento</span><span>{counts.silent} sin respuesta</span>{counts.waiting > 0 && <span>{counts.waiting} sin ruta</span>}</div>}
+        {silentIds.length > 0 && <div className="escalate-section"><button type="button" data-demo="campaign-escalate-panel" className="escalate-button" disabled={Boolean(escalation)} onClick={() => startEscalation(silentIds, `${silentIds.length} ${silentIds.length === 1 ? 'casa' : 'casas'} sin respuesta`)}><Icon name="alerts" /><span>{escalation ? escalation.step >= HR_ESCALATION_STEPS.length ? 'Enviado' : 'Escalada en curso…' : `Enviar fuerzas de seguridad · ${silentIds.length} sin respuesta`}</span></button><p className="fine">Nadie descolgó en esas casas. HappyRobot rellama, avisa a Guardia Civil y 1-1-2 y manda helicóptero y ambulancia.</p></div>}
         {!liveMode && planningCount > 0 && <p className="fine" role="status">Calculando {planningCount} rutas individuales desde la posición de los contactos…</p>}
-        {!liveMode && counts.waiting > 0 && <><p className="fine" role="status">{citizens.find(citizen => campaignSet.has(citizen.id) && citizen.status === 'assistance')?.routeHoldReason}</p><button type="button" className="cop-secondary" onClick={retryRoutes}>Reintentar rutas pendientes</button></>}
-      </section>
-      <div className="map-disclaimer">Demo · sin llamadas reales · hospital y bomberos reubicados · propagación ilustrativa</div>
+        {!liveMode && counts.waiting > 0 && <><p className="fine" role="status">{citizens.find(citizen => campaignSet.has(citizen.id) && citizen.status === 'assistance')?.routeHoldReason}</p><button type="button" data-demo="campaign-retry-routes" className="cop-secondary" onClick={retryRoutes}>Reintentar rutas pendientes</button></>}
+        {areaIds.length > 0 && !drawingArea && <DispatchActions scope="dispatch-area" kinds={['ambulance', 'police', 'fire']} disabled={units.length >= MAX_UNITS} onDispatch={kind => {
+          const target = targetFromCitizens(areaIds, callArea ?? undefined, `${areaIds.length} en zona`)
+          if (target) dispatchUnit(kind, target)
+        }} />}
+        </section></div>
+      </aside>}
+      {!showTourIntro && !touring && <button type="button" className="tour-replay" data-demo="tour-start" onClick={launchTour}><Icon name="routes" />{TOUR_INTRO.replay}</button>}
+      {showTourIntro && <TourIntro onStart={launchTour} onDismiss={() => { markTourSeen(); setShowTourIntro(false) }} />}
     </div>
   )
 }
 
-/**
- * El tablero de la ráfaga: una fila por llamada, con su estado y su motivo.
- *
- * Los descartados van abajo y con su razón porque son la mitad interesante: un círculo del
- * que solo suenan cuatro de dieciocho teléfonos tiene que poder explicarse sin abrir un log.
- */
 function CallBoard({ calls, skipped, onSelect }: { calls: CallRun[]; skipped: DispatchResultSkip[]; onSelect: (id: string) => void }) {
   const porEstado = calls.reduce<Record<string, number>>((acc, call) => ({ ...acc, [call.state]: (acc[call.state] ?? 0) + 1 }), {})
   const abiertas = calls.filter((call) => CALL_STATE_OPEN.includes(call.state)).length
   return (
     <div className="call-board">
       <div className="campaign-stats" role="status">
-        <span><strong>{calls.length}</strong> llamadas lanzadas</span>
+        <span><strong>{calls.length}</strong> {calls.length === 1 ? 'llamada lanzada' : 'llamadas lanzadas'}</span>
         {abiertas > 0 && <span>{abiertas} en curso</span>}
         {Object.entries(porEstado).filter(([estado]) => !CALL_STATE_OPEN.includes(estado as CallStateName)).map(([estado, total]) => (
           <span key={estado}>{total} × {CALL_STATE_LABEL[estado as CallStateName]}</span>
@@ -491,8 +1233,8 @@ function CallBoard({ calls, skipped, onSelect }: { calls: CallRun[]; skipped: Di
       <ul className="people">
         {calls.map((call) => (
           <li key={call.id}>
-            <button type="button" onClick={() => onSelect(call.person_id)}>
-              <span className={`dot ${call.state === 'answered' ? 'answered' : call.state === 'no_answer' ? 'no_answer' : 'pending'}`} />
+            <button type="button" data-demo="call" data-demo-id={call.person_id} onClick={() => onSelect(call.person_id)}>
+              <span className="row-mark"><span className={`dot ${call.state === 'answered' ? 'answered' : call.state === 'no_answer' ? 'no_answer' : 'pending'}`} /></span>
               <span className="person-row-copy"><strong>{call.name || call.person_id}</strong><em>{call.detail || CALL_STATE_LABEL[call.state]}</em></span>
               <span className="person-row-meta"><span>{CALL_STATE_LABEL[call.state]}</span></span>
             </button>
@@ -501,43 +1243,174 @@ function CallBoard({ calls, skipped, onSelect }: { calls: CallRun[]; skipped: Di
       </ul>
       {skipped.length > 0 && (
         <details className="source-details">
-          <summary>{skipped.length} dentro del círculo sin llamar</summary>
-          <ul className="people">{skipped.map((item) => <li key={item.person_id}><button type="button" onClick={() => onSelect(item.person_id)}><span className="person-row-copy"><strong>{item.name || item.person_id}</strong><em>{item.reason}</em></span></button></li>)}</ul>
+          <summary data-demo="call-skipped">{skipped.length} dentro del círculo sin llamar</summary>
+          <ul className="people">{skipped.map((item) => <li key={item.person_id}><button type="button" data-demo="call-skipped-person" data-demo-id={item.person_id} onClick={() => onSelect(item.person_id)}><span className="person-row-copy"><strong>{item.name || item.person_id}</strong><em>{item.reason}</em></span></button></li>)}</ul>
         </details>
       )}
     </div>
   )
 }
 
-function Icon({ name }: { name: 'people' | 'layers' | 'close' | 'play' | 'pause' }) {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{name === 'people' ? <><circle cx="9" cy="8" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></> : name === 'layers' ? <><path d="m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5" /></> : name === 'close' ? <path d="m6 6 12 12M6 18 18 6" /> : name === 'play' ? <path d="m8 4 12 8-12 8Z" /> : <><path d="M8 5v14M16 5v14" /></>}</svg>
+const ICONS = {
+  zone: 'M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M12 7v10M7 12h10',
+  fire: 'M13 3c1 5-4 5-2 9 1-2 3-2 4-4 3 3 4 5 4 7a7 7 0 0 1-14 0c0-4 4-6 8-12Z',
+  // Pincel: el gesto de pintar un frente que aún no arde.
+  brush: 'M20 3c-4 1-9 6-11 10l2 2c4-2 9-7 10-11l-1-1ZM9 13c-3 0-4 2-4 4 0 1-1 2-2 3 3 0 7-1 8-4l-2-3Z',
+  centers: 'M9 3h6v6h6v6h-6v6H9v-6H3V9h6Z',
+  people: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+  layers: 'm12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 16l10 5 10-5',
+  alerts: 'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-9 12a3 3 0 0 0 6 0',
+  close: 'm6 6 12 12M6 18 18 6', play: 'm8 4 12 8-12 8Z', pause: 'M8 5v14M16 5v14',
+  settings: 'M4 7h9m4 0h3M4 17h3m4 0h9M13 4v6M7 14v6', chevron: 'm8 10 4 4 4-4',
+  phone: 'M8 3H4a1 1 0 0 0-1 1c0 9 8 17 17 17a1 1 0 0 0 1-1v-4l-5-2-2 2a14 14 0 0 1-6-6l2-2Z',
+  wind: 'M3 8h12a3 3 0 1 0-3-3M2 12h17a3 3 0 1 1-3 3M4 16h5a3 3 0 1 1-3 3',
+  routes: 'M6 3v13a3 3 0 0 0 6 0V8a3 3 0 0 1 6 0v13M3 6l3-3 3 3m6 12 3 3 3-3',
+  thermal: 'M12 3v2m0 14v2M3 12h2m14 0h2M6 6l1 1m10 10 1 1M6 18l1-1M17 7l1-1M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
+  pin: 'M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0Zm-5 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z',
+  units: 'M3 6h11v12H3Zm11 4h4l3 4v4h-7M5 18v2m12-2v2M7 10h3M8.5 8.5v3',
+}
+const LAYER_MARK: Partial<Record<keyof MapLayers, keyof typeof SITE_EMOJI>> = {
+  hospitals: 'hospital',
+  healthCenters: 'health',
+  fireStations: 'fire',
+  zones: 'meeting',
 }
 
-function PersonDetail({ citizen, events, now, onClose }: { citizen: Citizen; events: CallEvent[]; now: number; onClose: () => void }) {
+/**
+ * Entradilla de apertura: al abrir, el conjunto —nuestro logotipo, un separador y el de
+ * HappyRobot— aparece grande en el centro. Después el separador y HappyRobot se retiran,
+ * y el nuestro sigue solo hasta su sitio en la cabecera mientras el mapa se descubre.
+ *
+ * Lo que se mueve es un clon medido contra el logotipo real, así que aterriza encima de
+ * él sea cual sea el tamaño de la pantalla —sin repetir posiciones en el CSS ni
+ * desincronizarse con los puntos de ruptura— y se desvanece al final para que el relevo
+ * entre el clon y el de verdad no se note.
+ *
+ * La caja del clon es EXACTAMENTE la del logotipo de la cabecera: el separador y
+ * HappyRobot cuelgan fuera, en posición absoluta, para no ensancharla. Así el aterrizaje
+ * sigue siendo el mismo cálculo de antes, con ellos o sin ellos.
+ */
+function Intro({ brand }: { brand: RefObject<HTMLDivElement | null> }) {
+  // Quien pide menos movimiento entra directo al mapa: la entradilla ni se monta.
+  const [done, setDone] = useState(() => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true)
+  const clone = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const home = brand.current?.getBoundingClientRect()
+    const box = clone.current
+    if (!home || !box || !home.height) return setDone(true)
+
+    box.style.left = `${home.left}px`
+    box.style.top = `${home.top}px`
+    box.style.width = `${home.width}px`
+    box.style.height = `${home.height}px`
+
+    // El conjunto es más ancho que su caja porque HappyRobot cuelga fuera: hay que medirlo
+    // ya colocado para centrarlo entero y que no se salga por la derecha.
+    const fin = box.lastElementChild?.getBoundingClientRect()
+    const ancho = fin ? fin.right - home.left : home.width
+
+    // Grande sin desbordar: 80 % del ancho, o el 24 % del alto si la pantalla es apaisada.
+    // El conjunto mide casi el triple que el logotipo solo, así que manda casi siempre el ancho.
+    const scale = Math.min(window.innerWidth * 0.8 / ancho, window.innerHeight * 0.24 / home.height)
+    const start = `translate(${(window.innerWidth - ancho * scale) / 2 - home.left}px, ${(window.innerHeight - home.height * scale) / 2 - home.top}px) scale(${scale})`
+    // Se planta, viaja, descansa ya colocado y se retira: ese descanso es el que deja
+    // ver que ha aterrizado, y el fundido final tapa el relevo con el logotipo real.
+    const travel = box.animate([
+      { opacity: 1, transform: start, easing: 'linear', offset: 0 },
+      { opacity: 1, transform: start, easing: 'cubic-bezier(.45,0,.15,1)', offset: 0.36 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.78 },
+      { opacity: 1, transform: 'none', easing: 'linear', offset: 0.92 },
+      { opacity: 0, transform: 'none', offset: 1 },
+    ], { duration: INTRO_MS, fill: 'both' })
+
+    // El separador y HappyRobot se van justo antes de que el nuestro arranque, con un
+    // desplazamiento mínimo a la izquierda para que parezca que le ceden el paso.
+    const salida = [
+      { opacity: 1, transform: 'none', offset: 0 },
+      { opacity: 1, transform: 'none', offset: 0.24 },
+      { opacity: 0, transform: 'translateX(-8px)', offset: 0.38 },
+      { opacity: 0, transform: 'translateX(-8px)', offset: 1 },
+    ]
+    const acompanan = [...box.querySelectorAll('[data-sale]')].map((el) =>
+      el.animate(salida, { duration: INTRO_MS, fill: 'both', easing: 'ease' }),
+    )
+
+    travel.finished.then(() => setDone(true), () => {})
+    return () => [travel, ...acompanan].forEach((a) => a.cancel())
+  }, [brand])
+
+  if (done) return null
+  return (
+    <>
+      <div className="intro-veil" aria-hidden="true" />
+      <div className="intro-logo" ref={clone} aria-hidden="true">
+        <Wordmark />
+        <span className="intro-sep" data-sale />
+        <span className="intro-partner" data-sale><HappyRobotLogo /></span>
+      </div>
+    </>
+  )
+}
+
+function LayerMark({ layer, symbol }: { layer: keyof MapLayers; symbol: keyof typeof ICONS }) {
+  const mark = LAYER_MARK[layer]
+  if (mark) return <span className="site-emoji" aria-hidden="true">{SITE_EMOJI[mark]}</span>
+  return <Icon name={symbol} />
+}
+
+function Icon({ name }: { name: keyof typeof ICONS }) {
+  return <svg className="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={ICONS[name]} /></svg>
+}
+
+function PersonDetail({ citizen, events, now, onClose, onDispatch, onEscalate, escalating, unitLimit, zones, units }: { citizen: Citizen; events: CallEvent[]; now: number; onClose: () => void; onDispatch: (kind: UnitKind) => void; onEscalate: () => void; escalating: boolean; unitLimit: boolean; zones: SafeZone[]; units: DispatchUnit[] }) {
   const locationSource = citizen.locationSource ?? 'reference'
   const reference = locationSource === 'reference' || locationSource === 'unknown'
   const stale = citizen.locationUpdatedAt !== undefined && now - citizen.locationUpdatedAt > 120_000
   return (
     <article className="person-detail">
-      <button type="button" className="back-button" onClick={onClose}>‹ Todas las personas</button>
-      <div className="person-title"><span className="person-avatar">{citizen.name.split(' ').slice(0, 2).map((word) => word[0]).join('')}</span><div><span className="eyebrow">{citizen.id} / {citizen.live ? 'SESIÓN COMPARTIDA' : 'FICHA DEMO'}</span><h2>{citizen.name}</h2></div></div>
+      <button type="button" data-demo="person-back" className="back-button" onClick={onClose}>‹ Todas las personas</button>
+      <div className="person-title"><span className="person-avatar">{citizen.name.split(' ').slice(0, 2).map((word) => word[0]).join('')}</span><div><span className="eyebrow">{citizen.locality ?? citizen.id}</span><h2>{citizen.name}</h2></div></div>
       <div className="person-badges"><span className={`status-badge ${citizen.status}`}>{STATUS_LABEL[citizen.status]}</span>{citizen.resident === false && <span className="status-badge">Fuera del núcleo</span>}</div>
       {citizen.status === 'assistance' && <p className="need-note">{citizen.routeHoldReason}</p>}
-      {!citizen.live && citizen.routeId && <p className="fine">Destino de demo: {SAFE_ZONES.find(zone => zone.id === citizen.safeZoneId)?.name}. Recorrido más corto entre las alternativas admisibles, no validado operativamente.</p>}
+      {citizen.reroute && citizen.status !== 'safe' && <div className="reroute-done" data-demo="person-reroute"><strong>{citizen.reroute.toZoneId ? 'Destino cambiado por un frente previsto' : 'Parado: frente previsto en su camino'}</strong><span>{citizen.reroute.toZoneId ? `${zones.find(zone => zone.id === citizen.reroute?.fromZoneId)?.code ?? '?'} → ${zones.find(zone => zone.id === citizen.reroute?.toZoneId)?.code ?? '?'} · ${zones.find(zone => zone.id === citizen.reroute?.toZoneId)?.name ?? ''}` : citizen.routeHoldReason ?? 'HappyRobot recalcula la salida desde su posición actual.'}</span><small>Desde {formatClock(new Date(citizen.reroute.at))} · ruta nueva desde donde estaba, no desde casa</small></div>}
+      {citizen.status === 'no_answer' && (
+        <section className="detail-section escalate-section" aria-label="Escalada a fuerzas de seguridad">
+          {citizen.escalation
+            ? <div className="escalate-done"><strong>Fuerzas de seguridad en camino</strong><span>{citizen.escalation.unitIds.map(id => units.find(unit => unit.id === id)).filter((unit): unit is DispatchUnit => Boolean(unit)).map(unit => `${unit.callSign} · ${UNIT_LABEL[unit.kind]}${unitEta(unit) ? ` · ${unitEta(unit)}` : ''}`).join('  ·  ') || 'Escalado · sin medios libres'}</span><small>Desde {formatClock(new Date(citizen.escalation.at))} · HappyRobot avisó a Guardia Civil y 1-1-2</small></div>
+            : <>
+              <button type="button" data-demo="escalate-person" className="escalate-button" disabled={escalating} onClick={onEscalate}><Icon name="alerts" /><span>{escalating ? 'Escalada en curso…' : 'Enviar fuerzas de seguridad'}</span></button>
+              <p className="fine">Nadie ha descolgado. HappyRobot rellama, avisa a Guardia Civil y 1-1-2 y manda helicóptero y ambulancia a la puerta.</p>
+            </>}
+        </section>
+      )}
+      <section className="detail-section" data-demo="person-dispatch"><h3>Enviar medio</h3>
+        <DispatchActions scope="dispatch-person" kinds={['ambulance', 'police', 'fire']} disabled={unitLimit} onDispatch={onDispatch} />
+        {unitLimit && <p className="fine">Límite de {MAX_UNITS} envíos.</p>}
+      </section>
+      {!citizen.live && citizen.routeId && <p className="fine">Destino: {zones.find(zone => zone.id === citizen.safeZoneId)?.name}</p>}
       <section className="detail-section"><h3>Localización</h3>
-        <div className={`location-card ${reference || stale ? 'uncertain' : ''}`}><strong>{LOCATION_LABEL[locationSource]}</strong><span className="coordinates">{Math.abs(citizen.lat).toFixed(5)}° {citizen.lat >= 0 ? 'N' : 'S'} / {Math.abs(citizen.lng).toFixed(5)}° {citizen.lng < 0 ? 'O' : 'E'}</span><span>{locationAge(citizen.locationUpdatedAt, now)}{stale ? ' · DESACTUALIZADA' : ''}</span></div>
-        <dl className="detail-fields"><div><dt>Precisión reportada</dt><dd>{citizen.accuracyM !== undefined ? `${Math.round(citizen.accuracyM)} m` : 'No disponible'}</dd></div><div><dt>Origen</dt><dd>{citizen.live ? locationSource === 'gps' ? 'Navegador del ciudadano' : 'Sesión compartida' : 'Escenario sintético'}</dd></div><div><dt>Localidad / entorno</dt><dd>{citizen.locality ?? 'Sin información'}</dd></div></dl>
-        <p className="detail-warning">{reference ? 'Referencia aproximada del núcleo urbano, no de una vivienda real. No confirma la presencia de esta persona.' : locationSource === 'simulation' ? 'Ubicación compartida en el guion de la demo; no es una medición GPS real.' : 'Posición reportada por el dispositivo. No valida identidad ni confirma que esté a salvo.'}</p>
+        <div className={`location-card ${reference || stale ? 'uncertain' : ''}`}><strong>{LOCATION_LABEL[locationSource]}</strong><span className="coordinates">{Math.abs(citizen.lat).toFixed(5)}° {citizen.lat >= 0 ? 'N' : 'S'} / {Math.abs(citizen.lng).toFixed(5)}° {citizen.lng < 0 ? 'O' : 'E'}</span><span>{locationAge(citizen.locationUpdatedAt, now)}{stale ? ' · desactualizada' : ''}</span></div>
+        <dl className="detail-fields"><div><dt>Precisión</dt><dd>{citizen.accuracyM !== undefined ? `${Math.round(citizen.accuracyM)} m` : 'No disponible'}</dd></div><div><dt>Origen</dt><dd>{citizen.live ? locationSource === 'gps' ? 'Dispositivo' : 'Sesión compartida' : 'Registro'}</dd></div></dl>
       </section>
+      {citizen.triage && (
+        <section className="detail-section"><h3>Triaje del agente</h3>
+          {/* Lo único de esta ficha que sale de haber hablado con la persona. El resto —posición,
+              exposición, ruta— lo calcula la geometría, y por eso puede estar equivocado. */}
+          <div className="location-card" style={{ borderColor: TRIAGE_COLOR[citizen.triage.level] }}>
+            <strong style={{ color: TRIAGE_COLOR[citizen.triage.level] }}>{TRIAGE_LABEL[citizen.triage.level]}</strong>
+            <span>{citizen.triage.reason || 'El agente no dejó motivo.'}</span>
+            <span>{citizen.triage.at ? `Cerrado ${formatClock(new Date(citizen.triage.at))}` : ''}{citizen.triage.confidence ? ` · confianza ${citizen.triage.confidence}` : ''}</span>
+          </div>
+        </section>
+      )}
       <section className="detail-section"><h3>Última llamada</h3>
-        <div className="call-summary"><p>{citizen.call?.summary ?? 'Sin llamada respondida. Los datos de registro no son declaraciones de la persona.'}</p></div>
+        <div className="call-summary"><p>{citizen.call?.summary ?? (citizen.callState ? CALL_STATE_LABEL[citizen.callState] : 'Sin llamada registrada')}</p></div>
         {citizen.call?.needs.map((need) => <p className="need-note" key={need}>{need}</p>)}
-        <dl className="detail-fields"><div><dt>Agente</dt><dd>{citizen.call?.agent ?? 'No asignado'}</dd></div><div><dt>Respuesta</dt><dd>{citizen.call ? formatClock(new Date(citizen.call.answeredAt)) : 'Sin información'}</dd></div><div><dt>Comparte ubicación</dt><dd>{citizen.call ? citizen.call.consent === 'granted' ? 'Sí · demo' : 'No · demo' : 'No registrado'}</dd></div></dl>
+        <dl className="detail-fields"><div><dt>Agente</dt><dd>{citizen.call?.agent ?? 'No asignado'}</dd></div><div><dt>Respuesta</dt><dd>{citizen.call ? formatClock(new Date(citizen.call.answeredAt)) : '—'}</dd></div><div><dt>Comparte ubicación</dt><dd>{citizen.call ? citizen.call.consent === 'granted' ? 'Sí' : 'No' : '—'}</dd></div></dl>
       </section>
-      <section className="detail-section"><h3>Familiares y acompañantes</h3>
-        {citizen.household?.length ? citizen.household.map((member) => <div className="family-member" key={member.name}><strong>{member.name}</strong><p>{member.situation}</p><small>{member.source}</small></div>) : <p className="fine">Sin información aportada.</p>}
-      </section>
-      <details className="detail-section"><summary>Metadatos y trazabilidad</summary><dl className="detail-fields"><div><dt>Teléfono</dt><dd>{citizen.live ? 'No aportado' : 'Contacto ficticio'}</dd></div><div><dt>Fuente del registro</dt><dd>{citizen.live ? 'Formulario voluntario' : 'Dataset de demostración'}</dd></div></dl><ol className="feed">{events.map((event) => <li key={event.id}><time>{formatClock(new Date(event.ts))}</time><div><p>{event.detail}</p><small>{event.agent} · SIMULACIÓN</small></div></li>)}</ol></details>
+      {citizen.household?.length ? <section className="detail-section"><h3>Acompañantes</h3>{citizen.household.map((member) => <div className="family-member" key={member.name}><strong>{member.name}</strong><p>{member.situation}</p></div>)}</section> : null}
+      {events.length > 0 && <details className="detail-section"><summary data-demo="person-log">Registro</summary><ol className="feed">{events.map((event) => <li key={event.id}><time>{formatClock(new Date(event.ts))}</time><div><p>{event.detail}</p><small>{event.agent}</small></div></li>)}</ol></details>}
     </article>
   )
 }

@@ -1,13 +1,9 @@
-# Vigía — centro de mando
+# router — centro de mando
 
 Frontend del CECOP para el caso de incendios forestales. Mapa Mapbox con focos,
 zonas seguras y población en tránsito (simulada + consentimiento real).
 
 ## Arranque
-
-1. Crea un token público en https://account.mapbox.com/access-tokens/
-2. Opcional: copia `.env.example` a `.env` y pon `VITE_MAPBOX_TOKEN=pk....`
-3. Si no hay `.env`, la app pide el token al abrir y lo guarda en el navegador.
 
 ```bash
 cd apps/command-center
@@ -15,9 +11,39 @@ npm install
 npm run dev
 ```
 
+Arranca y pinta el mapa sin configurar nada: la app lleva un token público de Mapbox
+escrito en `src/token.ts`. **Ese token es de la cuenta personal de alguien del equipo**,
+así que su consumo lo paga esa cuenta. Para tu desarrollo y para el despliegue, pon el
+tuyo: tiene prioridad sobre el del código.
+
+```bash
+cp .env.example .env          # y pega dentro tu VITE_MAPBOX_TOKEN=pk....
+```
+
+El token lo creas en https://account.mapbox.com/access-tokens/. `.env` está en el
+`.gitignore`, así que no viaja al repo, y Vite lo incrusta en el bundle al compilar.
+
+### En el despliegue
+
+`Dockerfile` declara `ARG VITE_MAPBOX_TOKEN`, así que basta con crear la variable
+`VITE_MAPBOX_TOKEN` en el servicio de Railway: llega a la etapa de build, queda dentro del
+bundle y sustituye al que viaja en el código. Sin ella el despliegue sale con el token
+personal de `src/token.ts`, que funciona pero factura a quien no toca.
+
+Un token `pk.` es público por diseño: cualquiera puede leerlo del JavaScript de la página.
+No se protege escondiéndolo, se protege **restringiéndolo por URL** en el panel de Mapbox
+(añade ahí el dominio de Railway y `localhost`). Por eso nunca hay que usar un `sk.`, que
+sí es secreto.
+
 - Centro de mando: http://localhost:5173
+- Guía del puesto de mando (fuerza el recorrido): http://localhost:5173/?guia=1
 - Página de consentimiento del ciudadano: http://localhost:5173/track
 - Reutilizar un id del escenario: http://localhost:5173/track?id=c-01
+
+**Si el mapa sale en negro y se queda en «Cargando cartografía…»**: Mapbox guarda los teselados
+en el Cache Storage del navegador (`mapbox-tiles`) y esa caché se corrompe de vez en cuando; no
+hay petición fallida que lo delate. Se arregla vaciándola desde la consola y recargando:
+`await caches.delete('mapbox-tiles')`. Visto el 2026-09-20 sobre el código sin tocar.
 
 ## Qué hay ahora
 
@@ -103,3 +129,66 @@ Es un entorno de demostración, no un servicio de seguimiento:
 - **No es seguimiento en segundo plano.** `watchPosition` solo actualiza con la
   página abierta y en primer plano; si se bloquea el móvil, dejan de llegar
   posiciones. Es "ubicación mientras la página esté abierta".
+
+## Selectores para grabar recorridos (`data-demo`)
+
+Todo control interactivo lleva `data-demo="<nombre>"`, estable frente a cambios de
+clase, de estado y de texto. Las clases **no** sirven como selector: muchas son de
+estado (`className={panel === 'cop' ? 'active' : ''}`) y cambian al pulsar.
+
+Los elementos de lista añaden `data-demo-id` con el identificador de dominio:
+
+```
+[data-demo="person"][data-demo-id="c-01"]
+[data-demo="dispatch-person"][data-demo-id="ambulance"]
+```
+
+| Zona | Selectores |
+|---|---|
+| Token | `token-input` · `token-submit` · `token-help` |
+| Ciudadano (`/track`) | `citizen-name` · `citizen-mode`+id (`demo`/`gps`) · `citizen-consent` · `citizen-stop` |
+| Mapa | `map` (contenedor) · `framing-menu` (botón de diana sobre el zoom; el menú sale hacia la izquierda) · `framing-fire` · `framing-person` · `framing-route` · `framing-all` · `map-error-dismiss` |
+| Barra de herramientas | `incident-trigger` · `tool-area` · `tool-fire` · `tool-centers` · `tool-alerts` · `tool-people` · `tool-layers` · `tool-happyrobot` |
+| Panel | `panel` (contenedor) · `panel-close` · `scenario`+id |
+| Tarjeta HappyRobot | `hr-card` (contenedor) · `hr-collapse` · `hr-close` · `hr-loop-step`+id (paradas del bucle) · `hr-call-node`+id (nodos de la anatomía de la llamada) · `hr-node`+id (solo los nodos pulsables) |
+| Propagación | `fire-play` · `fire-wind-shift` · `fire-reset` · `fire-wind-toggle` · `fire-zone`+id |
+| Rutas | `route-profile`+id (`driving`/`walking`) · `route-compare` · `route-option`+id |
+| Centros | `center-filter`+id · `center`+id · `center-source` · `notice-sector` · `notice-message` · `notice-create` · `notice-advance`+id |
+| Avisos | `alert-toast`+id · `alert`+id · `alert-action`+id · `unit`+id |
+| Envío de medios | `dispatch-person` · `dispatch-alert` · `dispatch-area`, todos +id (`ambulance`/`police`/`fire`) |
+| Personas | `people-search` · `people-filter`+id · `person`+id · `people-clear` · `person-back` · `person-log` |
+| Capas | `layer-toggle`+id · `firms-details` · `firms-toggle` |
+| Campaña (dock) | `campaign-settings` · `campaign-summary` · `campaign-pause` · `campaign-cancel` · `campaign-primary` |
+| Campaña (panel) | `campaign-live` · `campaign-operator-key` · `campaign-force-recall` · `campaign-launch` · `campaign-clear` · `campaign-pause-panel` · `campaign-preset-area` · `campaign-retry-routes` · `call`+id · `call-skipped` · `call-skipped-person`+id |
+
+### Puntos clicables sobre el mapa
+
+`data-demo="map"` es solo el contenedor: dentro es un `<canvas>` y **no hay un nodo
+por marcador**. Personas, fuego, rutas y centros son capas WebGL, y los clics se
+resuelven por coordenadas (`queryRenderedFeatures`).
+
+La excepción son los pocos puntos declarados en `src/demo-points.ts`, que reciben
+además un marcador DOM real encima del canvas:
+
+| Selector | Cuántos |
+|---|---|
+| `meeting-point`+id | los puntos de encuentro del escenario activo (3) |
+| `center-marker`+id | los centros de respuesta (3) |
+| `person-marker`+id | la persona seleccionada, más los ids de `DEMO_PEOPLE` |
+
+Nombres distintos a propósito: el panel lateral ya usa `center` y `person`, y un
+guion que buscase `[data-demo="person"]` encontraría dos elementos.
+
+Pulsar el marcador hace exactamente lo mismo que pulsar el símbolo del canvas
+(mismo popup, mismos manejadores). Dos cosas que conviene saber: el marcador es un
+círculo transparente de 26 px, así que **no se puede arrastrar el mapa empezando
+justo encima de uno** de esos seis sitios; y las ~300 personas no se marcan en
+bloque a propósito — para llegar a cualquiera está `[data-demo="person"]` en el
+panel, que hace volar el mapa hasta ella.
+
+Comprobación rápida con la app abierta (consola del navegador):
+
+```js
+document.querySelectorAll('[data-demo="meeting-point"], [data-demo$="-marker"]').length
+// 6 sin nadie seleccionado · 7 con una persona seleccionada
+```

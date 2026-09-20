@@ -114,8 +114,16 @@ sigue existiendo para que rodear `sierra-culebra` entero no dispare 300 runs. Lo
 `api/tests/test_dispatcher.py`, y el de concurrencia no mide tiempos: hace coincidir 90 llamadas
 en una barrera, así que con el paralelismo bajo falla siempre y nunca por casualidad.
 
-Lo que sí hay que mirar antes de un ensayo es `ALLOW_REAL_CALLS` y `CALL_ALLOWLIST` —que con
-noventa números reales deja de ser un cerrojo útil salvo que se rellene entera—.
+Lo que sí hay que mirar antes de un ensayo es `ALLOW_REAL_CALLS`. La lista blanca `CALL_ALLOWLIST`
+ya no existe: `main` la retiró el 20 de septiembre de 2026 (commit `052c776`) porque el agente
+marca números que le dicta la persona en mitad de la conversación, y con noventa móviles reales
+tampoco habría sido un cerrojo útil salvo rellenándola entera. Su hueco lo ocupa un opt-in,
+`REGISTER_ONLY_CALLS=true`, que deja sonar solo a quien se haya registrado desde `/track`.
+
+El equipo de `ucm-grupo` sigue siendo de cuatro (p-001..p-004) aunque en `ucm-madrid` sean cinco
+desde que `main` metió a Luis: aquí la mancha del equipo es una figura geométrica para poder
+rodear una cosa y no la otra, no la plantilla del equipo, y quien falte entra por el roster con
+el resto del grupo.
 
 > HIPÓTESIS (sin verificar, 20 sep 2026): no sabemos el límite de runs en paralelo de nuestro
 > workspace de HappyRobot. Está en la lista de `docs/02-happyrobot/05-preguntas-stand.md`. Si

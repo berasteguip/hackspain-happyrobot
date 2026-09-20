@@ -11,11 +11,10 @@ TIME_SCALE  ?= 60
 SEED        ?= 42
 HOUSES      ?= 120
 API_PORT    ?= 8000
-DASH_PORT   ?= 8080
 GPS_PORT    ?= 8081
 
 .DEFAULT_GOAL := help
-.PHONY: help check env install api engine dashboard gps data sim test demo ensayo reset vigia stop clean
+.PHONY: help check env install api engine dashboard gps data twin-seed sim test demo ensayo reset router stop clean
 
 help: ## Muestra esta ayuda
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -48,9 +47,9 @@ engine: ## Lanza el motor de escenario contra la API
 	cd engine && .venv/bin/python -m engine.run --scenario scenarios/$(SCENARIO).yaml --time-scale $(TIME_SCALE) 2>/dev/null \
 	  || .venv/bin/python run.py --scenario scenarios/$(SCENARIO).yaml --time-scale $(TIME_SCALE)
 
-dashboard: ## Sirve el dashboard del puesto de mando (puerto 8080)
-	@echo "Dashboard en http://localhost:$(DASH_PORT)"
-	cd web/dashboard && python3 -m http.server $(DASH_PORT)
+dashboard: ## Levanta el CECOP, el puesto de mando (Vite, puerto 5173)
+	@echo "CECOP en http://localhost:5173 · VITE_CRISIS_API si la API no está en el 8000"
+	cd apps/command-center && npm install --no-audit --no-fund && npm run dev
 
 gps: ## Sirve la pagina de ubicacion (puerto 8081)
 	@echo "GPS en http://localhost:$(GPS_PORT)?p=p-001"
@@ -62,23 +61,24 @@ data: ## Regenera el dataset sintetico y lo valida
 	cd data && .venv/bin/python generate.py --scenario $(SCENARIO) --seed $(SEED) --houses $(HOUSES) --out scenarios/$(SCENARIO).json
 	cd data && .venv/bin/python validate.py scenarios/$(SCENARIO).json
 
-vigia: ## Compila Vigia (la API lo sirve en / cuando existe apps/command-center/dist)
+twin-seed: ## Regenera el SQL del padron de Twin (data/twin/seed.sql) desde el dataset
+	cd data && .venv/bin/python twin_seed.py --scenario scenarios/$(SCENARIO).json --out twin/seed.sql
+	@echo "Cargalo en Twin con data/twin/schema.sql primero. Ver docs/06-producto/12-tablas-basicas-twin.md"
+
+router: ## Compila router (la API lo sirve en / cuando existe apps/command-center/dist)
 	cd apps/command-center && npm ci && npm run build
 
 ensayo: ## Arranca la API con el banco de pruebas de la Complutense (telefonos REALES del equipo)
-	@echo "Escenario ucm-madrid: p-001..p-004 son moviles REALES del equipo."
-	@echo "Los dos cerrojos siguen mandando: ALLOW_REAL_CALLS y CALL_ALLOWLIST."
-	@echo "Circulo que coge exactamente a los cuatro: centro 40.45304 / -3.72698, radio 150 m."
+	@echo "Escenario ucm-madrid: p-001..p-005 son el equipo (moviles reales via PHONE_OVERRIDES)."
+	@echo "El cerrojo que manda es ALLOW_REAL_CALLS."
+	@echo "Circulo que coge exactamente al equipo: centro 40.45298 / -3.72695, radio 150 m."
 	@echo ""
 	cd api && SCENARIO=ucm-madrid .venv/bin/python -m uvicorn main:app --reload --port $(API_PORT)
 
-reset: ## Vacia el tablero de llamadas para poder volver a llamar a los mismos moviles
-	@cd api && .venv/bin/python -c "\
-import httpx, sys; sys.path.insert(0, '.'); \
-from settings import settings; \
-r = httpx.post('http://localhost:$(API_PORT)/reset', json={'scenario': settings.scenario}, \
-              headers={'x-api-key': settings.hr_shared_secret.encode('latin-1', 'replace')}, timeout=20); \
-print('reset ok' if r.status_code < 400 else f'FALLO {r.status_code}: {r.text[:120]}')"
+reset: ## Vacia el tablero de llamadas. URL=... KEY=... al desplegado; TODO=1 recarga el escenario
+	@python3 scripts/reset.py \
+	  --url "$(or $(URL),http://localhost:$(API_PORT))" \
+	  $(if $(KEY),--key "$(KEY)",) $(if $(TODO),--todo,)
 
 sim: ## Corre el simulador de evacuacion y compara planes
 	cd sim && .venv/bin/python -m sim.cli --scenario ../data/scenarios/$(SCENARIO).json --variants 200 --out out/
@@ -93,7 +93,7 @@ test: ## Corre los tests de todos los componentes
 demo: ## Recuerda la secuencia de la demo (no arranca nada)
 	@echo "Antes:  make install && make env && make data && make test"
 	@echo "Pestana 1: make api"
-	@echo "Pestana 2: make dashboard   -> http://localhost:$(DASH_PORT)"
+	@echo "Pestana 2: make dashboard   -> http://localhost:5173"
 	@echo "Pestana 3: make gps         -> tunel HTTPS si se usa movil"
 	@echo "Pestana 4: make engine      -> empieza a moverse el escenario"
 	@echo ""
@@ -101,7 +101,7 @@ demo: ## Recuerda la secuencia de la demo (no arranca nada)
 	@echo "Ponlo a true SOLO en el momento de la demo."
 
 stop: ## Mata los procesos de los puertos de la demo
-	@for p in $(API_PORT) $(DASH_PORT) $(GPS_PORT); do \
+	@for p in $(API_PORT) 5173 $(GPS_PORT); do \
 	  pid=$$(lsof -ti tcp:$$p 2>/dev/null); \
 	  [ -n "$$pid" ] && { echo "matando $$pid en puerto $$p"; kill $$pid; } || true; \
 	done

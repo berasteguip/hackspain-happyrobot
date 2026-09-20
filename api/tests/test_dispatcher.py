@@ -8,6 +8,8 @@ propio intento con su propio estado, y que un punto que no suena dice POR QUÉ n
 
 from __future__ import annotations
 
+import json
+import re
 import threading
 
 import pytest
@@ -15,7 +17,8 @@ import pytest
 import dispatcher
 import notify
 from models import CallDispatch, CallState, Channel, Person
-from settings import reload_settings, settings
+from settings import settings
+from state import state
 
 # Facultad de Informática y Ciencias Matemáticas de la Complutense, a ~400 m una de la otra.
 INFORMATICA = (40.45290, -3.72680)
@@ -192,34 +195,31 @@ def test_las_noventa_salen_a_la_vez_y_no_en_tandas(state, monkeypatch):
     )
 
 
-# --------------------------------------------------------------------------- lista blanca
+# --------------------------------------------------------------------------- teléfonos
 
 
-def test_la_lista_blanca_para_a_quien_no_este_en_ella(poblado, monkeypatch):
-    """El cerrojo que protege los ensayos: escenario con móviles reales y vecinos sintéticos."""
+def test_sin_lista_blanca_se_marca_a_cualquiera_del_escenario(poblado, monkeypatch):
+    """Ya no hay lista blanca: quien tenga teléfono se intenta, y quien no, no.
+
+    Se quitó porque el agente llama a números que le dicta la persona en mitad de la
+    conversación —la madre que se quedó en casa— y eso no cabe en una lista escrita de
+    antemano. Lo que queda frenando una ráfaga es ALLOW_REAL_CALLS y los topes de lote.
+    """
     monkeypatch.setattr(settings, "allow_real_calls", True)
-    monkeypatch.setattr(settings, "call_allowlist", {"+34600990001"})
 
     _, intentos, _, _ = dispatcher.dispatch(
         poblado, CallDispatch(person_ids=["p-001", "p-003"])
     )
-    por_persona = {c.person_id: c for c in intentos}
 
-    assert por_persona["p-003"].state == CallState.blocked
-    assert "CALL_ALLOWLIST" in (por_persona["p-003"].detail or "")
-    # El que sí está en la lista intenta marcar de verdad; sin webhook configurado, falla.
-    assert por_persona["p-001"].state == CallState.failed
-    assert "HR_WORKFLOW_WEBHOOK" in (por_persona["p-001"].detail or "")
+    for intento in intentos:
+        assert intento.state != CallState.blocked, "ya no existe el bloqueo por lista"
+        # Sin webhook configurado no sale ninguna, pero por falta de webhook, no por filtro.
+        assert "HR_WORKFLOW_WEBHOOK" in (intento.detail or "")
 
 
-def test_la_lista_blanca_normaliza_el_formato_del_telefono():
-    """`+34 600 99 00 01` y `+34600990001` son el mismo móvil; el cerrojo no puede dudar."""
+def test_normalizar_telefono_ignora_espacios_y_guiones():
+    """`+34 600 99 00 01` y `+34600990001` son el mismo móvil."""
     assert notify.normalize_phone("+34 600-99 00 01") == "+34600990001"
-
-
-def test_con_la_lista_vacia_no_filtra_nada(monkeypatch):
-    monkeypatch.setattr(settings, "call_allowlist", set())
-    assert notify.phone_allowed("+34600990001") is True
 
 
 # --------------------------------------------------------------------------- contexto del agente
@@ -301,11 +301,211 @@ def test_el_outcome_cierra_el_intento_que_lo_origino(client):
     assert tablero[call_id]["answered"] is True
 
 
-def test_settings_lee_la_lista_blanca_del_entorno(monkeypatch):
-    monkeypatch.setenv("CALL_ALLOWLIST", "+34 600 99 00 01, +34600990002")
-    nuevos = reload_settings()
-    try:
-        assert nuevos.call_allowlist == {"+34600990001", "+34600990002"}
-    finally:
-        monkeypatch.delenv("CALL_ALLOWLIST", raising=False)
-        reload_settings()
+# --------------------------------------------------------------------------------------
+# El tercer cerrojo, el que vive dentro del workflow
+# --------------------------------------------------------------------------------------
+
+
+def test_el_payload_declara_el_simulacro(monkeypatch):
+    """`DEMO_MODE` es lo único que el cerrojo del workflow sigue exigiendo al disparo."""
+    monkeypatch.setattr(settings, "demo_mode", True)
+
+    payload = notify.trigger_payload(Person(id="p-x", phone="+34611000001"))
+
+    assert payload["DEMO_MODE"] == "true"
+    assert "ALLOWED_NUMBERS" not in payload, "la lista blanca se quitó del workflow en la v9"
+
+
+def test_apagar_demo_mode_hace_que_el_workflow_rechace(monkeypatch):
+    """`DEMO_MODE=false` es el freno de mano del lado de HappyRobot: rechaza todo."""
+    monkeypatch.setattr(settings, "demo_mode", False)
+
+    assert notify.trigger_payload(Person(id="p-x", phone="+34611000001"))["DEMO_MODE"] == "false"
+
+
+def _gate_principal(numero: str, demo: str) -> str:
+    """El nodo «Freno de mano del simulacro» de la v9, copiado literal.
+
+    Vive en HappyRobot, no aquí, y por eso puede romperse sin que ningún test se entere: el 19
+    de septiembre la rama del organismo llevaba horas muerta porque el payload no mandaba lo
+    que el nodo esperaba. Copiarlo es la única forma de que un cambio en el payload avise.
+    """
+    limpio = "".join(c for c in str(numero or "") if c.isdigit() or c == "+")
+    if str(demo or "").lower() != "true":
+        raise ValueError("La peticion no viene declarada como simulacro: no se marca.")
+    if not re.fullmatch(r"\+34[67]\d{8}", limpio):
+        raise ValueError("El numero de destino no es un movil espanol valido.")
+    return limpio
+
+
+def test_el_payload_pasa_el_cerrojo_principal_de_la_v9(monkeypatch):
+    monkeypatch.setattr(settings, "demo_mode", True)
+
+    payload = notify.trigger_payload(Person(id="p-x", phone="+34611000001"))
+
+    assert _gate_principal(payload["NUMERO_TELEFONO"], payload["DEMO_MODE"]) == "+34611000001"
+
+
+def test_con_demo_mode_apagado_el_cerrojo_principal_no_marca(monkeypatch):
+    monkeypatch.setattr(settings, "demo_mode", False)
+
+    payload = notify.trigger_payload(Person(id="p-x", phone="+34611000001"))
+
+    with pytest.raises(ValueError):
+        _gate_principal(payload["NUMERO_TELEFONO"], payload["DEMO_MODE"])
+
+
+def test_el_numero_del_organismo_viaja_para_que_el_mando_sea_configurable(monkeypatch):
+    """El nodo de la v9 tiene a Nico fijo, pero deja que el disparo lo sobreescriba."""
+    monkeypatch.setattr(settings, "demo_org_phone", "+34690757371")
+
+    assert notify.trigger_payload(Person(id="p-x"))["NUMERO_ORGANISMO"] == "+34690757371"
+
+
+# --------------------------------------------------------------------------------------
+# Una llamada colgada no puede bloquear a esa persona el resto de la crisis
+# --------------------------------------------------------------------------------------
+
+
+def test_un_intento_sin_desenlace_caduca_y_deja_volver_a_llamar(poblado, monkeypatch):
+    """El caso real del ensayo: cuelgan, nadie nos avisa, y esa ficha queda muerta.
+
+    El resultado llega por `POST /calls/outcome`, y ese callback puede no llegar nunca — con
+    la API en localhost, HappyRobot no la alcanza. Sin caducidad, la persona se queda con un
+    `ringing` eterno y no se le puede volver a llamar.
+    """
+    monkeypatch.setattr(settings, "call_stale_minutes", 5.0)
+    dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+    colgado = next(iter(poblado.calls.values()))
+    poblado.set_call_state(colgado.id, CallState.ringing)
+
+    # Bloquea mientras es reciente.
+    _, intentos, descartados, _ = dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+    assert intentos == [] and "en curso" in descartados[0]["reason"]
+
+    # Se envejece la marca de tiempo seis minutos.
+    colgado.updated_at = "2020-01-01T00:00:00Z"
+    _, intentos, _, _ = dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+
+    assert len(intentos) == 1, "tras caducar, esa persona se puede volver a llamar"
+    assert poblado.calls[colgado.id].state == CallState.stale
+
+
+def test_caducar_no_inventa_el_desenlace(poblado):
+    """`stale` no es `no_answer`: no sabemos si contestó, y decir que no sería mentir."""
+    dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+    colgado = next(iter(poblado.calls.values()))
+    poblado.set_call_state(colgado.id, CallState.ringing)
+    colgado.updated_at = "2020-01-01T00:00:00Z"
+
+    poblado.expire_stale_calls()
+
+    assert poblado.calls[colgado.id].state == CallState.stale
+    assert poblado.calls[colgado.id].answered is None, "no se afirma nada sobre si descolgó"
+    assert "/calls/outcome" in (poblado.calls[colgado.id].detail or "")
+
+
+def test_un_intento_reciente_no_caduca(poblado):
+    dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+    vivo = next(iter(poblado.calls.values()))
+    poblado.set_call_state(vivo.id, CallState.ringing)
+
+    assert poblado.expire_stale_calls() == []
+    assert poblado.calls[vivo.id].state == CallState.ringing
+
+
+# --------------------------------------------------------------------------------------
+# Limpiar el tablero sin el martillo de /reset
+# --------------------------------------------------------------------------------------
+
+
+def test_calls_reset_vacia_el_tablero_y_no_toca_nada_mas(client):
+    """El motivo de existir: `/reset` recarga el escenario entero y con el jurado delante eso
+    no se pulsa. Esto retira los intentos y deja el resto del estado como estaba."""
+    client.post("/calls/dispatch", json={"person_ids": ["p-001", "p-002"]})
+    antes_personas = len(client.get("/state").json()["people"])
+    antes_log = client.get("/decisions").json()["count"]
+    assert len(client.get("/calls").json()) == 2
+
+    respuesta = client.post("/calls/reset", params={"operator": "Pablo"})
+
+    assert respuesta.status_code == 200
+    assert client.get("/calls").json() == []
+    # Lo demás sigue en pie: eso es justo lo que lo distingue de /reset.
+    assert len(client.get("/state").json()["people"]) == antes_personas
+    assert client.get("/decisions").json()["count"] > antes_log, "el borrado queda registrado"
+
+
+def test_calls_reset_puede_acotarse_a_una_rafaga(client):
+    primera = client.post("/calls/dispatch", json={"person_ids": ["p-001"]}).json()
+    client.post("/calls/dispatch", json={"person_ids": ["p-002"]})
+    assert len(client.get("/calls").json()) == 2
+
+    client.post("/calls/reset", params={"batch_id": primera["batch_id"]})
+
+    quedan = client.get("/calls").json()
+    assert len(quedan) == 1 and quedan[0]["person_id"] == "p-002"
+
+
+def test_calls_reset_sobre_un_tablero_vacio_no_falla(client):
+    respuesta = client.post("/calls/reset")
+    assert respuesta.status_code == 200
+    assert respuesta.json()["decisions"] == []
+
+
+def test_tras_calls_reset_se_puede_volver_a_llamar(client):
+    """El caso de uso entero: la llamada se queda colgada y hay que poder repetir.
+
+    Se fuerza un intento VIVO porque en modo simulado el estado nace terminal y nunca bloquea;
+    lo que bloquea de verdad —y es el problema que este endpoint resuelve— es un `ringing` que
+    nadie cerró nunca.
+    """
+    client.post("/calls/dispatch", json={"person_ids": ["p-001"]})
+    colgado = client.get("/calls").json()[0]
+    state.set_call_state(colgado["id"], CallState.ringing)
+
+    bloqueado = client.post("/calls/dispatch", json={"person_ids": ["p-001"]}).json()
+    assert bloqueado["dispatched"] == 0 and "en curso" in bloqueado["skipped_detail"][0]["reason"]
+
+    client.post("/calls/reset")
+
+    assert client.post("/calls/dispatch", json={"person_ids": ["p-001"]}).json()["dispatched"] == 1
+
+
+# --------------------------------------------------------------------------------------
+# No se marca de verdad con una clave que está publicada en el repo
+# --------------------------------------------------------------------------------------
+
+
+def test_no_se_marca_con_la_clave_de_ejemplo_del_repo(poblado, monkeypatch):
+    """Pasó de verdad: producción quedó protegida con el marcador de `.env.example`.
+
+    El repo es público, así que esa clave la tiene cualquiera — y con las llamadas reales
+    encendidas, cualquiera podía hacer sonar los móviles del equipo.
+    """
+    monkeypatch.setattr(settings, "allow_real_calls", True)
+    monkeypatch.setattr(settings, "hr_shared_secret", "cambiame-por-algo-largo")
+
+    with pytest.raises(dispatcher.DispatchError, match="el repo es público"):
+        dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+
+
+def test_con_las_llamadas_simuladas_la_clave_de_ejemplo_no_estorba(poblado, monkeypatch):
+    """Sin `ALLOW_REAL_CALLS` no hay nada que proteger: que nadie se quede sin poder ensayar."""
+    monkeypatch.setattr(settings, "allow_real_calls", False)
+    monkeypatch.setattr(settings, "hr_shared_secret", "cambiame-por-algo-largo")
+
+    _, intentos, _, _ = dispatcher.dispatch(poblado, CallDispatch(person_ids=["p-001"]))
+
+    assert len(intentos) == 1
+
+
+@pytest.mark.parametrize("clave,publica", [
+    ("cambiame-por-algo-largo", True),
+    ("CAMBIAME-POR-ALGO-LARGO", True),
+    ("clave-de-ensayo", True),
+    ("3f8a91c2e5b74d06a1f9c3e7b2d85a40", False),
+])
+def test_deteccion_de_claves_publicas(monkeypatch, clave, publica):
+    monkeypatch.setattr(settings, "hr_shared_secret", clave)
+    assert settings.secret_is_public is publica

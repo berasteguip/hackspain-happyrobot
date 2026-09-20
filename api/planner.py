@@ -74,6 +74,25 @@ def _add(decisions: Decisions, entry: DecisionLogEntry | None) -> None:
         decisions.append(entry)
 
 
+class _SilentNotify:
+    """Avisos automáticos apagados (`AUTO_NOTIFY=false`): el planner sigue decidiendo rutas y
+    convoyes, pero no marca ni escribe a nadie. Lo que suena lo decide el operador con el círculo."""
+
+    @staticmethod
+    def place_call(person, reason, state=None, **_):
+        log.info("[AUTO_NOTIFY=false] llamada omitida a %s · %s", person.name or person.id, reason)
+        return None
+
+    @staticmethod
+    def send_sms(person, text, state=None, **_):
+        log.info("[AUTO_NOTIFY=false] SMS omitido a %s", person.name or person.id)
+        return None
+
+
+def _notifier():
+    return notify if settings.auto_notify else _SilentNotify
+
+
 def _first_name(person: Person | None) -> str:
     if person is None or not person.name:
         return ""
@@ -320,7 +339,7 @@ def detect_at_risk(state, trigger_event_id: str | None = None) -> Decisions:
                 ),
             )
             aviso = build_instruction(state, person)
-            notify.place_call(
+            _notifier().place_call(
                 person,
                 motivo,
                 state,
@@ -510,7 +529,7 @@ def recompute_routes(state, only_affected: bool = True, trigger_event_id: str | 
         if person.status in ACTIVE_STATUSES and antigua is not None:
             aviso = build_instruction(state, person)
             if person.status == PersonStatus.at_risk or person.convoy_role == ConvoyRole.leader:
-                notify.place_call(
+                _notifier().place_call(
                     person,
                     "cambio de ruta",
                     state,
@@ -518,7 +537,7 @@ def recompute_routes(state, only_affected: bool = True, trigger_event_id: str | 
                     trigger_event_id=trigger_event_id,
                 )
             else:
-                notify.send_sms(
+                _notifier().send_sms(
                     person,
                     aviso["say_this"],
                     state,
@@ -706,7 +725,7 @@ def _apply_convoy_roles(
             log_decision=False,
         )
         aviso = build_instruction(state, seguidor)
-        notify.send_sms(
+        _notifier().send_sms(
             seguidor,
             aviso["say_this"],
             state,
@@ -766,7 +785,7 @@ def check_convoy_cohesion(state, trigger_event_id: str | None = None) -> Decisio
             )
             objetivo = guia if guia_parado else separados[0][0]
             aviso = build_instruction(state, objetivo)
-            notify.place_call(
+            _notifier().place_call(
                 objetivo,
                 f"convoy {convoy.id} roto",
                 state,

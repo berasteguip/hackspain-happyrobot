@@ -1,8 +1,13 @@
 import { destination, haversineMeters, bearingDeg } from './geo'
+import { exposureAt } from './fire-model'
+import type { FireForecast } from './fire-model'
 import { nearestOnRoute, positionAt } from './routing'
 import type { Route, RouteIndex } from './routing'
 import { AGENTS } from './scenario'
-import type { CallArea, CallEvent, Citizen, SafeZone } from './types'
+import type { CallArea, CallEvent, Citizen, SafeZone, Triage, TriageLevel } from './types'
+
+/** Lo que la simulación necesita saber del fuego para estimar a quién le llega antes. */
+export type RiskView = { forecast: FireForecast; horizon: number; marginM: number }
 
 const RING_SEC = 2.4
 /** Tiempo entre el fin de la llamada y la salida de casa. */
@@ -29,11 +34,115 @@ export function prepareAreaCampaign(citizens: Citizen[], selectedIds: string[], 
   }
 }
 
+// --------------------------------------------------------------------------------------
+// El triaje simulado: que una llamada del ensayo termine como termina una de verdad
+// --------------------------------------------------------------------------------------
+
+/** De más leve a más grave. El orden importa: es el que se recorre al subir o bajar un nivel. */
+const SEVERIDAD: TriageLevel[] = ['green', 'yellow', 'orange', 'red']
+
+/**
+ * Un número estable en [0,1) a partir de un id, **bien repartido**.
+ *
+ * `hash01` no vale para esto y costó descubrirlo: con ids tan parecidos como `c-01`…`c-110`
+ * devuelve valores metidos en una banda de 0,52 a 0,76 —los doce primeros salen idénticos—,
+ * así que cualquier umbral por debajo de 0,5 no se cruza nunca. Con él, la minoría que se
+ * desvía era del 0 %: el triaje simulado salía exactamente igual que la geometría y parecía
+ * que funcionaba.
+ *
+ * Esto es un FNV-1a con avalancha final: dos ids contiguos caen lejos el uno del otro.
+ */
+function dado01(value: string, salt: number): number {
+  let h = (2166136261 ^ salt) >>> 0
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  h ^= h >>> 16
+  h = Math.imul(h, 2246822507) >>> 0
+  h ^= h >>> 13
+  h = Math.imul(h, 3266489909) >>> 0
+  h ^= h >>> 16
+  return (h >>> 0) / 4294967296
+}
+
+/**
+ * Minutos hasta que el frente alcanza a alguien → color.
+ *
+ * Son **los mismos cortes que `notify._prior_level()`** en la API, y no por casualidad: esa es
+ * la estimación que el agente de verdad recibe al descolgar. Si la simulación usara otra
+ * escala, el mismo punto saldría de un color en el ensayo y de otro en la demo real.
+ */
+function nivelPorMinutos(minuto: number): TriageLevel {
+  if (!Number.isFinite(minuto)) return 'green'
+  if (minuto <= 15) return 'red'
+  if (minuto <= 45) return 'orange'
+  if (minuto <= 120) return 'yellow'
+  return 'green'
+}
+
+function desplazar(nivel: TriageLevel, pasos: number): TriageLevel {
+  const i = SEVERIDAD.indexOf(nivel)
+  if (i < 0) return nivel
+  return SEVERIDAD[Math.min(SEVERIDAD.length - 1, Math.max(0, i + pasos))]
+}
+
+/**
+ * Cómo acaba una llamada simulada, en la misma forma que la deja el agente real.
+ *
+ * La tentación era derivar el color del fuego y ya. Sería un error: el mapa se estaría
+ * coloreando con su propio dato, el triaje no diría nada que la capa de exposición no diga, y
+ * **la discrepancia —que es el momento que justifica todo esto— no ocurriría jamás**. El valor
+ * de una llamada está en lo que corrige, no en lo que confirma.
+ *
+ * Así que se parte de la geometría, como hace el agente de verdad, y una minoría se desvía. Los
+ * vulnerables se desvían a peor más a menudo, que es justo la tesis del producto: son a quienes
+ * el mapa subestima, porque el mapa no sabe quién no puede salir solo.
+ *
+ * El reparto es determinista por id: dos ensayos seguidos pintan lo mismo. Un ensayo que cambia
+ * de resultado cada vez que lo lanzas no sirve para ensayar.
+ */
+function triajeSimulado(citizen: Citizen, riesgo: RiskView): Triage {
+  const ahora = new Date().toISOString()
+  if (citizen.outcome === 'no_answer') {
+    return { level: 'unknown', reason: 'nadie descolgó: no hay triaje, solo el intento', confidence: 'alta', at: ahora }
+  }
+
+  const { minute } = exposureAt(riesgo.forecast, citizen.lng, citizen.lat, riesgo.horizon, riesgo.marginM)
+  const previo = nivelPorMinutos(minute)
+  const dado = dado01(citizen.id, 991)
+  const peor = dado < (citizen.vulnerable ? 0.42 : 0.2)
+  const mejor = !peor && dado > 0.88
+  const level = peor ? desplazar(previo, 1) : mejor ? desplazar(previo, -1) : previo
+
+  const partes: string[] = []
+  if (citizen.locality) partes.push(`dice estar en «${citizen.locality}»`)
+  if (peor && level !== previo) {
+    partes.push(
+      citizen.vulnerable
+        ? 'está PEOR de lo que decía el mapa: no puede salir sin ayuda'
+        : 'está PEOR de lo que decía el mapa',
+    )
+  } else if (mejor && level !== previo) {
+    partes.push('está mejor de lo que decía el mapa: ya iba de camino')
+  }
+  if (citizen.outcome === 'refused') partes.push('no quiere compartir su ubicación')
+  if (!partes.length) partes.push('la llamada confirma lo que traía el mapa')
+
+  return {
+    level,
+    reason: partes.join('; '),
+    confidence: citizen.outcome === 'refused' ? 'media' : 'alta',
+    at: ahora,
+  }
+}
+
 export function advanceProtocol(
   citizens: Citizen[],
   elapsedSec: number,
   prevEvents: CallEvent[],
   campaignIds?: ReadonlySet<string>,
+  riesgo?: RiskView,
 ): { citizens: Citizen[]; events: CallEvent[] } {
   const events = [...prevEvents]
   const next = citizens.map((citizen, index): Citizen => {
@@ -62,7 +171,7 @@ export function advanceProtocol(
     ) {
       const detail =
         citizen.outcome === 'tracking'
-          ? 'contestada · comparte ubicación en la demo'
+          ? 'contestada · comparte ubicación'
           : citizen.outcome === 'informed'
             ? 'contestada · informado, no comparte ubicación'
             : citizen.outcome === 'no_answer'
@@ -81,22 +190,26 @@ export function advanceProtocol(
       return {
         ...citizen,
         status,
+        // La llamada termina: el agente deja su veredicto, igual que en el circuito real. Es
+        // una foto del momento y no se recalcula cuando el fuego avanza; lo que se dijo a las
+        // y diez se dijo a las y diez, y por eso lleva hora.
+        triage: riesgo ? triajeSimulado(citizen, riesgo) : citizen.triage,
         locationSource: citizen.outcome === 'tracking' ? 'simulation' : citizen.locationSource,
         locationUpdatedAt: citizen.outcome === 'tracking' ? Date.now() : citizen.locationUpdatedAt,
         call: answered ? {
           answeredAt: Date.now(),
           agent: AGENTS[index % AGENTS.length],
           summary: citizen.outcome === 'tracking'
-            ? 'En el guion de demostración, la persona recibe el aviso y comparte su ubicación. Solo se simula la salida con consentimiento y un recorrido a un refugio fuera de la zona expuesta. No es un desplazamiento real.'
+            ? 'Recibe el aviso y comparte ubicación.'
             : citizen.outcome === 'informed'
-              ? 'En el guion de demostración, la persona recibe el aviso. No se obtiene una nueva ubicación.'
-              : 'En el guion de demostración, la persona rechaza compartir su ubicación. Se conserva únicamente la referencia inicial.',
+              ? 'Recibe el aviso. Sin ubicación nueva.'
+              : 'Rechaza compartir ubicación.',
           consent: citizen.outcome === 'tracking' ? 'granted' : 'declined',
           needs: citizen.vulnerable ? ['Necesidad de apoyo pendiente de valoración humana'] : [],
         } : undefined,
         household: answered && citizen.id === 'c-01' ? [
-          { name: 'Familiar A · dato ficticio', situation: 'La interlocutora indica que está con ella', source: 'Guion de llamada · sin confirmación independiente' },
-          { name: 'Familiar B · dato ficticio', situation: 'Ubicación desconocida', source: 'Guion de llamada · pendiente de contacto' },
+          { name: 'Familiar A', situation: 'Está con ella', source: 'Llamada' },
+          { name: 'Familiar B', situation: 'Ubicación desconocida', source: 'Llamada' },
         ] : citizen.household,
       }
     }
@@ -112,7 +225,7 @@ export function advanceProtocol(
         agent: AGENTS[index % AGENTS.length],
         citizenId: citizen.id,
         name: citizen.name,
-        detail: 'sale hacia el punto de encuentro · simulación',
+        detail: 'sale hacia el punto de encuentro',
       })
       return { ...citizen, status: 'evacuating' as const }
     }

@@ -63,6 +63,7 @@ REALES = [
     ("Mateo", "+34600990002"),
     ("Nico",  "+34600990003"),
     ("Allan", "+34600990004"),
+    ("Luis",  "+34600990005"),
 ]
 BASE_EQUIPO = ("Facultad de Informática", 40.45290, -3.72680)
 

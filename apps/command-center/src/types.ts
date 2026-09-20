@@ -8,6 +8,18 @@ export type CallStateName =
   | 'failed'
   | 'blocked'
   | 'simulated'
+  | 'stale'
+
+/** El color con el que el agente de voz cerró la llamada (`Triage.level` en `api/models.py`). */
+export type TriageLevel = 'red' | 'orange' | 'yellow' | 'green' | 'unknown'
+
+export type Triage = {
+  level: TriageLevel
+  /** La frase en español que explica el color. La redacta la API, no el mapa. */
+  reason: string | null
+  confidence: string | null
+  at: string | null
+}
 
 export type CitizenStatus =
   | 'pending'
@@ -27,8 +39,6 @@ export type Citizen = {
   phone: string
   lng: number
   lat: number
-  originLng?: number
-  originLat?: number
   status: CitizenStatus
   vulnerable: boolean
   safeZoneId: string
@@ -43,8 +53,21 @@ export type Citizen = {
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
   /** Estado del INTENTO de llamada real (viene de la API), distinto de `status`. */
   callState?: CallStateName
+  /** Lo que el agente concluyó al colgar. Sin llamada atendida no existe. */
+  triage?: Triage
   /** ¿Sonaría el teléfono, o lo pararía el cerrojo de la API? */
   dialable?: boolean
+  /**
+   * Escalada a fuerzas de seguridad: nadie descolgó y el mando pidió que alguien vaya a la
+   * puerta. Guarda qué medios salieron para que el punto lo enseñe y no se escale dos veces.
+   */
+  escalation?: { at: number; runId: string; unitIds: string[] }
+  /**
+   * Cambio de destino en marcha: el mando pintó un frente previsto que cruzaba su camino (o su
+   * refugio) y HappyRobot le buscó otra salida desde donde estaba. `toZoneId` llega cuando
+   * Directions devuelve la ruta nueva; hasta entonces la persona está parada, esperando.
+   */
+  reroute?: { at: number; runId: string; fromZoneId: string; toZoneId?: string }
   locationUpdatedAt?: number
   accuracyM?: number
   locality?: string
@@ -61,9 +84,13 @@ export type Citizen = {
 
 export type CallArea = { lng: number; lat: number; radiusM: number }
 
+/** Un frente previsto pintado a mano por el mando: anillo cerrado en [lng, lat] y cuándo se pintó. */
+export type PaintedFire = { id: string; ring: [number, number][]; at: number }
+
 export type MapLayers = {
   perimeter: boolean
   spread: boolean
+  plannedFire: boolean
   thermal: boolean
   citizens: boolean
   references: boolean
@@ -72,6 +99,8 @@ export type MapLayers = {
   healthCenters: boolean
   fireStations: boolean
   routes: boolean
+  callArea: boolean
+  units: boolean
 }
 
 export type LocationPing = {
@@ -114,10 +143,4 @@ export type CallEvent = {
   citizenId: string
   name: string
   detail: string
-}
-
-export type RiskArea = {
-  id: string
-  name: string
-  coordinates: [number, number][]
 }

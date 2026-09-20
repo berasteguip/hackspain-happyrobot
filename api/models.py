@@ -11,9 +11,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+import logging
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+log = logging.getLogger("crisis.models")
 
 # --------------------------------------------------------------------------------------
 # Utilidades de tiempo
@@ -146,6 +157,22 @@ class DecisionType(str, Enum):
     plan_discarded = "plan_discarded"
 
 
+class LogTopic(str, Enum):
+    """De qué habla una entrada del log de llamadas.
+
+    Cerrado a propósito: es lo que hace la consulta indexable. Buscar «¿está cortada la
+    ZA-P-2551?» por texto libre no funciona porque nadie repite la misma frase dos veces;
+    buscar `topic='road_status' and road='ZA-P-2551'` es igualdad contra índice.
+    """
+
+    road_status = "road_status"  # ¿está cortada la carretera X?
+    evacuation_order = "evacuation_order"  # ¿han mandado evacuar el pueblo Y?
+    shelter_capacity = "shelter_capacity"  # ¿cabe alguien en el refugio Z?
+    fire_observed = "fire_observed"  # humo, llamas, lo que alguien ve
+    person_situation = "person_situation"  # lo que un vecino cuenta de sí mismo
+    other = "other"
+
+
 class Urgency(str, Enum):
     """Etiqueta que consume el agente de voz (`/instructions`). El contrato pide el campo
     `urgency` sin fijar valores."""
@@ -155,6 +182,41 @@ class Urgency(str, Enum):
     medium = "medium"
     low = "low"
     unknown = "unknown"
+
+
+class TriageLevel(str, Enum):
+    """El color con el que el agente de voz cerró la llamada.
+
+    Es la clasificación que el agente de HappyRobot hace en el nodo `Observación` —en español,
+    rojo/naranja/amarillo/verde— traducida a los valores en inglés que exige el contrato. NO es
+    lo mismo que `minutes_to_front`: aquello es geometría (dónde está el frente), esto es lo que
+    una persona dijo por teléfono. Cuando las dos discrepan, la llamada gana en el mapa y la
+    geometría sigue mandando en la cola: por eso conviven en campos distintos.
+    """
+
+    red = "red"
+    orange = "orange"
+    yellow = "yellow"
+    green = "green"
+    unknown = "unknown"
+
+    @classmethod
+    def from_text(cls, raw: str | None) -> "TriageLevel":
+        """`"Naranja"` → `orange`. Tolera el inglés y el ruido; lo que no reconoce es `unknown`."""
+        clave = (raw or "").strip().lower()
+        return _TRIAGE_ALIASES.get(clave, cls.unknown)
+
+
+_TRIAGE_ALIASES: dict[str, TriageLevel] = {
+    "rojo": TriageLevel.red,
+    "red": TriageLevel.red,
+    "naranja": TriageLevel.orange,
+    "orange": TriageLevel.orange,
+    "amarillo": TriageLevel.yellow,
+    "yellow": TriageLevel.yellow,
+    "verde": TriageLevel.green,
+    "green": TriageLevel.green,
+}
 
 
 # --------------------------------------------------------------------------------------
@@ -199,6 +261,32 @@ class Instruction(Base):
     text: str
     sent_at: str
     channel: Channel = Channel.sms
+
+
+class Triage(Base):
+    """El veredicto con el que el agente de voz cerró la llamada.
+
+    Es lo único del sistema que viene de haber hablado con la persona: el resto del estado lo
+    calcula la geometría. Vive colgado de `Person` y NO se pisa con cada pasada del planner —
+    solo lo reescribe otra llamada. Por eso `at` y `run_id` importan: el mando tiene que poder
+    decir «esto lo dijo ella hace cuatro minutos, en la llamada tal».
+    """
+
+    level: TriageLevel = TriageLevel.unknown
+    prior_level: TriageLevel | None = None  # el color que el agente llevaba AL DESCOLGAR
+    confidence: str | None = None  # alta | media | baja, según lo clara que fue la conversación
+    # ninguna | prior_alto_obs_baja | prior_bajo_obs_alta. Es la señal de que el mapa mentía:
+    # `prior_bajo_obs_alta` significa que la persona está peor de lo que decía la geometría.
+    discrepancy: str | None = None
+    call_result: str | None = None  # completada | cortada | no_contactado
+    declared_zone: str | None = None  # el paraje que dijo, que puede no ser donde la ubicamos
+    place_type: str | None = None  # edificio | exterior | vehiculo
+    flames: bool | None = None  # afirmó ver llamas o humo
+    notes: str | None = None  # lo que no cabía en los campos anteriores
+    reason: str | None = None  # la frase en español que lee el mando, ya redactada
+    run_id: str | None = None
+    run_url: str | None = None  # el run de HappyRobot: ahí está la grabación y el transcript
+    at: str = Field(default_factory=utcnow_iso)
 
 
 class Wind(Base):
@@ -257,6 +345,8 @@ class Person(Base):
     consent_position: bool | None = None
     call_attempts: int = 0
     notes: str | None = None
+    # Lo que el agente de voz concluyó en la última llamada. `None` = nadie ha hablado con ella.
+    triage: Triage | None = None
 
 
 class House(Base):
@@ -370,6 +460,97 @@ class DecisionLogEntry(Base):
 # --------------------------------------------------------------------------------------
 
 
+class CallLogEntry(Base):
+    """Una afirmación: qué se sabe sobre un tema, quién lo dice y hasta cuándo es fiable.
+
+    NO es un log de intervenciones ni el `decision_log` (contrato §2.6). El `decision_log`
+    registra decisiones del sistema; esto registra **conocimiento dicho por personas**, y es lo
+    que una llamada aprende y las otras 299 pueden consultar sin volver a preguntar.
+
+    Espejo de la tabla `call_log` de Twin: el agente lee y escribe allí (nativo, sin salir de la
+    plataforma) y la misma fila llega aquí por webhook para que el puesto de mando la vea llegar
+    en vivo. Twin es la fuente para el agente; esto es la copia para la pantalla.
+    """
+
+    id: str
+    created_at: str = Field(default_factory=utcnow_iso)
+
+    # De qué habla. `locality_id` cuando el sitio existe en el padrón, `place_text` cuando es un
+    # paraje sin entidad («la pista de La Cernada»), `road` aparte porque una carretera no
+    # pertenece a un núcleo: la ZA-P-2434 es la salida de Sesnández Y la de Ferreruela.
+    topic: LogTopic = LogTopic.other
+    locality_id: str | None = None
+    road: str | None = None
+    place_text: str | None = None
+
+    # Quién habla. `person_id` puede ser nulo: quien llama puede no estar en el padrón, y eso
+    # mismo es la señal de que hay un vecino nuevo que registrar.
+    person_id: str | None = None
+    phone: str | None = None
+    source_id: str = "desconocido"
+    source_detail: str | None = None  # la unidad concreta: «bomberos de Zamora»
+
+    # Qué se dijo. `answer` nulo = pendiente; no hace falta un tipo «pendiente» aparte.
+    question: str
+    answer: str | None = None
+    answered_at: str | None = None
+    valid_until: str | None = None  # None = no caduca
+
+    # Bucle abierto: «a las tres me dicen algo».
+    callback_to: str | None = None
+    callback_at: str | None = None
+
+    run_id: str | None = None
+    answer_run_id: str | None = None
+    # Si la contraparte era una centralita simulada. Se declara, no se esconde: el puesto de
+    # mando lo pinta distinto, igual que una posición `declared` no se pinta como una `gps`.
+    simulated: bool = True
+
+    @property
+    def resolved(self) -> bool:
+        return self.answer is not None
+
+
+class CallLogWrite(Base):
+    """Lo que manda el workflow al anotar algo.
+
+    `id` es opcional y conviene mandarlo: es el uuid que generó Twin al insertar la fila allí.
+    Compartir el id hace que las dos copias —la de Twin, que es la fuente, y esta, que es para la
+    pantalla— sean la misma anotación y no dos. Si no viene, la API se inventa uno.
+    """
+
+    id: str | None = None
+    topic: LogTopic = LogTopic.other
+    locality_id: str | None = None
+    road: str | None = None
+    place_text: str | None = None
+    person_id: str | None = None
+    phone: str | None = None
+    source_id: str = "desconocido"
+    source_detail: str | None = None
+    question: str
+    answer: str | None = None
+    valid_until: str | None = None
+    validity_min: int | None = None  # alternativa a `valid_until`: la API calcula la fecha
+    callback_to: str | None = None
+    callback_at: str | None = None
+    run_id: str | None = None
+    answer_run_id: str | None = None
+    simulated: bool = True
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _vacio_es_nulo(cls, valor):
+        """Una cadena vacía es un campo sin rellenar, no un valor.
+
+        El cuerpo del webhook va en JSON crudo con plantillas, así que un parámetro que el
+        agente no rellenó llega como `""`. Sin esto, `validity_min: ""` devuelve un 422 en
+        mitad de una llamada de voz, y `locality_id: ""` guardaría una cadena vacía que no
+        casa con ninguna zona. Los dos fallos son silenciosos para quien está al teléfono.
+        """
+        return None if isinstance(valor, str) and not valor.strip() else valor
+
+
 class FireEvent(Base):
     perimeter: Polygon
     wind: Wind | None = None
@@ -400,6 +581,29 @@ class PositionEvent(Base):
     lon: float
     accuracy_m: float | None = None
     t: str | None = None
+
+
+class RegisterPerson(Base):
+    """Alguien que abre el enlace y se apunta él mismo: teléfono con prefijo y su GPS."""
+
+    name: str | None = None
+    phone: str
+    lat: float
+    lon: float
+    accuracy_m: float | None = None
+    # Desplazar el escenario entero (fuego, vecinos, salidas, patrullas) alrededor de esta persona.
+    anchor: bool = False
+
+
+class RegisterResponse(Base):
+    ok: bool = True
+    person_id: str
+    name: str | None = None
+    phone: str | None = None
+    created: bool
+    map_url: str
+    gps_url: str
+    anchor: dict[str, float] | None = None
 
 
 class CallExtracted(Base):
@@ -434,6 +638,113 @@ class CallStarted(Base):
     direction: str | None = None  # inbound | outbound
 
 
+def _booleano_tolerante(valor: Any) -> Any:
+    """`"true"`, `"sí"`, `1` → bool. Lo que no se reconoce vale `None`, nunca un 422.
+
+    Existe por un caso real (20 sep 2026): el AI Extract devolvió `"llamas": "llamas"` —rellenó
+    el campo booleano con el nombre del campo— y Pydantic tumbó la petición entera. Con ella se
+    perdió una observación que traía `nivel: rojo`, `discrepancia: prior_bajo_obs_alta` y una
+    nota que decía que la persona veía llamas y que la llamada se había cortado. O sea: se tiró
+    lo único que sabíamos de alguien en peligro por un campo que no decidía nada.
+
+    Un modelo de lenguaje puede devolver cualquier cosa en cualquier campo. Del otro lado de
+    este endpoint hay uno, así que aquí no se valida: se interpreta lo que se entiende y se
+    descarta lo demás **dejando rastro en el log**, que no es lo mismo que fingir que no pasó.
+    """
+    if valor is None or isinstance(valor, bool):
+        return valor
+    texto = str(valor).strip().lower()
+    if texto in {"true", "1", "si", "sí", "yes", "y", "verdadero"}:
+        return True
+    if texto in {"false", "0", "no", "n", "falso"}:
+        return False
+    log.warning("valor booleano ininteligible en la observación: %r — se ignora ese campo", valor)
+    return None
+
+
+def _entero_tolerante(valor: Any) -> Any:
+    """Mismo criterio para los números: una duración que no se entiende no tumba la llamada."""
+    if valor is None or isinstance(valor, bool):
+        return None if isinstance(valor, bool) else valor
+    if isinstance(valor, int):
+        return valor
+    try:
+        return int(float(str(valor).strip()))
+    except (TypeError, ValueError):
+        log.warning("valor numérico ininteligible en la observación: %r — se ignora", valor)
+        return None
+
+
+# `no_contactado` en el extract del agente, y sus variantes razonables. Un `resultado` que no
+# esté aquí se lee como "hubo conversación": preferimos dar por contestada una llamada que no
+# lo fue antes que dar por perdida a alguien con quien sí se habló.
+NO_CONTACT_RESULTS = {"no_contactado", "no contactado", "no_contacted", "sin_contacto", "buzon"}
+
+
+class CallObservation(Base):
+    """Lo que el nodo `Observación` del workflow manda al colgar: el círculo que se cierra.
+
+    La app dispara la llamada (`POST /calls/dispatch` → webhook del workflow) y hasta ahora ahí
+    se acababa todo: el AI Extract del agente se quedaba dentro de HappyRobot y el mapa nunca se
+    enteraba de lo que la persona había dicho. Este es el camino de vuelta.
+
+    **Los nombres llegan en español** porque son los del nodo tal y como está desplegado
+    (`nivel`, `zona_declarada`, `discrepancia`...). No los renombramos en la plataforma para no
+    tocar un workflow que ya está en vivo: se aceptan como alias y el contrato sigue en inglés
+    puertas adentro. Los dos juegos valen.
+
+    **Todo llega como texto.** El cuerpo del nodo webhook es una plantilla JSON, así que un campo
+    vacío viaja como `""` y un booleano como `"true"`. El validador de abajo limpia eso antes de
+    que Pydantic se queje de un `""` donde esperaba un entero.
+    """
+
+    person_id: str | None = Field(default=None, validation_alias=AliasChoices("person_id", "PERSONA_ID", "persona_id"))
+    phone: str | None = Field(default=None, validation_alias=AliasChoices("phone", "NUMERO_TELEFONO", "telefono"))
+    run_id: str | None = None
+    run_url: str | None = None
+    duration_s: Annotated[int | None, BeforeValidator(_entero_tolerante)] = Field(
+        default=None, validation_alias=AliasChoices("duration_s", "duration", "duracion_s")
+    )
+    # El color al que concluyó el agente y el que llevaba de partida. La pareja es lo que hace
+    # legible la discrepancia: «iba como naranja y resultó rojo» dice más que cualquiera de los dos.
+    level: str | None = Field(default=None, validation_alias=AliasChoices("level", "nivel"))
+    prior_level: str | None = Field(default=None, validation_alias=AliasChoices("prior_level", "PRIOR_NIVEL", "nivel_previo"))
+    declared_zone: str | None = Field(default=None, validation_alias=AliasChoices("declared_zone", "zona_declarada"))
+    place_type: str | None = Field(default=None, validation_alias=AliasChoices("place_type", "tipo_lugar"))
+    flames: Annotated[bool | None, BeforeValidator(_booleano_tolerante)] = Field(
+        default=None, validation_alias=AliasChoices("flames", "llamas")
+    )
+    discrepancy: str | None = Field(default=None, validation_alias=AliasChoices("discrepancy", "discrepancia"))
+    confidence: str | None = Field(default=None, validation_alias=AliasChoices("confidence", "confianza"))
+    call_result: str | None = Field(default=None, validation_alias=AliasChoices("call_result", "resultado"))
+    notes: str | None = Field(default=None, validation_alias=AliasChoices("notes", "nota_libre", "agent_notes"))
+    # Si el workflow lo manda explícito, manda sobre lo que se deduzca de `call_result`.
+    answered: Annotated[bool | None, BeforeValidator(_booleano_tolerante)] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _vacios_son_nulos(cls, data: Any) -> Any:
+        """`""`, `"null"` y el nombre de una variable sin resolver valen lo mismo: nada.
+
+        Sin esto, una llamada en la que el agente no llegó a determinar el nivel manda
+        `"duration_s": ""` y la API responde 422 — o sea, se pierde entera la única información
+        que teníamos de esa persona por culpa de un campo que ni siquiera importaba.
+        """
+        if not isinstance(data, dict):
+            return data
+        vacios = {"", "null", "none", "undefined", "n/a"}
+        return {
+            k: (None if isinstance(v, str) and v.strip().lower() in vacios else v)
+            for k, v in data.items()
+        }
+
+    def answered_call(self) -> bool:
+        """¿Hubo alguien al otro lado? `answered` explícito gana; si no, lo dice `resultado`."""
+        if self.answered is not None:
+            return self.answered
+        return (self.call_result or "").strip().lower() not in NO_CONTACT_RESULTS
+
+
 # --------------------------------------------------------------------------------------
 # Reparto de llamadas: rodear un círculo en Vigía → N llamadas independientes
 # --------------------------------------------------------------------------------------
@@ -454,8 +765,12 @@ class CallState(str, Enum):
     answered = "answered"  # contestó (llega por /calls/outcome)
     no_answer = "no_answer"  # no contestó (llega por /calls/outcome)
     failed = "failed"  # ni siquiera se pudo marcar (sin teléfono, 4xx, red)
-    blocked = "blocked"  # el cerrojo lo paró: fuera de CALL_ALLOWLIST
+    blocked = "blocked"  # un cerrojo lo paró (hoy: la clave pública sin cambiar)
     simulated = "simulated"  # ALLOW_REAL_CALLS=false: nadie ha recibido nada
+    # Se lanzó, pero nunca llegó el resultado. NO es `no_answer`: no sabemos si contestó o no,
+    # y decir que no contestó sería inventarse un dato. Pasa siempre que HappyRobot no puede
+    # alcanzar nuestra `/calls/outcome` — por ejemplo con la API en localhost.
+    stale = "stale"
 
 
 TERMINAL_CALL_STATES = {
@@ -464,6 +779,7 @@ TERMINAL_CALL_STATES = {
     CallState.failed,
     CallState.blocked,
     CallState.simulated,
+    CallState.stale,
 }
 
 
@@ -532,6 +848,12 @@ class RosterEntry(Base):
     status: PersonStatus = PersonStatus.unknown
     call_state: CallState | None = None
     location_source: PositionSource | None = None
+    # El color del triaje y su porqué. Es lo que tiñe el punto en el mapa: sin llamada llega
+    # `None` y el punto se queda del azul de "nadie ha hablado con esta persona".
+    triage_level: TriageLevel | None = None
+    triage_reason: str | None = None
+    triage_confidence: str | None = None
+    triage_at: str | None = None
 
 
 class HumanOverride(Base):

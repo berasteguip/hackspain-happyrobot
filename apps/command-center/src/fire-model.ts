@@ -1,4 +1,4 @@
-import type { FeatureCollection, Polygon } from 'geojson'
+import type { FeatureCollection, Point, Polygon } from 'geojson'
 
 export type FireSettings = { windTowardDeg: number; windKmh: number; spreadMPerMin: number }
 export type Exposure = { level: 'danger' | 'warning' | 'clear' | 'unknown'; minute: number }
@@ -11,9 +11,63 @@ export type FireForecast = {
   initialCells: Cell[]
 }
 export const MAX_FORECAST_MIN = 120
+/** Minutos de simulación que tarda una celda en aparecer o apagarse en el mapa. Solo visual. */
+export const HEAT_BLOOM_MIN = 12
 export const EXPOSURE_LABEL = { danger: 'Peligro en el escenario', warning: 'Exposición futura simulada', clear: 'Sin afectación calculada', unknown: 'Sin evaluación' }
 export const EXPOSURE_COLOR = { danger: '#f36d69', warning: '#f3bd61', clear: '#83bedf', unknown: '#a3acb7' }
 const key = (x: number, y: number) => `${x}:${y}`
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function smoothstep(value: number) {
+  const x = clamp01(value)
+  return x * x * (3 - 2 * x)
+}
+
+function hash(x: number, y: number) {
+  const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453
+  return value - Math.floor(value)
+}
+
+/** Intensidad 0–1 para pintar el frente. No cambia exposición ni rutas. */
+export function cellVisualHeat(minute: number, horizon: number) {
+  if (minute === 0) return 1
+  const age = horizon - minute
+  const bloom = smoothstep((age + HEAT_BLOOM_MIN * 0.45) / HEAT_BLOOM_MIN)
+  if (bloom <= 0) return 0
+  return bloom * (0.38 + 0.62 * smoothstep(age / 18))
+}
+
+export function forecastHeatPoints(forecast: FireForecast, horizon: number): FeatureCollection<Point> {
+  const features: FeatureCollection<Point>['features'] = []
+  const jitter = forecast.cellSizeM * 0.28
+  for (const cell of forecast.cells.values()) {
+    if (cell.minute === 0) continue
+    const heat = cellVisualHeat(cell.minute, horizon)
+    if (heat <= 0.03) continue
+    const lng = forecast.origin[0] + (cell.x + 0.5 + (hash(cell.x, cell.y) - 0.5) * 0.56) * forecast.cellSizeM / forecast.lngScale
+    const lat = forecast.origin[1] + (cell.y + 0.5 + (hash(cell.x + 4.2, cell.y + 1.8) - 0.5) * 0.56) * forecast.cellSizeM / 111320
+    const front = horizon - cell.minute < 16 ? 1 : 0
+    features.push({
+      type: 'Feature',
+      properties: { heat, front },
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+    })
+    if (heat > 0.55) {
+      features.push({
+        type: 'Feature',
+        properties: { heat: heat * 0.7, front },
+        geometry: { type: 'Point', coordinates: [
+          lng + (hash(cell.x, cell.y + 9) - 0.5) * 2 * jitter / forecast.lngScale,
+          lat + (hash(cell.x + 8, cell.y) - 0.5) * 2 * jitter / 111320,
+        ] },
+      })
+    }
+  }
+  return { type: 'FeatureCollection', features }
+}
 
 class Queue {
   items: Cell[] = []
@@ -45,31 +99,68 @@ class Queue {
   }
 }
 
-export function buildFireForecast(footprint: FeatureCollection<Polygon>, settings: FireSettings): FireForecast {
+/**
+ * Un frente que el mando da por hecho antes de que exista: un polígono pintado a mano sobre el
+ * mapa que entra en el modelo como fuego que arde a partir del minuto `minute`. No es huella real
+ * (no tiñe de «peligro» a nadie hoy) pero sí expone rutas y refugios en la proyección, que es lo
+ * que hace que el sistema recalcule.
+ */
+export type PlannedFire = { footprint: FeatureCollection<Polygon>; minute: number }
+/** Minuto en que arde un frente pintado a mano. «Va a ocurrir», no «está ocurriendo». */
+export const PLANNED_FIRE_MIN = 15
+
+/** Punto dentro de un anillo (par-impar). El anillo puede ser cualquier polígono simple, no solo un rectángulo. */
+function insideRing(x: number, y: number, ring: [number, number][]) {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const [xi, yi] = ring[i]
+    const [xj, yj] = ring[j]
+    if (yi > y !== yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+export function buildFireForecast(footprint: FeatureCollection<Polygon>, settings: FireSettings, planned?: PlannedFire): FireForecast {
   const { windTowardDeg, windKmh, spreadMPerMin } = settings
   if (![windTowardDeg, windKmh, spreadMPerMin].every(Number.isFinite) || windKmh < 0 || windKmh > 60 || spreadMPerMin < 0 || spreadMPerMin > 20) throw new Error('Parámetros fuera del rango de simulación')
-  const first = footprint.features[0]?.geometry.coordinates[0][0]
+  const first = footprint.features[0]?.geometry.coordinates[0][0] ?? planned?.footprint.features[0]?.geometry.coordinates[0][0]
   const origin: [number, number] = first ? [first[0], first[1]] : [0, 0]
   const cellSizeM = 100
   const lngScale = 111320 * Math.cos(origin[1] * Math.PI / 180)
   const cells = new Map<string, Cell>()
   const queue = new Queue()
+  const seed = (x: number, y: number, minute: number) => {
+    const id = key(x, y)
+    if ((cells.get(id)?.minute ?? Infinity) <= minute) return
+    const cell = { x, y, minute }
+    cells.set(id, cell)
+    queue.push(cell)
+  }
   for (const feature of footprint.features) {
     const ring = feature.geometry.coordinates[0]
     const xs = ring.map(([lng]) => (lng - origin[0]) * lngScale / cellSizeM)
     const ys = ring.map(([, lat]) => (lat - origin[1]) * 111320 / cellSizeM)
     for (let y = Math.floor(Math.min(...ys)); y < Math.ceil(Math.max(...ys)); y += 1) {
-      for (let x = Math.floor(Math.min(...xs)); x < Math.ceil(Math.max(...xs)); x += 1) {
-        const id = key(x, y)
-        if (!cells.has(id)) {
-          const cell = { x, y, minute: 0 }
-          cells.set(id, cell)
-          queue.push(cell)
-        }
-      }
+      for (let x = Math.floor(Math.min(...xs)); x < Math.ceil(Math.max(...xs)); x += 1) seed(x, y, 0)
     }
   }
   const initialCells = [...cells.values()]
+  // El frente pintado es un polígono libre: arde la celda cuyo centro cae dentro y, para que un
+  // trazo fino no se pierda entre celdas de 100 m, también la celda de cada vértice.
+  if (planned && Number.isFinite(planned.minute) && planned.minute >= 0) {
+    for (const feature of planned.footprint.features) {
+      const ring = feature.geometry.coordinates[0].map(([lng, lat]): [number, number] => [(lng - origin[0]) * lngScale / cellSizeM, (lat - origin[1]) * 111320 / cellSizeM])
+      if (ring.length < 3) continue
+      const xs = ring.map(([x]) => x)
+      const ys = ring.map(([, y]) => y)
+      for (let y = Math.floor(Math.min(...ys)); y <= Math.floor(Math.max(...ys)); y += 1) {
+        for (let x = Math.floor(Math.min(...xs)); x <= Math.floor(Math.max(...xs)); x += 1) {
+          if (insideRing(x + 0.5, y + 0.5, ring)) seed(x, y, planned.minute)
+        }
+      }
+      for (const [x, y] of ring) seed(Math.floor(x), Math.floor(y), planned.minute)
+    }
+  }
   if (spreadMPerMin > 0) {
     const angle = windTowardDeg * Math.PI / 180
     const steps = [-1, 0, 1].flatMap(y => [-1, 0, 1].filter(x => x || y).map(x => {
@@ -155,24 +246,6 @@ function intersectsBox(ax: number, ay: number, bx: number, by: number, west: num
     }
   }
   return true
-}
-
-export function initialFireClearance(forecast: FireForecast, lng: number, lat: number) {
-  const px = (lng - forecast.origin[0]) * forecast.lngScale
-  const py = (lat - forecast.origin[1]) * 111320
-  const size = forecast.cellSizeM
-  let clearance = Infinity
-  for (const { x, y } of forecast.initialCells) {
-    clearance = Math.min(clearance, Math.max(x * size - px, px - (x + 1) * size, y * size - py, py - (y + 1) * size, 0))
-  }
-  return clearance
-}
-
-export function routeApproachesFire(forecast: FireForecast, coordinates: [number, number][]) {
-  if (coordinates.length < 2) return true
-  const start = initialFireClearance(forecast, ...coordinates[0])
-  const end = initialFireClearance(forecast, ...coordinates[coordinates.length - 1])
-  return !Number.isFinite(start) || end + 1 < start || routeBlocked(forecast, coordinates, 0, Math.max(0, start - forecast.cellSizeM))
 }
 
 export function routeBlocked(forecast: FireForecast, coordinates: [number, number][], horizon: number, marginM: number) {

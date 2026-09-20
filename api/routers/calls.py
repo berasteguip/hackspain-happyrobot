@@ -10,19 +10,27 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from datetime import timedelta
+
+from fastapi import APIRouter, HTTPException, Query
 
 import dispatcher
 import planner
 from models import (
+    NO_CONTACT_RESULTS,
     TERMINAL_CALL_STATES,
     Actor,
     CallDispatch,
     CallDispatchResponse,
+    CallExtracted,
+    CallLogEntry,
+    CallLogWrite,
+    CallObservation,
     CallOutcome,
     CallRun,
     CallStarted,
     CallState,
+    DecisionLogEntry,
     DecisionType,
     House,
     HouseStatus,
@@ -31,8 +39,11 @@ from models import (
     Person,
     PersonStatus,
     PositionSource,
+    Triage,
+    TriageLevel,
     VulnerablePerson,
     WriteResponse,
+    parse_iso,
     utcnow_iso,
 )
 from routers._common import write_response
@@ -91,6 +102,19 @@ def _resolve_person(outcome: CallOutcome) -> tuple[Person, list]:
 @router.post("/calls/outcome", response_model=WriteResponse)
 def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     """Lo que la llamada dejó: datos extraídos, negativa a salir, o silencio."""
+    _, decisiones = apply_outcome(outcome)
+    decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
+    etiqueta = "call-outcome" if outcome.answered else "call-outcome(sin respuesta)"
+    return write_response(decisiones, event=etiqueta)
+
+
+def apply_outcome(outcome: CallOutcome) -> tuple[Person, list]:
+    """El resultado de una llamada aplicado al estado, **sin correr el planner**.
+
+    El planner se queda fuera a propósito: `/calls/observation` necesita escribir además el
+    triaje antes de replanificar, y dos pasadas del planner por una sola llamada ensuciarían el
+    timeline con decisiones duplicadas. Quien llame a esto es responsable de replanificar.
+    """
     person, decisiones = _resolve_person(outcome)
     house = state.houses.get(person.house_id or "")
     ex = outcome.extracted
@@ -101,8 +125,7 @@ def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     if not outcome.answered:
         decisiones.extend(_no_answer(person, house, outcome))
         state.last_event_id = decisiones[0].id if decisiones else state.last_event_id
-        decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
-        return write_response(decisiones, event="call-outcome(sin respuesta)")
+        return person, decisiones
 
     # ---------------------------------------------------------------- contestó
     cambios: dict = {"call_attempts": (person.call_attempts or 0) + 1}
@@ -180,8 +203,7 @@ def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     # Contestar cambia los datos con los que se eligió la salida: se revisa.
     state.mark_exit_dirty([person.id])
     state.mark_route_dirty([person.id])
-    decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
-    return write_response(decisiones, event="call-outcome")
+    return person, decisiones
 
 
 def _no_answer(person: Person, house: House | None, outcome: CallOutcome) -> list:
@@ -382,6 +404,132 @@ def _find_or_create_neighbor_person(
     return nueva
 
 
+# --------------------------------------------------------------------------------------
+# El camino de vuelta: el extract del agente entra en el estado
+# --------------------------------------------------------------------------------------
+
+
+@router.post("/calls/observation", response_model=WriteResponse)
+def post_call_observation(obs: CallObservation) -> WriteResponse:
+    """**El nodo `Observación` del workflow, al colgar, postea aquí.**
+
+    Cierra el círculo que hasta ahora solo iba de ida: la app rodeaba una zona, disparaba el
+    webhook del workflow y ahí se perdía el rastro. El agente clasificaba a la persona en
+    rojo/naranja/amarillo/verde dentro de HappyRobot y ese veredicto no salía de la plataforma.
+
+    No sustituye a `/calls/outcome`: lo envuelve. Primero se aplica lo que la llamada dejó
+    —contestó o no, qué dijo, cuántos intentos— por el mismo camino de siempre, y después se
+    escribe el triaje. Así una observación no inventa un segundo mecanismo de llamadas: el
+    tablero, la casa y la cola se enteran exactamente igual que antes.
+
+    Lo que SÍ es nuevo es el color. `minutes_to_front` sigue siendo geometría y sigue ordenando
+    la cola; `triage.level` es lo que dijo una persona, y es lo que el mando ve en el mapa.
+    Cuando discrepan —`prior_bajo_obs_alta`— esa es justo la información que ningún sensor
+    tenía, y la que el operador necesita mirar primero.
+    """
+    outcome = CallOutcome(
+        run_id=obs.run_id,
+        person_id=obs.person_id,
+        phone=obs.phone,
+        answered=obs.answered_call(),
+        duration_s=obs.duration_s,
+        # La zona que dijo la persona es una posición declarada de las malas (texto libre, sin
+        # geocodificar), pero `/calls/outcome` ya sabe qué hacer con ella: usar la casa como
+        # aproximación y dejarlo escrito.
+        extracted=CallExtracted(declared_location=obs.declared_zone),
+        agent_notes=obs.notes,
+        transcript_url=obs.run_url,
+    )
+    person, decisiones = apply_outcome(outcome)
+    entrada = _record_triage(person, obs)
+    if entrada:
+        decisiones.append(entrada)
+    decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
+    return write_response(decisiones, event=f"call-observation({obs.level or 'sin nivel'})")
+
+
+TRIAGE_ES: dict[TriageLevel, str] = {
+    TriageLevel.red: "ROJO",
+    TriageLevel.orange: "NARANJA",
+    TriageLevel.yellow: "AMARILLO",
+    TriageLevel.green: "VERDE",
+    TriageLevel.unknown: "sin clasificar",
+}
+
+
+def _record_triage(person: Person, obs: CallObservation) -> DecisionLogEntry | None:
+    """Escribe el veredicto del agente sobre la persona, con su motivo en español."""
+    nivel = TriageLevel.from_text(obs.level)
+    previo = TriageLevel.from_text(obs.prior_level)
+    triage = Triage(
+        level=nivel,
+        prior_level=previo if previo != TriageLevel.unknown else None,
+        confidence=obs.confidence,
+        discrepancy=obs.discrepancy,
+        call_result=obs.call_result,
+        declared_zone=obs.declared_zone,
+        place_type=obs.place_type,
+        flames=obs.flames,
+        notes=obs.notes,
+        reason=_triage_reason(obs, previo),
+        run_id=obs.run_id,
+        run_url=obs.run_url,
+    )
+    return state.mutate(
+        f"{person.name or person.id}: el agente cierra la llamada en {TRIAGE_ES[nivel]}"
+        + (f" — {triage.reason}" if triage.reason else "."),
+        type=DecisionType.person_status_changed,
+        subject_type="person",
+        subject_id=person.id,
+        changes={"triage": triage},
+        actor=Actor.agent,
+        force=True,  # dos llamadas con el mismo veredicto siguen siendo dos llamadas
+    )
+
+
+def _triage_reason(obs: CallObservation, previo: TriageLevel) -> str:
+    """La frase que lee el mando. Nada de score: por qué esa persona está de ese color.
+
+    **Nunca vuelve vacía.** Una ficha que dice «el agente no dejó motivo» se lee como que algo
+    falló, cuando lo normal es justo lo contrario: que la llamada fue bien y no había nada que
+    corrigiera el mapa. Eso también es información —significa no volver a mirar esta ficha— y
+    tiene que estar escrito, no deducirse de un hueco.
+    """
+    # Que nadie descuelgue no es un triaje de nada: sin interlocutor, el resto de campos del
+    # extract son ruido, y «confianza baja» aquí sonaría a que el agente dudó de algo.
+    if (obs.call_result or "").strip().lower() in NO_CONTACT_RESULTS:
+        return "nadie descolgó: no hay triaje, solo el intento"
+
+    partes: list[str] = []
+    if obs.declared_zone:
+        partes.append(f"dice estar en «{obs.declared_zone}»")
+    if obs.place_type:
+        partes.append(f"en {obs.place_type}")
+    if obs.flames:
+        partes.append("VE LLAMAS O HUMO")
+    if (obs.discrepancy or "").strip().lower() == "prior_bajo_obs_alta":
+        partes.append(
+            f"está PEOR de lo que decía el mapa (iba como {TRIAGE_ES[previo].lower()})"
+            if previo != TriageLevel.unknown
+            else "está PEOR de lo que decía el mapa"
+        )
+    elif (obs.discrepancy or "").strip().lower() == "prior_alto_obs_baja":
+        partes.append("está mejor de lo que decía el mapa")
+    if (obs.call_result or "").strip().lower() == "cortada":
+        partes.append("la llamada se cortó a medias")
+    if (obs.confidence or "").strip().lower() == "baja":
+        partes.append("el agente no las tiene todas consigo (confianza baja)")
+    if partes:
+        return "; ".join(partes)
+    if obs.notes:
+        return obs.notes.strip()
+    # Sin nada reseñable. Que el agente haya comparado y no encontrado diferencia es un
+    # resultado, y se dice; si ni siquiera hubo comparación, se dice eso otro.
+    if (obs.discrepancy or "").strip().lower() == "ninguna":
+        return "la llamada confirma lo que traía el mapa"
+    return "la llamada no añadió nada que el mapa no supiera"
+
+
 @router.post("/calls/started", response_model=WriteResponse)
 def post_call_started(body: CallStarted) -> WriteResponse:
     """HappyRobot avisa de que la llamada está en curso (o de que entra una llamada al 112)."""
@@ -420,6 +568,119 @@ def post_call_started(body: CallStarted) -> WriteResponse:
     return write_response(decisiones, event="call-started")
 
 
+# ======================================================================================
+# El log de llamadas: lo que una llamada aprende y las otras 299 pueden consultar
+# ======================================================================================
+#
+# La fuente para el agente es la tabla `call_log` de Twin: escribe y lee allí sin salir de la
+# plataforma, que es lo que hace que la lectura en mitad de una conversación sea barata.
+# Estos dos endpoints son el espejo para la pantalla: el mismo apunte llega aquí y sube
+# `state_version`, así que el puesto de mando lo ve aparecer por el long-poll de `/state/diff`
+# que ya usa, sin tocar Twin desde el navegador (contrato §0: el dashboard nunca lee de Twin).
+#
+# Si el webhook a esta API falla, el log sigue funcionando y solo se retrasa la pantalla. Ese es
+# el lado correcto del fallo.
+
+
+@router.post("/calls/log", response_model=WriteResponse)
+def post_call_log(payload: CallLogWrite) -> WriteResponse:
+    """Anota una afirmación. Pensado para llamarse **en cada interacción**, no solo al colgar.
+
+    `validity_min` es la alternativa cómoda a `valid_until`: el workflow dice «esto vale 20
+    minutos» y la fecha la calcula la API, que es quien tiene el reloj bueno.
+    """
+    ahora = utcnow_iso()
+    valid_until = payload.valid_until
+    if valid_until is None and payload.validity_min is not None:
+        base = parse_iso(ahora)
+        if base is not None:
+            valid_until = (base + timedelta(minutes=payload.validity_min)).isoformat()
+
+    # Si viene teléfono pero no persona, se resuelve contra el padrón que ya tenemos en memoria.
+    # Que NO resuelva es información: es un número que nadie tenía en la lista.
+    person_id = payload.person_id
+    if person_id is None and payload.phone:
+        encontrada = state.person_by_phone(payload.phone)
+        if encontrada is not None:
+            person_id = encontrada.id
+
+    entrada = CallLogEntry(
+        id=payload.id or state.next_id("log", width=6),
+        created_at=ahora,
+        topic=payload.topic,
+        locality_id=payload.locality_id,
+        road=payload.road,
+        place_text=payload.place_text,
+        person_id=person_id,
+        phone=payload.phone,
+        source_id=payload.source_id,
+        source_detail=payload.source_detail,
+        question=payload.question,
+        answer=payload.answer,
+        answered_at=ahora if payload.answer is not None else None,
+        valid_until=valid_until,
+        callback_to=payload.callback_to,
+        callback_at=payload.callback_at,
+        run_id=payload.run_id,
+        answer_run_id=payload.answer_run_id,
+        simulated=payload.simulated,
+    )
+    state.append_call_log(entrada)
+    log.info(
+        "log %s · %s · %s · %s",
+        entrada.id,
+        entrada.topic.value,
+        entrada.source_id,
+        entrada.question[:60],
+    )
+    # Anotar algo no es decidir nada: la lista de decisiones va vacía a propósito.
+    return write_response([], event="call-log")
+
+
+@router.get("/calls/log")
+def get_call_log(
+    limit: int = Query(50, ge=1, le=500),
+    topic: str | None = None,
+    locality_id: str | None = None,
+    road: str | None = None,
+    person_id: str | None = None,
+    only_open: bool = False,
+    vigentes: bool = False,
+) -> dict:
+    """Lo que se sabe, de lo más reciente a lo más antiguo.
+
+    `only_open` deja las dudas sin respuesta (la cola de lo que hay que preguntar) y `vigentes`
+    descarta lo que ya ha caducado. Se ordena por fiabilidad de la fuente y luego por reciente:
+    si dos vecinos se contradicen sobre la misma carretera, gana el que tenga mejor `rank` —el
+    orden lo aplica el agente con la tabla `source` de Twin; aquí es solo por fecha.
+    """
+    ahora = parse_iso(utcnow_iso())
+    filas = [e for _, e in state.call_log]
+    if topic:
+        filas = [e for e in filas if e.topic.value == topic]
+    if locality_id:
+        filas = [e for e in filas if e.locality_id == locality_id]
+    if road:
+        filas = [e for e in filas if e.road == road]
+    if person_id:
+        filas = [e for e in filas if e.person_id == person_id]
+    if only_open:
+        filas = [e for e in filas if e.answer is None]
+    if vigentes and ahora is not None:
+        def sigue_valiendo(e: CallLogEntry) -> bool:
+            if e.valid_until is None:
+                return True
+            hasta = parse_iso(e.valid_until)
+            return hasta is None or hasta > ahora
+
+        filas = [e for e in filas if sigue_valiendo(e)]
+
+    filas = list(reversed(filas))[:limit]
+    return {
+        "state_version": state.state_version,
+        "count": len(filas),
+        "entries": [e.model_dump(mode="json") for e in filas],
+    }
 def _close_call_run(outcome: CallOutcome, person: Person) -> None:
     """Cierra el intento que originó esta llamada, si lo encontramos.
 
@@ -484,9 +745,56 @@ def post_call_dispatch(body: CallDispatch) -> CallDispatchResponse:
 @router.get("/calls", response_model=list[CallRun])
 def get_calls(batch_id: str | None = None, active: bool = False) -> list[CallRun]:
     """El tablero de llamadas. `batch_id` acota a una ráfaga; `active=true`, a las vivas."""
+    # Que el tablero no enseñe «Llamando» eternamente a quien colgó hace veinte minutos.
+    state.expire_stale_calls()
     filas = list(state.calls.values())
     if batch_id:
         filas = [c for c in filas if c.batch_id == batch_id]
     if active:
         filas = [c for c in filas if c.state not in TERMINAL_CALL_STATES]
     return sorted(filas, key=lambda c: c.started_at, reverse=True)
+
+
+@router.post("/calls/reset", response_model=WriteResponse)
+def post_calls_reset(batch_id: str | None = None, operator: str | None = None) -> WriteResponse:
+    """Vacía el tablero de llamadas **sin tocar nada más**.
+
+    Existe porque lo único que había para «empezar otra tanda» era `POST /reset`, que recarga
+    el escenario entero: se lleva por delante el decision_log, las posiciones compartidas por
+    GPS y todo lo ocurrido. Entre ensayos da igual; con el jurado delante es un botón de
+    pánico. Esto solo borra los intentos de llamada, que es lo que de verdad estorba cuando
+    quieres volver a llamar a alguien.
+
+    Queda registrado en el decision_log: borrar el tablero es una intervención del mando, y
+    el timeline no puede tener un agujero donde desaparecieron doce llamadas.
+
+    `batch_id` acota a una sola ráfaga. Sin él, se vacía entero.
+    """
+    quien = operator or "puesto de mando"
+    with state.lock:
+        a_borrar = [
+            c.id for c in state.calls.values() if batch_id is None or c.batch_id == batch_id
+        ]
+        for call_id in a_borrar:
+            state.calls.pop(call_id, None)
+        if a_borrar:
+            state.state_version += 1
+            state.t = utcnow_iso()
+
+    if not a_borrar:
+        log.info("tablero de llamadas ya vacío%s", f" (ráfaga {batch_id})" if batch_id else "")
+        return write_response([], event="calls-reset(vacío)")
+
+    entrada = state.log_action(
+        f"{quien} vacía el tablero de llamadas: {len(a_borrar)} intento(s) retirados"
+        + (f" de la ráfaga {batch_id}" if batch_id else "")
+        + ". El escenario, las posiciones y el resto del historial NO se tocan.",
+        type=DecisionType.human_override,
+        actor=Actor.human,
+        approved_by=quien,
+        after={"calls_cleared": len(a_borrar)},
+    )
+    decisiones = [entrada] if entrada else []
+    if entrada:
+        state.last_event_id = entrada.id
+    return write_response(decisiones, event=f"calls-reset({len(a_borrar)})")

@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import planner
@@ -38,7 +38,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("crisis.api")
 
 # Rutas que NO piden `x-api-key`: el latido, la documentación y los preflight del navegador.
-PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/favicon.svg"}
+PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect", "/favicon.svg", "/people/register"}
 
 # Rutas que un ciudadano abre desde el enlace del SMS. No pueden exigir `x-api-key`: la página
 # corre en su móvil y cualquier secreto que le pasáramos sería legible en el código fuente. Se
@@ -56,6 +56,8 @@ PUBLIC_PREFIXES = (
     "/instructions/",
     "/api/locations",
     "/api/roster",
+    "/api/anchor",
+    "/track",
 )
 
 
@@ -73,6 +75,15 @@ async def lifespan(app: FastAPI):
         len(decisiones),
         state.state_version,
     )
+    if settings.secret_is_public:
+        log.error("  " + "!" * 70)
+        log.error("  HR_SHARED_SECRET es un valor de EJEMPLO del repo, y el repo es PÚBLICO.")
+        log.error("  Quien lea el repositorio puede entrar en esta API. Cámbiala ya:")
+        log.error("      openssl rand -hex 32")
+        if settings.allow_real_calls:
+            log.error("  Con ALLOW_REAL_CALLS=true eso significa que puede hacer sonar teléfonos.")
+            log.error("  /calls/dispatch se NEGARÁ a marcar hasta que la cambies.")
+        log.error("  " + "!" * 70)
     if not settings.allow_real_calls:
         log.info("  ⚠️  ALLOW_REAL_CALLS=false → llamadas y SMS SIMULADOS (nadie recibe nada)")
     else:
@@ -173,6 +184,11 @@ for _ruta, _dir in (("/gps", "gps"), ("/dashboard", "dashboard")):
 # lo que no es de la API cae en el SPA.
 _VIGIA = REPO_ROOT / "apps" / "command-center" / "dist"
 if _VIGIA.is_dir():
+    # Rutas del SPA que no son ficheros: `/track` es la página del enlace (teléfono + GPS).
+    @app.get("/track", include_in_schema=False)
+    def spa_track():
+        return FileResponse(_VIGIA / "index.html")
+
     app.mount("/", StaticFiles(directory=_VIGIA, html=True), name="vigia")
 else:
     log.warning("No encuentro %s; la raíz no sirve Vigía (¿falta `npm run build`?).", _VIGIA)

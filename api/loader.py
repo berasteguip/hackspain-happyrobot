@@ -219,11 +219,11 @@ def _apply_roster(state) -> None:
     if aplicados:
         log.warning(
             "ROSTER: %d persona(s) con NOMBRE y TELÉFONO REALES desde %s (no versionado). "
-            "Los dos cerrojos siguen mandando: ALLOW_REAL_CALLS=%s, CALL_ALLOWLIST=%s.",
+            "Los cerrojos siguen mandando: ALLOW_REAL_CALLS=%s, REGISTER_ONLY_CALLS=%s.",
             aplicados,
             ruta,
             settings.allow_real_calls,
-            f"{len(settings.call_allowlist)} teléfono(s)" if settings.call_allowlist else "VACÍA",
+            settings.register_only_calls,
         )
     if sin_id:
         log.warning("ROSTER: %d fila(s) sin person_id; se ignoran", sin_id)

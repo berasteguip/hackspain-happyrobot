@@ -3,14 +3,6 @@ import { exposureAt, MAX_FORECAST_MIN, routeBlocked } from './fire-model'
 import type { FireForecast } from './fire-model'
 import type { Citizen, SafeZone } from './types'
 
-export type Corridor = {
-  id: string
-  group: string
-  zoneId: string
-  from: [number, number]
-  to: [number, number]
-}
-
 export type Route = {
   id: string
   group: string
@@ -23,10 +15,7 @@ export type Route = {
 
 export type RouteIndex = Map<string, Route>
 
-const DIRECTIONS = 'https://api.mapbox.com/directions/v5/mapbox/driving'
-const CONCURRENCY = 4
-
-function buildRoute(corridor: Corridor, coords: [number, number][], durationSec: number): Route {
+function buildRoute(meta: { id: string; group: string; zoneId: string }, coords: [number, number][], durationSec: number): Route {
   const cumulative = [0]
   for (let i = 1; i < coords.length; i += 1) {
     const previous = coords[i - 1]
@@ -34,73 +23,12 @@ function buildRoute(corridor: Corridor, coords: [number, number][], durationSec:
     cumulative.push(cumulative[i - 1] + haversineMeters(previous[0], previous[1], current[0], current[1]))
   }
   return {
-    id: corridor.id,
-    group: corridor.group,
-    zoneId: corridor.zoneId,
+    ...meta,
     coords,
     cumulative,
     lengthM: cumulative[cumulative.length - 1],
     durationSec,
   }
-}
-
-async function fetchCorridor(token: string, corridor: Corridor, signal?: AbortSignal): Promise<Route | null> {
-  const pair = `${corridor.from[0]},${corridor.from[1]};${corridor.to[0]},${corridor.to[1]}`
-  const url = `${DIRECTIONS}/${pair}?geometries=geojson&overview=full&access_token=${token}`
-  const timeout = AbortSignal.timeout(12000)
-  const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
-  if (!response.ok) return null
-  const payload = await response.json()
-  const result = payload?.routes?.[0]
-  const coords = result?.geometry?.coordinates
-  if (!Array.isArray(coords) || coords.length < 2 || !coords.every((point: unknown) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite) && Math.abs(point[0]) <= 180 && Math.abs(point[1]) <= 90) || !Number.isFinite(result.duration) || result.duration < 0) return null
-  const coordinates = coords as [number, number][]
-  const endM = haversineMeters(...coordinates[coordinates.length - 1], ...corridor.to)
-  if (haversineMeters(...coordinates[0], ...corridor.from) > 100 || endM > 100) return null
-  return buildRoute(corridor, [...coordinates, corridor.to], result.duration + endM / (4000 / 3600))
-}
-
-/** Resolves road geometry for every corridor. Failures are skipped so the demo still runs offline. */
-export async function loadCorridorRoutes(
-  token: string,
-  corridors: Corridor[],
-  signal?: AbortSignal,
-): Promise<RouteIndex> {
-  const index: RouteIndex = new Map()
-  let cursor = 0
-  const worker = async () => {
-    while (cursor < corridors.length) {
-      if (signal?.aborted) return
-      const corridor = corridors[cursor]
-      cursor += 1
-      try {
-        const route = await fetchCorridor(token, corridor, signal)
-        if (route) index.set(route.id, route)
-      } catch {
-        // A missing corridor only means those people fall back to a direct heading.
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, corridors.length) }, worker))
-  return index
-}
-
-/**
- * Se queda con el punto de encuentro más corto por carretera para cada núcleo y
- * descarta los corredores del resto. Devuelve la asignación núcleo → zona.
- */
-export function resolveGroupZones(routes: RouteIndex): Map<string, string> {
-  const shortest = new Map<string, { zoneId: string; lengthM: number }>()
-  for (const route of routes.values()) {
-    const current = shortest.get(route.group)
-    if (!current || route.lengthM < current.lengthM) {
-      shortest.set(route.group, { zoneId: route.zoneId, lengthM: route.lengthM })
-    }
-  }
-  for (const [id, route] of routes) {
-    if (shortest.get(route.group)?.zoneId !== route.zoneId) routes.delete(id)
-  }
-  return new Map([...shortest].map(([group, best]) => [group, best.zoneId]))
 }
 
 export function nearestOnRoute(route: Route, lng: number, lat: number) {
@@ -233,6 +161,42 @@ export function rankRefugeRoutes(routes: RefugeRoute[], zones: SafeZone[], forec
   return { routes: admitted, rejected: routes.length - admitted.length }
 }
 
+export async function fetchDrivingRoute(
+  token: string,
+  origin: [number, number],
+  destination: [number, number],
+  id: string,
+  signal?: AbortSignal,
+  request: typeof fetch = fetch,
+  maxAccessM = 100,
+  roadOnly = false,
+): Promise<{ route?: Route; error?: string }> {
+  if (![...origin, ...destination].every(Number.isFinite) || Math.abs(origin[0]) > 180 || Math.abs(destination[0]) > 180 || Math.abs(origin[1]) > 90 || Math.abs(destination[1]) > 90) {
+    return { error: 'Origen o destino fuera de rango.' }
+  }
+  try {
+    const url = new URL(`https://api.mapbox.com/directions/v5/mapbox/driving/${origin.join(',')};${destination.join(',')}`)
+    url.search = new URLSearchParams({ access_token: token, geometries: 'geojson', overview: 'full' }).toString()
+    const timeout = AbortSignal.timeout(12000)
+    const response = await request(url.toString(), { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
+    if (!response.ok) return { error: `Mapbox Directions: HTTP ${response.status || 'desconocido'}` }
+    const payload = await response.json()
+    const result = payload?.routes?.[0]
+    const coords = result?.geometry?.coordinates
+    if (!Array.isArray(coords) || coords.length < 2 || !coords.every((point: unknown) => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite) && Math.abs(point[0]) <= 180 && Math.abs(point[1]) <= 90) || !Number.isFinite(result.duration) || result.duration < 0) {
+      return { error: 'Directions no ha devuelto una carretera utilizable hacia el destino.' }
+    }
+    const coordinates = coords as [number, number][]
+    const startM = haversineMeters(...origin, ...coordinates[0])
+    const endM = haversineMeters(...coordinates[coordinates.length - 1], ...destination)
+    if (startM > maxAccessM || endM > maxAccessM) return { error: `Directions devuelve un acceso de más de ${maxAccessM} m. Requiere revisión.` }
+    return { route: buildRoute({ id, group: 'dispatch', zoneId: id }, roadOnly ? coordinates : [origin, ...coordinates, destination], result.duration + (roadOnly ? 0 : (startM + endM) / (4000 / 3600))) }
+  } catch (error) {
+    if (signal?.aborted) throw error
+    return { error: error instanceof DOMException && error.name === 'TimeoutError' ? 'Directions no respondió en 12 segundos' : 'No se pudo conectar con Mapbox Directions' }
+  }
+}
+
 export async function planCitizenRoute(
   token: string, citizen: Citizen, zones: SafeZone[], forecast: FireForecast, marginM: number,
   signal?: AbortSignal, request: typeof fetch = fetch,
@@ -246,33 +210,6 @@ export async function planCitizenRoute(
   const selected = rankRefugeRoutes(result.routes, eligible, forecast, 60, marginM).routes.sort((a, b) => a.distanceM - b.distanceM)[0]
   if (!selected) return hold(result.errors.length ? result.errors.join(' · ') : result.unsuitable ? 'Directions devuelve accesos de más de 100 m o geometrías no válidas. Requiere revisión.' : result.routes.length ? 'Los recorridos desde esta persona intersectan la zona expuesta. Requiere otra salida.' : 'Directions no ha devuelto una carretera hacia los refugios disponibles.')
   const zone = eligible.find(item => item.id === selected.zoneId)!
-  const route = buildRoute({ id: `individual-${citizen.id}-${zone.id}`, group: citizen.locality ?? '', zoneId: zone.id, from: origin, to: [zone.lng, zone.lat] }, selected.coordinates, selected.durationSec)
+  const route = buildRoute({ id: `individual-${citizen.id}-${zone.id}`, group: citizen.locality ?? '', zoneId: zone.id }, selected.coordinates, selected.durationSec)
   return { route, citizen: { ...citizen, status: 'tracking', safeZoneId: zone.id, routeId: route.id, routeProgressM: route.cumulative[1], routePhase: 'access', routeHoldReason: undefined } }
-}
-
-export function assignEvacuationRoutes(citizens: Citizen[], routes: RouteIndex, zones: SafeZone[], forecast: FireForecast, marginM: number): Citizen[] {
-  const candidates = [...routes.values()].map(route => ({ id: route.id, zoneId: route.zoneId, coordinates: route.coords, durationSec: route.durationSec, distanceM: route.lengthM, accessM: 0 }))
-  const admitted = new Set(rankRefugeRoutes(candidates, zones, forecast, 60, marginM).routes.map(route => route.id))
-  const byGroup = new Map<string, Route[]>()
-  for (const route of routes.values()) {
-    if (!admitted.has(route.id)) continue
-    const group = byGroup.get(route.group) ?? []
-    group.push(route)
-    byGroup.set(route.group, group)
-  }
-  return citizens.map(citizen => {
-    if (citizen.live || citizen.status === 'safe') return citizen
-    let best: { route: Route; alongM: number; distanceM: number } | undefined
-    const origin: [number, number] = [citizen.lng, citizen.lat]
-    for (const route of byGroup.get(citizen.locality ?? '') ?? []) {
-      const { alongM, gapM } = nearestOnRoute(route, ...origin)
-      if (gapM > 100) continue
-      const access: [number, number][] = [origin, positionAt(route, alongM)]
-      if (routeBlocked(forecast, access, Math.max(60, Math.ceil(route.durationSec / 60)), marginM)) continue
-      const distanceM = route.lengthM - alongM + gapM
-      if (!best || distanceM < best.distanceM) best = { route, alongM, distanceM }
-    }
-    if (!best) return { ...citizen, safeZoneId: '', routeId: undefined, routeProgressM: undefined, routePhase: undefined, routeHoldReason: 'Sin recorrido disponible fuera de la zona expuesta en la próxima hora. Pendiente de revisión del mando.', status: ['tracking', 'evacuating', 'assistance'].includes(citizen.status) ? 'assistance' : citizen.status }
-    return { ...citizen, safeZoneId: best.route.zoneId, routeId: best.route.id, routeProgressM: best.alongM, routePhase: 'access', routeHoldReason: undefined, status: citizen.status === 'assistance' ? 'tracking' : citizen.status }
-  })
 }
