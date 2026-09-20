@@ -1,13 +1,16 @@
 /**
  * Recorrido guiado del puesto de mando, pensado para que alguien que no ha visto la
- * plataforma (un jurado, un mando de Protección Civil) entienda en dos minutos qué hace
- * router y por qué. Cada paso abre la vista que explica (panel, ficha, tarjeta de
- * HappyRobot) antes de que Driver mida el anclaje; no ejecuta ninguna operación: no
- * llama, no mueve el fuego, no envía medios. Eso se lo dejamos al visitante al final.
+ * plataforma (un jurado, un mando de Protección Civil) entienda en tres minutos qué hace
+ * router y por qué. No es una visita a la interfaz: es una demo en vivo. Los pasos que
+ * llevan `run` ejecutan la operación de verdad (lanzan las llamadas, escalan a fuerzas de
+ * seguridad, giran el viento) y el visitante ve el mapa moverse mientras lee. Cada paso
+ * abre la vista que explica antes de que Driver mida el anclaje y lleva, si procede, una
+ * línea en directo con lo que está ocurriendo (cuántos han contestado, en qué nodo va el
+ * run, cuántas alertas ha generado el giro del viento).
  *
- * El orden sigue la historia del producto: situación, personas, llamar, qué hace
- * HappyRobot por debajo, priorizar, seguir a una persona, rutas, escalada, cambio de
- * escenario, plan, coordinación. Es la misma escalera que la rúbrica del reto.
+ * El orden es la historia del producto y la escalera de la rúbrica del reto: situación,
+ * la gente que nadie ve, actuar (llamar), el motor, priorizar, seguir a una casa, escalar,
+ * adaptarse al cambio, tirar el plan, coordinar, y el turno del visitante.
  */
 import type { DriveStep, PopoverDOM } from 'driver.js'
 
@@ -15,22 +18,36 @@ export const TOUR_STORAGE_KEY = 'vigia-tour-seen'
 
 export type TourPanel = 'people' | 'cop' | 'centers' | 'alerts' | 'campaign' | null
 
+/** Operación real que el paso dispara al abrirse. */
+export type TourRun = 'call-risk' | 'escalate' | 'shift-wind'
+
 /** Lo que tiene que estar a la vista para que el paso tenga anclaje. */
 export type TourView = {
   panel?: TourPanel
-  /** Abre la ficha de una persona (la seleccionada o la primera de la cola). */
+  /** Abre la ficha de una persona: la primera sin respuesta si `silent`, o la seleccionada / primera de la cola. */
   person?: boolean
+  silent?: boolean
   /** Abre la tarjeta «Qué hace HappyRobot». */
   happyRobot?: boolean
+  /** Encuadra el mapa sobre la zona de riesgo recomendada para que se vean los puntos. */
+  focus?: 'risk'
+  run?: TourRun
 }
 
 export type DemoTourActions = {
   open: (view: TourView) => void
   close: () => void
+  /**
+   * Se llama cada medio segundo mientras el paso está en pantalla. Devuelve la línea en
+   * directo del paso (o nada) y puede completar una operación aplazada: por ejemplo,
+   * escalar cuando aparece la primera casa sin respuesta si aún no la había.
+   */
+  tick: (stepId: string) => string | null
 }
 
 export type DemoTourStep = {
   id: string
+  /** Criterio de la rúbrica o momento de la historia. Va en mayúsculas pequeñas sobre el título. */
   kicker: string
   element: string
   side: 'top' | 'right' | 'bottom' | 'left'
@@ -44,77 +61,71 @@ export const DEMO_TOUR_STEPS: DemoTourStep[] = [
   {
     id: 'situacion', kicker: 'Situación', element: '[data-demo="tour-fire"]', side: 'left', view: {},
     title: 'El fuego, y hacia dónde va',
-    description: 'La mancha es el frente activo. Los anillos dicen hasta dónde puede llegar en una hora con este viento. Todo lo que decide router sale de esa proyección, no de un perímetro oficial que llega tarde.',
+    description: 'La mancha es el frente activo. Los anillos, hasta dónde puede llegar en una hora con este viento. router decide con esa proyección; no espera al perímetro oficial, que llega tarde.',
   },
   {
-    id: 'personas', kicker: 'Personas', element: '[data-demo="tour-people"]', side: 'left', view: {},
-    title: 'Cada punto es una persona con teléfono',
-    description: 'Sabemos dónde vive cada una. Cuando contesta, el punto cambia según cómo está: informada, en camino, a salvo. Si nadie descuelga, se pone en rojo. El mando ve a la gente, no solo el humo.',
+    id: 'personas', kicker: 'Lo que el mando no ve', element: '[data-demo="tour-people"]', side: 'left', view: { focus: 'risk' },
+    title: 'Cada punto es una casa con teléfono',
+    description: 'Hoy el CECOP ve el fuego, no a la gente. Aquí está cada persona del censo dentro del anillo de riesgo. Cuando contesta, el punto cambia de color según cómo está.',
   },
   {
-    id: 'llamar', kicker: 'Primera acción', element: '[data-demo="campaign-dock"]', side: 'top', view: {},
-    title: 'Llamar a toda una zona de un gesto',
-    description: 'router recomienda la zona de riesgo según el viento. Al pulsar, HappyRobot llama a cada casa a la vez: trescientas conversaciones, una por persona, y cada una acaba en un dato. En esta demo las llamadas suenan simuladas.',
-    actions: ['Con «Zona» puedes dibujar tu propio círculo en el mapa.'],
+    id: 'llamar', kicker: 'Actuar, no proponer', element: '[data-demo="campaign-dock"]', side: 'top', view: { focus: 'risk', run: 'call-risk' },
+    title: 'Acabamos de llamar a toda la zona',
+    description: 'HappyRobot está hablando con todas las casas a la vez, cuatro agentes en paralelo. Mira los puntos: se encienden al sonar, cambian al contestar y se ponen en rojo si nadie descuelga.',
   },
   {
-    id: 'happyrobot', kicker: 'Motor', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
-    title: 'Qué hace HappyRobot por debajo',
-    description: 'Esta tarjeta enseña el workflow real: llamada de voz, extracción de datos, SMS con la ruta y el enlace de ubicación, y el webhook que devuelve todo a nuestro estado de crisis. El nodo activo se ilumina en cada llamada.',
+    id: 'happyrobot', kicker: 'El motor', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
+    title: 'Esto pasa dentro de cada llamada',
+    description: 'Voz, extracción de datos (cuántos son, si alguien no puede andar), SMS con la ruta y enlace de ubicación, y el webhook que lo devuelve al mapa. El nodo encendido es lo que ocurre ahora mismo.',
   },
   {
-    id: 'cola', kicker: 'Prioridad', element: '[data-demo="panel"]', side: 'left', view: { panel: 'people' },
-    title: 'Quién va primero',
-    description: 'Cuando todo es urgente, la cola dice por dónde empezar: fuera del núcleo, sin respuesta, ruta en revisión. Se busca por nombre, localidad o casa, y se entra en cualquier ficha de un clic.',
+    id: 'cola', kicker: 'Priorizar', element: '[data-demo="panel"]', side: 'left', view: { panel: 'people' },
+    title: 'Cuando todo es urgente, esto va primero',
+    description: 'La cola ordena por lo que importa: fuera del núcleo, sin respuesta, ruta en revisión. Nadie repasa cien fichas; se ven las tres que cambian algo.',
   },
   {
-    id: 'ficha', kicker: 'Seguimiento', element: '[data-demo="panel"]', side: 'left', view: { person: true },
-    title: 'Una ficha por persona',
-    description: 'Contacto, última llamada y de dónde sale su ubicación: censo, posición simulada o GPS compartido desde el enlace del SMS. Aquí se ve qué le ha pasado y qué medio se le ha enviado.',
+    id: 'ficha', kicker: 'Seguimiento', element: '[data-demo="panel"]', side: 'left', view: { person: true, silent: true },
+    title: 'Una casa que no ha descolgado',
+    description: 'Dos intentos, nadie contesta, sin ubicación. Ficha en rojo. router no la deja en una lista: abajo aparece «Enviar fuerzas de seguridad». Lo pulsamos en el siguiente paso.',
   },
   {
-    id: 'rutas', kicker: 'Evacuación', element: '[data-demo="route-compare"]', side: 'left', view: { person: true },
-    title: 'Rutas que no cruzan el fuego',
-    description: 'Comparar rutas pide a Mapbox las salidas a pie y en coche hacia cada refugio y descarta las que atraviesan la proyección del frente. Si el viento gira, se recalcula desde donde está la persona, no desde su casa.',
+    id: 'escalada', kicker: 'Escalar', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true, run: 'escalate' },
+    title: 'Fuerzas de seguridad, sin esperar',
+    description: 'Es el run real de HappyRobot: consulta el registro, rellama, ordena por riesgo, llama a Guardia Civil y 1-1-2, manda el parte y lo anota. Al acabar despega el helicóptero. Un operador aprueba; siempre.',
   },
   {
-    id: 'escalada', kicker: 'Escalada', element: '[data-demo="person-dispatch"]', side: 'left', view: { person: true },
-    title: 'Si nadie descuelga, router no espera',
-    description: 'Desde la ficha se envía ambulancia, patrulla o bomberos. A las casas en rojo les aparece «Enviar fuerzas de seguridad»: HappyRobot rellama, avisa a Guardia Civil y 1-1-2 y despega el helicóptero. Un operador aprueba; siempre.',
+    id: 'viento', kicker: 'Adaptarse al cambio', element: '[data-demo="fire-wind-shift"]', side: 'left', view: { panel: 'cop', run: 'shift-wind' },
+    title: 'El viento acaba de girar',
+    description: 'Los anillos se mueven. router vuelve a evaluar quién está ahora en peligro, qué rutas cruzan el fuego y qué refugio ya no sirve. El plan de hace cinco minutos deja de valer.',
   },
   {
-    id: 'fuego', kicker: 'Cambio de situación', element: '[data-demo="fire-wind-shift"]', side: 'left', view: { panel: 'cop' },
-    title: 'El escenario se mueve debajo del plan',
-    description: '«Avanzar» mueve el frente; «Girar a NE» cambia el viento. router vuelve a evaluar personas, refugios y rutas, y avisa de lo que ya no vale. Es la prueba de que no gestiona un caso fijo.',
+    id: 'plan', kicker: 'Cuándo tirar el plan', element: '[data-demo="panel"]', side: 'left', view: { panel: 'alerts' },
+    title: 'Plan desactualizado: siguiente acción',
+    description: 'Aquí está lo que ha cambiado, la siguiente acción concreta y los medios en marcha. Nada se ejecuta sin que alguien lo adopte: el sistema propone, el mando decide.',
   },
   {
-    id: 'plan', kicker: 'Plan operativo', element: '[data-demo="panel"]', side: 'left', view: { panel: 'alerts' },
-    title: 'Cuándo tirar el plan',
-    description: 'Aquí se ve si el plan sigue vigente o se ha quedado viejo por el viento o una carretera cortada, cuál es la siguiente acción concreta y qué medios están en marcha. Nada se ejecuta sin que alguien lo adopte.',
+    id: 'centros', kicker: 'Coordinar', element: '[data-demo="panel"]', side: 'left', view: { panel: 'centers' },
+    title: 'Vecino, bombero y mando no reciben lo mismo',
+    description: 'Hospitales, centros de salud y parques con su ficha. Preaviso sanitario o petición de apoyo en dos clics, con el mensaje que necesita cada uno.',
   },
   {
-    id: 'centros', kicker: 'Coordinación', element: '[data-demo="panel"]', side: 'left', view: { panel: 'centers' },
-    title: 'Avisar al centro adecuado',
-    description: 'Hospitales, centros de salud y parques de bomberos con su ficha. Preaviso sanitario o petición de apoyo en dos clics. El vecino, el bombero y el responsable no reciben el mismo mensaje.',
-  },
-  {
-    id: 'empieza', kicker: 'Tu turno', element: '[data-demo="campaign-primary"]', side: 'top', view: {},
-    title: 'Empieza por la zona de riesgo',
-    description: 'Pulsa «Llamar zona de riesgo» y mira cómo cambian los puntos. Abre una ficha en rojo y envía las fuerzas. Luego gira el viento en Propagación y comprueba qué pasa con el plan.',
-    actions: ['Puedes volver a esta guía en cualquier momento desde «Ver recorrido».'],
+    id: 'empieza', kicker: 'Tu turno', element: '[data-demo="tool-area"]', side: 'bottom', view: {},
+    title: 'Ahora tú',
+    description: 'Dibuja tu propia zona con «Zona» y llámala. Abre una ficha y envía un medio. Avanza el fuego en Propagación y mira qué pasa con el plan.',
+    actions: ['La demo sigue viva: las llamadas, el helicóptero y el viento que has visto siguen ahí.', 'Puedes repetir el recorrido desde «Ver recorrido».'],
   },
 ]
 
 export const TOUR_INTRO = {
   kicker: 'router · puesto de mando',
   title: 'Cómo se guía una evacuación, persona a persona',
-  lede: 'router junta las llamadas de HappyRobot, la posición de cada vecino y la evolución del incendio en una sola pantalla. En dos minutos ves qué hace y dónde intervienes tú.',
+  lede: 'router junta las llamadas de HappyRobot, la posición de cada vecino y la evolución del incendio en una sola pantalla. Esta demo es en vivo: lo que ves pasar, está pasando.',
   checklist: [
     'Llamar a todas las casas de una zona a la vez',
     'Ver quién no contesta y escalar a las fuerzas de seguridad',
-    'Recalcular rutas y plan cuando el fuego cambia',
+    'Girar el viento y ver cómo cambia el plan',
   ],
-  primary: 'Ver recorrido · 2 min',
+  primary: 'Empezar la demo · 3 min',
   secondary: 'Explorar por mi cuenta',
   replay: 'Ver recorrido',
 }
@@ -140,15 +151,35 @@ export function stopDemoTour() {
   activeTour = null
 }
 
-function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number) {
+function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number, total: number, live: string | null) {
   popover.closeButton.setAttribute('aria-label', 'Cerrar recorrido')
-  popover.wrapper.querySelector('.tour-kicker')?.remove()
-  popover.wrapper.querySelector('.tour-actions')?.remove()
+  for (const selector of ['.tour-kicker', '.tour-actions', '.tour-live', '.tour-progress', '.tour-keys']) popover.wrapper.querySelector(selector)?.remove()
+
+  const progress = document.createElement('div')
+  progress.className = 'tour-progress'
+  progress.setAttribute('aria-hidden', 'true')
+  const bar = document.createElement('span')
+  bar.style.width = `${Math.round(((index + 1) / total) * 100)}%`
+  progress.appendChild(bar)
+  popover.wrapper.prepend(progress)
 
   const kicker = document.createElement('p')
   kicker.className = 'tour-kicker'
   kicker.textContent = `${index + 1} · ${step.kicker}`
+  if (step.view.run) {
+    const pill = document.createElement('span')
+    pill.className = 'tour-live-pill'
+    pill.textContent = 'En directo'
+    kicker.appendChild(pill)
+  }
   popover.title.before(kicker)
+
+  const liveLine = document.createElement('p')
+  liveLine.className = 'tour-live'
+  liveLine.setAttribute('role', 'status')
+  liveLine.hidden = !live
+  liveLine.textContent = live ?? ''
+  popover.description.after(liveLine)
 
   if (step.actions?.length) {
     const list = document.createElement('ul')
@@ -158,8 +189,13 @@ function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number)
       li.textContent = item
       list.appendChild(li)
     }
-    popover.description.after(list)
+    liveLine.after(list)
   }
+
+  const keys = document.createElement('small')
+  keys.className = 'tour-keys'
+  keys.textContent = '→ siguiente · ← atrás · Esc salir'
+  popover.footer.appendChild(keys)
 }
 
 export async function startDemoTour(actions: DemoTourActions) {
@@ -170,7 +206,11 @@ export async function startDemoTour(actions: DemoTourActions) {
   const [{ driver }] = await Promise.all([import('driver.js'), import('driver.js/dist/driver.css')])
   if (generation !== tourGeneration) return
 
-  const last = DEMO_TOUR_STEPS.length - 1
+  const total = DEMO_TOUR_STEPS.length
+  const last = total - 1
+  let liveTimer = 0
+  const stopLive = () => { if (liveTimer) window.clearInterval(liveTimer); liveTimer = 0 }
+
   const tour = driver({
     animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
     smoothScroll: false,
@@ -191,7 +231,7 @@ export async function startDemoTour(actions: DemoTourActions) {
     progressText: '{{current}} de {{total}}',
     nextBtnText: 'Siguiente',
     prevBtnText: 'Atrás',
-    doneBtnText: 'Empezar',
+    doneBtnText: 'Explorar',
     popoverClass: 'vigia-tour',
     onNextClick: (_element, _step, { state }) => {
       const next = (state.activeIndex ?? 0) + 1
@@ -202,9 +242,10 @@ export async function startDemoTour(actions: DemoTourActions) {
     onPopoverRender: (popover, { state }) => {
       const index = state.activeIndex ?? 0
       const step = DEMO_TOUR_STEPS[index]
-      if (step) decoratePopover(popover, step, index)
+      if (step) decoratePopover(popover, step, index, total, actions.tick(step.id))
     },
     onDestroyed: () => {
+      stopLive()
       if (generation !== tourGeneration) return
       markTourSeen()
       actions.close()
@@ -218,11 +259,28 @@ export async function startDemoTour(actions: DemoTourActions) {
   })
 
   function showStep(index: number) {
+    stopLive()
     const step = DEMO_TOUR_STEPS[index]
     actions.open(step.view)
     // Los anclajes de dentro de un panel pueden estar al final de una lista con scroll.
     document.querySelector(step.element)?.scrollIntoView({ block: 'center', behavior: 'instant' })
     tour.drive(index)
+    // Mientras el paso está en pantalla, la línea en directo se refresca y, si el anclaje
+    // ha cambiado de sitio o de tamaño (la tarjeta crece con el run, el panel cambia de
+    // alto), el foco se recoloca.
+    let lastRect = ''
+    liveTimer = window.setInterval(() => {
+      if (!tour.isActive() || tour.getActiveIndex() !== index) { stopLive(); return }
+      const live = actions.tick(step.id)
+      const line = document.querySelector<HTMLElement>('.vigia-tour .tour-live')
+      if (line) {
+        line.hidden = !live
+        if (line.textContent !== (live ?? '')) line.textContent = live ?? ''
+      }
+      const box = document.querySelector(step.element)?.getBoundingClientRect()
+      const rect = box ? [box.x, box.y, box.width, box.height].map(Math.round).join(',') : ''
+      if (rect && rect !== lastRect) { lastRect = rect; tour.refresh() }
+    }, 500)
   }
 
   activeTour = tour

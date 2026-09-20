@@ -42,9 +42,9 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(!html.includes('class="floating-panel"'))
 })
 
-test('el recorrido cuenta la historia entera: situación, llamar, HappyRobot, prioridad, ficha, rutas, escalada, fuego, plan, coordinación', async () => {
+test('el recorrido es una demo en vivo: llama, escala y gira el viento de verdad, y cuenta la historia entera', async () => {
   const { DEMO_TOUR_STEPS, TOUR_INTRO, shouldShowTourIntro, TOUR_STORAGE_KEY } = await server.ssrLoadModule('/src/demoTour.ts')
-  assert.deepEqual(DEMO_TOUR_STEPS.map((step) => step.id), ['situacion', 'personas', 'llamar', 'happyrobot', 'cola', 'ficha', 'rutas', 'escalada', 'fuego', 'plan', 'centros', 'empieza'])
+  assert.deepEqual(DEMO_TOUR_STEPS.map((step) => step.id), ['situacion', 'personas', 'llamar', 'happyrobot', 'cola', 'ficha', 'escalada', 'viento', 'plan', 'centros', 'empieza'])
   // Cada anclaje existe en la interfaz: un selector que no está en el código es un paso que Driver no puede señalar.
   const source = [
     readFileSync(new URL('./src/CommandCenter.tsx', import.meta.url), 'utf8'),
@@ -56,29 +56,32 @@ test('el recorrido cuenta la historia entera: situación, llamar, HappyRobot, pr
     const demo = step.element.match(/data-demo="([^"]+)"/)?.[1]
     assert.ok(demo, `${step.id}: anclaje data-demo`)
     assert.ok(source.includes(`data-demo="${demo}"`) || source.includes(`'${demo}'`) || source.includes(`scope="${demo}"`), `${step.id}: ${demo} existe en la interfaz`)
-    assert.ok(step.title.length <= 60 && step.description.split(' ').length <= 60, `${step.id}: se lee de un vistazo`)
+    assert.ok(step.title.length <= 60 && step.description.split(' ').length <= 50, `${step.id}: se lee de un vistazo`)
   }
+  // Las tres operaciones reales, en el orden de la historia: llamar antes de escalar, escalar antes de girar el viento.
+  const runs = DEMO_TOUR_STEPS.filter((step) => step.view.run).map((step) => step.view.run)
+  assert.deepEqual(runs, ['call-risk', 'escalate', 'shift-wind'])
   // Los pasos que explican un panel lo abren antes; los del mapa cierran todo.
   const view = Object.fromEntries(DEMO_TOUR_STEPS.map((step) => [step.id, step.view]))
   assert.deepEqual(view.situacion, {})
+  assert.deepEqual(view.llamar, { focus: 'risk', run: 'call-risk' })
   assert.deepEqual(view.happyrobot, { happyRobot: true })
   assert.deepEqual(view.cola, { panel: 'people' })
-  assert.deepEqual(view.ficha, { person: true })
-  assert.deepEqual(view.rutas, { person: true })
-  assert.deepEqual(view.escalada, { person: true })
-  assert.deepEqual(view.fuego, { panel: 'cop' })
+  assert.deepEqual(view.ficha, { person: true, silent: true })
+  assert.deepEqual(view.escalada, { happyRobot: true, run: 'escalate' })
+  assert.deepEqual(view.viento, { panel: 'cop', run: 'shift-wind' })
   assert.deepEqual(view.plan, { panel: 'alerts' })
   assert.deepEqual(view.centros, { panel: 'centers' })
   assert.deepEqual(view.empieza, {})
-  assert.ok(view.escalada && DEMO_TOUR_STEPS.find((step) => step.id === 'escalada').description.includes('Enviar fuerzas de seguridad'))
-  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'empieza').description.includes('Llamar zona de riesgo'))
+  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'ficha').description.includes('Enviar fuerzas de seguridad'))
+  assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'empieza').description.includes('Zona'))
   assert.equal(TOUR_INTRO.checklist.length, 3)
   assert.equal(TOUR_STORAGE_KEY, 'vigia-tour-seen')
   assert.equal(shouldShowTourIntro(), false)
   const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
   const intro = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
   assert.ok(intro.includes('Cómo se guía una evacuación'))
-  assert.ok(intro.includes('Ver recorrido'))
+  assert.ok(intro.includes('Empezar la demo'))
   assert.ok(intro.includes('Explorar por mi cuenta'))
   assert.ok(intro.includes('tour-intro-checklist'))
 })
