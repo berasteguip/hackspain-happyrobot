@@ -97,7 +97,7 @@ def api_roster() -> list[RosterEntry]:
                 locality=(casa.village if casa else None) or state.scenario,
                 address=casa.address if casa else None,
                 vulnerable=bool(casa.vulnerable) if casa else False,
-                dialable=bool(person.phone) and notify.phone_allowed(person.phone),
+                dialable=bool(person.phone),
                 status=person.status,
                 call_state=ultima.state if ultima else None,
                 location_source=person.position_source,
