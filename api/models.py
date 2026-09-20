@@ -465,6 +465,29 @@ class PositionEvent(Base):
     t: str | None = None
 
 
+class RegisterPerson(Base):
+    """Alguien que abre el enlace y se apunta él mismo: teléfono con prefijo y su GPS."""
+
+    name: str | None = None
+    phone: str
+    lat: float
+    lon: float
+    accuracy_m: float | None = None
+    # Desplazar el escenario entero (fuego, vecinos, salidas, patrullas) alrededor de esta persona.
+    anchor: bool = False
+
+
+class RegisterResponse(Base):
+    ok: bool = True
+    person_id: str
+    name: str | None = None
+    phone: str | None = None
+    created: bool
+    map_url: str
+    gps_url: str
+    anchor: dict[str, float] | None = None
+
+
 class CallExtracted(Base):
     people_at_home: int | None = None
     declared_location: str | None = None

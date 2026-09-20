@@ -105,9 +105,19 @@ def phone_allowed(phone: str | None) -> bool:
     Existe porque durante los ensayos el escenario cargado tiene teléfonos REALES del equipo
     mezclados con vecinos sintéticos, y `ALLOW_REAL_CALLS=true` a secas marcaría los 24.
     """
-    if not settings.call_allowlist:
+    if not settings.call_allowlist and not settings.register_only_calls:
         return True
-    return normalize_phone(phone) in settings.call_allowlist
+    return normalize_phone(phone) in allowed_numbers()
+
+
+def allowed_numbers() -> set[str]:
+    """`CALL_ALLOWLIST` más quien se ha apuntado él mismo desde el enlace (si el ajuste lo permite)."""
+    numeros = set(settings.call_allowlist)
+    if settings.register_auto_allow:
+        from state import state  # import tardío: state importa settings, no al revés
+
+        numeros |= state.registered_phones
+    return numeros
 
 
 def _run_id_from(resp: httpx.Response) -> str | None:
@@ -197,7 +207,7 @@ def trigger_payload(
         # `CALL_ALLOWLIST`, pero comprobado **en el otro lado**: si alguien apunta a nuestra API
         # desde otro sitio, o si esta lista viajara vacía, HappyRobot se niega igual. Dos
         # cerrojos independientes valen más que uno duplicado.
-        "ALLOWED_NUMBERS": json.dumps(sorted(settings.call_allowlist)),
+        "ALLOWED_NUMBERS": json.dumps(sorted(allowed_numbers())),
         "DEMO_MODE": "true" if settings.demo_mode else "false",
         # --- claves propias del repo ---
         "action": "call" if channel == Channel.call else "sms",

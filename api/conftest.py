@@ -26,6 +26,8 @@ if str(API_DIR) not in sys.path:
 # los teléfonos del fixture y tumbó tres tests que no tenían nada que ver.
 os.environ.setdefault("ALLOW_REAL_CALLS", "false")
 os.environ.setdefault("CALL_ALLOWLIST", "")  # sin lista blanca: el fixture marca lo que quiera
+os.environ["REGISTER_ONLY_CALLS"] = "false"  # el ensayo del enlace lo pone a true en .env
+os.environ["AUTO_NOTIFY"] = "true"
 os.environ.setdefault("HR_WORKFLOW_WEBHOOK", "")
 os.environ.setdefault("HR_API_KEY", "")
 os.environ.setdefault("HR_SHARED_SECRET", "")  # sin auth: los tests llaman directo

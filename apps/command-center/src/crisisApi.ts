@@ -162,6 +162,18 @@ export async function fetchRoster(): Promise<RosterEntry[] | null> {
   }
 }
 
+/** Dónde está anclado el mundo del ensayo en la API, si alguien se registró con `anchor`. */
+export async function fetchAnchor(): Promise<{ lng: number; lat: number } | null> {
+  try {
+    const res = await fetch('/api/anchor')
+    if (!res.ok) return null
+    const body = (await res.json()) as { anchored?: boolean; lat?: number; lon?: number }
+    return body.anchored && Number.isFinite(body.lat) && Number.isFinite(body.lon) ? { lng: body.lon as number, lat: body.lat as number } : null
+  } catch {
+    return null
+  }
+}
+
 /** El tablero de llamadas. `batchId` acota a la última ráfaga lanzada. */
 export async function fetchCalls(key: string, batchId?: string): Promise<CallRun[] | null> {
   try {
@@ -178,6 +190,47 @@ export async function fetchCalls(key: string, batchId?: string): Promise<CallRun
 // --------------------------------------------------------------------------- escritura
 
 export class DispatchFailed extends Error {}
+
+export type RegisterResult = { person_id: string; name: string | null; phone: string | null; created: boolean; map_url: string }
+
+/** Quien abre el enlace se da de alta él mismo: teléfono con prefijo y su GPS. Endpoint público. */
+export async function registerPerson(input: { name?: string; phone: string; lat: number; lon: number; accuracyM?: number; anchor?: boolean }): Promise<RegisterResult> {
+  let res: Response
+  try {
+    res = await fetch('/people/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: input.name ?? null, phone: input.phone, lat: input.lat, lon: input.lon, accuracy_m: input.accuracyM ?? null, anchor: input.anchor ?? false }),
+    })
+  } catch {
+    throw new Error('No hay conexión con la API de crisis.')
+  }
+  if (!res.ok) {
+    let detalle = `HTTP ${res.status}`
+    try {
+      const cuerpo = await res.json()
+      if (cuerpo?.detail) detalle = typeof cuerpo.detail === 'string' ? cuerpo.detail : 'Datos no válidos.'
+    } catch {
+      // cuerpo no-JSON
+    }
+    throw new Error(detalle)
+  }
+  return (await res.json()) as RegisterResult
+}
+
+/** El GPS de este dispositivo, para la persona registrada. Público; falla en silencio. */
+export async function postPosition(personId: string, lat: number, lon: number, accuracyM?: number): Promise<boolean> {
+  try {
+    const res = await fetch('/positions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ person_id: personId, lat, lon, accuracy_m: accuracyM ?? null }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
 
 /**
  * El gesto del mando: este círculo, estas llamadas.

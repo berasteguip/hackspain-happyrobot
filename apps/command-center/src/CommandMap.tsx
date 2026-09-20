@@ -13,6 +13,7 @@ import type { Exposure, FireForecast } from './fire-model'
 import { CENTER_COLOR, SITE_EMOJI } from './response'
 import type { ResponseCenter } from './response'
 import type { RefugeRoute } from './routing'
+import type { RecommendedAreas } from './risk'
 import { UNIT_STATUS_LABEL } from './units'
 import type { DispatchUnit, UnitKind } from './units'
 import { WindOverlay } from './WindOverlay'
@@ -214,7 +215,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   healthCenters: ['center-health', 'center-health-label'],
   fireStations: ['center-fire', 'center-fire-label'],
   routes: ['refuge-route-casing', 'refuge-route-line'],
-  callArea: ['call-area-fill', 'call-area-edge'],
+  callArea: ['call-area-fill', 'call-area-edge', 'recommended-fill', 'recommended-edge', 'recommended-label'],
   units: ['unit-point', 'police-car', 'unit-label'],
 }
 
@@ -242,6 +243,7 @@ type Props = {
   drawingArea: boolean
   onAreaChange: (area: CallArea | null) => void
   onAreaComplete: (area: CallArea) => void
+  recommended: RecommendedAreas | null
   units: DispatchUnit[]
   onUnitSelect: (id: string) => void
   fireCells: FeatureCollection<Polygon>
@@ -375,6 +377,14 @@ function callAreaGeo(area: CallArea | null): FeatureCollection<Polygon> {
   return { type: 'FeatureCollection', features: area && area.radiusM > 0 ? [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circle(area.lng, area.lat, area.radiusM)] } }] : [] }
 }
 
+function recommendedGeo(areas: RecommendedAreas | null): FeatureCollection<Polygon> {
+  if (!areas) return { type: 'FeatureCollection', features: [] }
+  return { type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { kind: 'affected', label: `Posible afectación · +${areas.affectedMinutes} min` }, geometry: { type: 'Polygon', coordinates: [circle(areas.affected.lng, areas.affected.lat, areas.affected.radiusM)] } },
+    { type: 'Feature', properties: { kind: 'risk', label: 'Zona de riesgo recomendada' }, geometry: { type: 'Polygon', coordinates: [circle(areas.risk.lng, areas.risk.lat, areas.risk.radiusM)] } },
+  ] }
+}
+
 function circle(lng: number, lat: number, radius: number) {
   return Array.from({ length: 65 }, (_, i) => destination(lng, lat, (i % 64) * 360 / 64, radius))
 }
@@ -407,7 +417,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, units, onUnitSelect, fireCells, centers, incident }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, recommended, units, onUnitSelect, fireCells, centers, incident }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -417,14 +427,14 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
   const suppressClickRef = useRef(false)
   useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units })
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended })
   const [satellite, setSatellite] = useState(false)
   const [mapError, setMapError] = useState('')
   const [loaded, setLoaded] = useState(false)
   onSelectRef.current = onSelect
   onCenterSelectRef.current = onCenterSelect
   onUnitSelectRef.current = onUnitSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units }
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -484,6 +494,10 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         },
       }, firstLabel)
 
+      map.addSource('recommended-areas', { type: 'geojson', data: recommendedGeo(current.recommended) })
+      map.addLayer({ id: 'recommended-fill', type: 'fill', source: 'recommended-areas', paint: { 'fill-color': ['case', ['==', ['get', 'kind'], 'risk'], '#ff6b5e', '#f3bd61'], 'fill-opacity': ['case', ['==', ['get', 'kind'], 'risk'], 0.07, 0.04] } })
+      map.addLayer({ id: 'recommended-edge', type: 'line', source: 'recommended-areas', paint: { 'line-color': ['case', ['==', ['get', 'kind'], 'risk'], '#ff8a7e', '#f3bd61'], 'line-width': ['case', ['==', ['get', 'kind'], 'risk'], 1.8, 1.2], 'line-dasharray': [2, 2], 'line-opacity': 0.85 } })
+      map.addLayer({ id: 'recommended-label', type: 'symbol', source: 'recommended-areas', layout: { 'symbol-placement': 'line', 'text-field': ['get', 'label'], 'text-size': 10, 'text-letter-spacing': 0.08, 'symbol-spacing': 600 }, paint: { 'text-color': ['case', ['==', ['get', 'kind'], 'risk'], '#ffb3ab', '#f3d9a4'], 'text-halo-color': '#101820', 'text-halo-width': 1.6 } })
       map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea) })
       map.addLayer({ id: 'call-area-fill', type: 'fill', source: 'call-area', paint: { 'fill-color': '#77c8f4', 'fill-opacity': 0.09 } })
       map.addLayer({ id: 'call-area-edge', type: 'line', source: 'call-area', paint: { 'line-color': '#a7e1ff', 'line-width': 2, 'line-dasharray': [3, 2] } })
@@ -684,7 +698,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     source(map, 'fire-heat')?.setData(fireHeatPoints(fireCells, forecast, horizon))
     source(map, 'zones')?.setData(zonesGeo(zones, zoneExposure))
     source(map, 'zones-area')?.setData(zoneAreas(zones, zoneExposure))
-  }, [loaded, forecast, horizon, fireCells, zones, zoneExposure])
+    source(map, 'response-centers')?.setData(centersGeo(centers))
+  }, [loaded, forecast, horizon, fireCells, zones, zoneExposure, centers])
 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'refuge-route')?.setData(routeGeo(route))
@@ -693,6 +708,10 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'call-area')?.setData(callAreaGeo(callArea))
   }, [loaded, callArea])
+
+  useEffect(() => {
+    if (loaded && mapRef.current) source(mapRef.current, 'recommended-areas')?.setData(recommendedGeo(recommended))
+  }, [loaded, recommended])
 
   useEffect(() => {
     const map = mapRef.current

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CommandMap } from './CommandMap'
 import { fetchFirmsSpain } from './firms'
 import { DEFAULT_SCENARIO_ID, SCENARIOS, scenarioById } from './scenarios'
+import { anchorScenario } from './scenario'
+import { recommendAreas } from './risk'
 import type { FireScenario } from './scenario'
 import { MAX_FORECAST_MIN, buildFireForecast, exposureAt, forecastGeo, routeBlocked } from './fire-model'
 import type { FireSettings } from './fire-model'
@@ -17,10 +19,11 @@ import { applyUnitPlan, createDispatch, createPatrolFleet, moveUnits, originsFro
 import type { DispatchTarget, DispatchUnit, UnitKind } from './units'
 import { advanceProtocol, moveEvacuees, prepareAreaCampaign, selectAreaIds } from './simulation'
 import {
-  CALL_STATE_LABEL, CALL_STATE_OPEN, DispatchFailed, dispatchCircle, fetchCalls, fetchRoster,
+  CALL_STATE_LABEL, CALL_STATE_OPEN, DispatchFailed, dispatchCircle, fetchAnchor, fetchCalls, fetchRoster,
   TRIAGE_COLOR, TRIAGE_LABEL,
-  readOperatorKey, saveOperatorKey,
+  postPosition, readOperatorKey, saveOperatorKey,
 } from './crisisApi'
+import { focusPersonFromUrl, readMe } from './me'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, SafeZone } from './types'
 
@@ -47,6 +50,8 @@ function citizenFromRoster(row: RosterEntry, index: number): Citizen {
     callDelaySec: 1 + (index % 48) * 1.4,
     outcome: 'tracking',
     locationSource: row.location_source === 'gps' ? 'gps' : 'reference',
+    // Quien comparte GPS real es una persona de verdad: nunca entra en la simulación local.
+    live: row.location_source === 'gps' || undefined,
     callState: row.call_state ?? undefined,
     dialable: row.dialable,
     triage: triageFromRoster(row),
@@ -121,7 +126,9 @@ function locationAge(ts: number | undefined, now: number) {
 export function CommandCenter({ token }: { token: string }) {
   const [now, setNow] = useState(() => new Date())
   const [scenarioId, setScenarioId] = useState(DEFAULT_SCENARIO_ID)
-  const scenario = useMemo(() => scenarioById(scenarioId), [scenarioId])
+  // Mundo del ensayo anclado a la persona registrada desde el enlace: el escenario se desplaza entero.
+  const [anchor, setAnchor] = useState<{ lng: number; lat: number } | null>(null)
+  const scenario = useMemo(() => anchor ? anchorScenario(scenarioById(scenarioId), anchor) : scenarioById(scenarioId), [scenarioId, anchor])
   const origins = useMemo(() => originsFrom(scenario.centers, scenario.police), [scenario])
   const [citizens, setCitizens] = useState<Citizen[]>(() => scenarioById(DEFAULT_SCENARIO_ID).citizens)
   const [events, setEvents] = useState<CallEvent[]>([])
@@ -139,6 +146,11 @@ export function CommandCenter({ token }: { token: string }) {
   const [dispatching, setDispatching] = useState(false)
   const [forceRecall, setForceRecall] = useState(false)
   const [apiRoster, setApiRoster] = useState(false)
+  // Abierto desde el enlace: `?p=<id>` centra el mapa en esa persona; si además se registró en
+  // este navegador, la pestaña emite su GPS.
+  const [focusPersonId] = useState(() => focusPersonFromUrl())
+  const [beaconId] = useState(() => { const me = readMe(); return me && me.id === focusPersonFromUrl() ? me.id : null })
+  const [beaconState, setBeaconState] = useState<'starting' | 'on' | 'error' | 'denied'>('starting')
   const campaignRef = useRef<ReadonlySet<string>>(new Set())
   const campaignSet = useMemo(() => new Set(campaignIds), [campaignIds])
   const [planningCount, setPlanningCount] = useState(0)
@@ -158,6 +170,7 @@ export function CommandCenter({ token }: { token: string }) {
   const [notices, setNotices] = useState<DemoNotice[]>([])
   const forecast = useMemo(() => buildFireForecast(scenario.fireCells, fireSettings), [scenario.fireCells, fireSettings])
   const projection = useMemo(() => forecastGeo(forecast, horizon), [forecast, horizon])
+  const recommended = useMemo(() => recommendAreas(scenario.fireCells, forecast, fireSettings.windTowardDeg), [scenario.fireCells, forecast, fireSettings.windTowardDeg])
   const zoneExposure = useMemo(() => Object.fromEntries(scenario.safeZones.map(zone => [zone.id, exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)])), [forecast, horizon, marginM, scenario.safeZones])
   const forecastRef = useRef({ forecast, horizon, marginM })
   useEffect(() => { forecastRef.current = { forecast, horizon, marginM } }, [forecast, horizon, marginM])
@@ -319,6 +332,15 @@ export function CommandCenter({ token }: { token: string }) {
         citizensRef.current = desdeApi
         setCitizens(desdeApi)
         setApiRoster(true)
+        setLiveMode(true)
+        // Abierto desde el enlace (`?p=<id>`): el mapa arranca sobre esa persona, no sobre el centroide.
+        const yo = focusPersonId ? desdeApi.find((c) => c.id === focusPersonId) : undefined
+        if (yo) {
+          setFocusTarget({ lng: yo.lng, lat: yo.lat, zoom: 15 })
+          setSelectedId(yo.id)
+          setPanel(null)
+          return
+        }
         const centro = desdeApi.reduce(
           (acc, c) => ({ lng: acc.lng + c.lng / desdeApi.length, lat: acc.lat + c.lat / desdeApi.length }),
           { lng: 0, lat: 0 },
@@ -342,7 +364,25 @@ export function CommandCenter({ token }: { token: string }) {
     void cargar()
     const id = window.setInterval(() => void cargar(), 4000)
     return () => { cancelled = true; window.clearInterval(id) }
-  }, [updatePopulation])
+  }, [updatePopulation, focusPersonId])
+
+  // Esta pestaña es el dispositivo de la persona registrada desde el enlace: emite su GPS a la
+  // API mientras siga abierta. Solo si el `?p=` coincide con quien se registró en este navegador.
+  useEffect(() => {
+    if (!beaconId || !('geolocation' in navigator)) return
+    let last = 0
+    let lastOk = true
+    const watch = navigator.geolocation.watchPosition((position) => {
+      const at = Date.now()
+      if (at - last < 5000) return
+      last = at
+      void postPosition(beaconId, position.coords.latitude, position.coords.longitude, position.coords.accuracy).then((ok) => {
+        if (ok !== lastOk) { lastOk = ok; setBeaconState(ok ? 'on' : 'error') }
+        else if (ok) setBeaconState('on')
+      })
+    }, () => setBeaconState('denied'), { enableHighAccuracy: true, maximumAge: 4000 })
+    return () => navigator.geolocation.clearWatch(watch)
+  }, [beaconId])
 
   // El tablero de la ráfaga viva: se refresca hasta que no quede ninguna llamada abierta.
   useEffect(() => {
@@ -422,6 +462,27 @@ export function CommandCenter({ token }: { token: string }) {
     }, 250)
     return () => { window.clearInterval(timer); for (const flight of flights.values()) flight.controller.abort(); flights.clear() }
   }, [token, scenario.id])
+  // El mundo se ancla a una persona real: el escenario se desplaza y la flota vuelve a nacer en él.
+  const anchorWorld = (ancla: { lng: number; lat: number }) => {
+    setAnchor(ancla)
+    for (const flight of unitFlightRef.current.values()) flight.controller.abort()
+    unitFlightRef.current.clear()
+    const fleet = createPatrolFleet(anchorScenario(scenarioById(scenarioId), ancla))
+    unitsRef.current = fleet
+    setUnits(fleet)
+    setSelectedUnitId(null)
+    unitSeqRef.current = fleet.length
+    routesRef.current = new Map()
+    plannedRef.current.clear()
+  }
+  useEffect(() => {
+    if (!apiRoster) return
+    let cancelled = false
+    void fetchAnchor().then((ancla) => { if (!cancelled && ancla) anchorWorld(ancla) })
+    return () => { cancelled = true }
+    // Solo al conectar la API: el ancla se fija una vez por sesión del mapa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiRoster])
   useEffect(() => {
     let previous = performance.now()
     const timer = window.setInterval(() => {
@@ -481,18 +542,26 @@ export function CommandCenter({ token }: { token: string }) {
     setLayers(previous => ({ ...previous, citizens: true, references: true }))
   }
   /** Modo real: el círculo va a la API y vuelve un tablero de llamadas de verdad. */
-  const launchLiveCampaign = async () => {
-    if (drawingArea || !callArea || dispatching) return
+  const launchLiveCampaign = async (area: CallArea, ids: string[], reason?: string) => {
+    if (drawingArea || dispatching) return
     setDispatching(true)
     setDispatchError('')
     setSelectedId(null)
     setPanel('campaign')
     try {
-      const resultado = await dispatchCircle(operatorKey, callArea, { operator: 'puesto de mando', force: forceRecall })
+      const resultado = await dispatchCircle(operatorKey, area, { operator: 'puesto de mando', force: forceRecall, reason })
       setLiveBatch({ id: resultado.batch_id, skipped: resultado.skipped_detail })
       setLiveCalls(resultado.calls)
-      setCampaignIds(resultado.calls.map((call) => call.person_id))
-      campaignRef.current = new Set(resultado.calls.map((call) => call.person_id))
+      // Híbrido: la API marca los teléfonos reales; los vecinos demo del círculo (sin GPS real)
+      // arrancan a la vez la simulación local para que el mapa se mueva mientras suena la llamada.
+      const realIds = resultado.calls.map((call) => call.person_id)
+      const campaign = prepareAreaCampaign(citizensRef.current, ids, elapsedRef.current, campaignRef.current)
+      const enrolled = new Set([...campaign.ids, ...realIds])
+      campaignRef.current = enrolled
+      citizensRef.current = campaign.citizens
+      setCitizens(campaign.citizens)
+      setCampaignIds([...enrolled])
+      if (campaign.addedIds.length) setProtocolOn(true)
       if (!resultado.dispatched) {
         setDispatchError('Nadie en esta zona se puede llamar ahora mismo. Mira el detalle de abajo.')
       }
@@ -503,10 +572,10 @@ export function CommandCenter({ token }: { token: string }) {
     }
   }
 
-  const launchAreaCampaign = () => {
-    if (liveMode) { void launchLiveCampaign(); return }
-    if (drawingArea || !callArea) return
-    const campaign = prepareAreaCampaign(citizensRef.current, areaIds, elapsedRef.current, campaignRef.current)
+  const launchCampaignIn = (area: CallArea, ids: string[], reason?: string) => {
+    if (liveMode) { void launchLiveCampaign(area, ids, reason); return }
+    if (drawingArea) return
+    const campaign = prepareAreaCampaign(citizensRef.current, ids, elapsedRef.current, campaignRef.current)
     if (!campaign.addedIds.length) return
     campaignRef.current = new Set(campaign.ids)
     citizensRef.current = campaign.citizens
@@ -514,6 +583,20 @@ export function CommandCenter({ token }: { token: string }) {
     setCampaignIds(campaign.ids)
     setProtocolOn(true)
   }
+  const launchAreaCampaign = () => { if (callArea) launchCampaignIn(callArea, areaIds) }
+  /** Zona recomendada: se adopta como círculo de la campaña y se lanza en el mismo gesto. */
+  const launchRecommended = (kind: 'risk' | 'affected') => {
+    if (!recommended || drawingArea || dispatching) return
+    const area = recommended[kind]
+    const ids = selectAreaIds(citizensRef.current, area)
+    setCallArea(area)
+    setAreaIds(ids)
+    launchCampaignIn(area, ids, kind === 'risk' ? 'zona de riesgo recomendada junto al fuego' : `zona posiblemente afectada en ${recommended.affectedMinutes} min`)
+  }
+  const recommendedCounts = useMemo(() => recommended ? {
+    risk: selectAreaIds(citizens, recommended.risk).length,
+    affected: selectAreaIds(citizens, recommended.affected).length,
+  } : null, [recommended, citizens])
   const retryRoutes = () => {
     for (const citizen of citizensRef.current) {
       if (campaignRef.current.has(citizen.id) && !citizen.live && citizen.call?.consent === 'granted' && citizen.status === 'assistance') {
@@ -676,7 +759,7 @@ export function CommandCenter({ token }: { token: string }) {
   return (
     <div className="map-app">
       <main className="map-wrap" aria-label="Mapa de situación">
-        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
+        <CommandMap key={scenario.id} token={token} citizens={citizens} fires={fires} zones={scenario.safeZones} selectedId={selectedId} layers={layers} onSelect={selectCitizen} projection={projection} forecast={forecast} zoneExposure={zoneExposure} horizon={horizon} marginM={marginM} route={mapRoute} focusTarget={focusTarget} onCenterSelect={selectCenter} showWind={showWind} windDirection={fireSettings.windTowardDeg} windKmh={fireSettings.windKmh} callArea={callArea} areaIds={areaIds} drawingArea={drawingArea} onAreaChange={updateArea} onAreaComplete={finishArea} recommended={recommended} units={units} onUnitSelect={selectUnit} fireCells={scenario.fireCells} centers={scenario.centers} incident={scenario.incident} />
       </main>
       <header className="floating-brand">
         <div className="brand-row"><span className="brand-symbol" aria-hidden="true">R</span><strong>router</strong></div>
@@ -684,6 +767,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button ref={incidentButtonRef} type="button" className="incident-trigger" aria-label="Cambiar escenario" aria-expanded={panel === 'incidents'} aria-controls="map-panel" onClick={() => togglePanel('incidents')}>
           <span><strong>{scenario.incident.name}</strong><small><i className={`connection-dot ${apiRoster ? 'connected' : ''}`} aria-hidden="true" />{apiRoster ? 'API conectada' : 'Escenario de demo'} · {apiRoster ? placeName : scenario.incident.area}</small></span><Icon name="chevron" />
         </button>
+        {beaconId && <span className={`beacon-chip ${beaconState}`} role="status">{beaconState === 'on' ? 'Compartiendo tu ubicación' : beaconState === 'denied' ? 'Ubicación denegada' : beaconState === 'error' ? 'Sin conexión con la API' : 'Leyendo tu ubicación…'}</span>}
       </header>
       <nav className="floating-actions" aria-label="Herramientas del mapa">
         <button type="button" aria-label="Dibujar zona de llamadas" aria-pressed={drawingArea} className={drawingArea ? 'active' : ''} onClick={beginArea}><Icon name="zone" /><span>Zona</span></button>
@@ -717,9 +801,16 @@ export function CommandCenter({ token }: { token: string }) {
       </aside>}
       <section className={`campaign-dock ${liveMode ? 'is-live' : ''}`} aria-label="Campaña de llamadas por zona">
         <button ref={campaignButtonRef} type="button" className="campaign-settings-button" aria-label="Opciones de campaña" aria-expanded={panel === 'campaign'} aria-controls="map-panel" onClick={() => togglePanel('campaign')}><Icon name="settings" /></button>
-        <button type="button" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : 'Selecciona una zona'}</strong><span>{liveMode ? 'Llamadas reales · HappyRobot' : 'Simulación local'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : ' · Control de llamadas'}</span></button>
+        <button type="button" className="campaign-summary" aria-label="Ver actividad de campaña" onClick={() => togglePanel('campaign')}><strong>{drawingArea ? 'Dibuja una zona en el mapa' : callArea ? `${areaIds.length} personas · ${(callArea.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km de radio` : liveBatch ? `${liveCalls.length} llamadas en la campaña` : recommendedCounts ? `Zona de riesgo recomendada · ${recommendedCounts.risk} posibles víctimas` : 'Selecciona una zona'}</strong><span>{liveMode ? 'Llamadas reales · HappyRobot' : 'Simulación local'}{dispatchError ? ' · Revisar incidencia' : planningCount ? ` · ${planningCount} rutas en cálculo` : counts.waiting ? ` · ${counts.waiting} sin ruta` : campaignRunning ? ' · Campaña en curso' : !callArea && !drawingArea && recommended && recommendedCounts ? ` · Posible afectación +${recommended.affectedMinutes} min: ${recommendedCounts.affected}` : ' · Control de llamadas'}</span></button>
         {!liveMode && campaignRunning && <button type="button" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} /></button>}
-        {drawingArea ? <button type="button" className="cop-secondary dock-cancel" onClick={() => { setDrawingArea(false); updateArea(null) }}>Cancelar</button> : <button type="button" className="cop-primary dock-primary" onClick={callArea ? launchAreaCampaign : beginArea} disabled={dispatching || Boolean(callArea && (liveMode ? !areaIds.length : !callableCount))}><Icon name={callArea ? 'phone' : 'zone'} /><span>{dispatching ? 'Enviando…' : callArea ? liveMode ? 'Llamar · REAL' : 'Llamar · demo' : 'Dibujar zona'}</span></button>}
+        {!drawingArea && !callArea && recommended && recommendedCounts && <>
+          <button type="button" className="cop-secondary dock-secondary" onClick={() => launchRecommended('affected')} disabled={dispatching || !recommendedCounts.affected} aria-label={`Llamar a la zona posiblemente afectada · ${recommendedCounts.affected}`}><span>Zona afectada · {recommendedCounts.affected}</span></button>
+          <button type="button" className="cop-secondary dock-secondary" onClick={beginArea} aria-label="Dibujar zona de llamadas a mano"><Icon name="zone" /></button>
+        </>}
+        {drawingArea ? <button type="button" className="cop-secondary dock-cancel" onClick={() => { setDrawingArea(false); updateArea(null) }}>Cancelar</button>
+          : callArea ? <button type="button" className="cop-primary dock-primary" onClick={launchAreaCampaign} disabled={dispatching || (liveMode ? !areaIds.length : !callableCount)}><Icon name="phone" /><span>{dispatching ? 'Enviando…' : liveMode ? 'Llamar · REAL' : 'Llamar · demo'}</span></button>
+          : recommended && recommendedCounts ? <button type="button" className="cop-primary dock-primary" onClick={() => launchRecommended('risk')} disabled={dispatching || !recommendedCounts.risk}><Icon name="phone" /><span>{dispatching ? 'Enviando…' : `Llamar zona de riesgo · ${recommendedCounts.risk}${liveMode ? ' · REAL' : ''}`}</span></button>
+          : <button type="button" className="cop-primary dock-primary" onClick={beginArea}><Icon name="zone" /><span>Dibujar zona</span></button>}
       </section>
       {panel === 'campaign' && !selected && <aside id="map-panel" className="floating-panel" aria-label="Campaña de llamadas">
         <div className="floating-panel-heading"><h2>Campaña de llamadas</h2><button type="button" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></div>
@@ -735,6 +826,11 @@ export function CommandCenter({ token }: { token: string }) {
           {(callArea || drawingArea) && <button type="button" className="cop-secondary" onClick={() => { setDrawingArea(false); updateArea(null) }}>Borrar selección</button>}
           {!liveMode && campaignRunning && <button type="button" className="campaign-pause" onClick={() => setProtocolOn(active => !active)} aria-label={protocolOn ? 'Pausar campaña' : 'Reanudar campaña'}><Icon name={protocolOn ? 'pause' : 'play'} />{protocolOn ? 'Pausar' : 'Reanudar'}</button>}
         </div>
+        {!callArea && !drawingArea && recommended && recommendedCounts && <div className="recommended-areas" role="group" aria-label="Zonas recomendadas">
+          <button type="button" className="cop-secondary" onClick={() => finishArea(recommended.risk)}><strong>Zona de riesgo</strong><span>{recommendedCounts.risk} posibles víctimas · {(recommended.risk.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km junto al fuego, a favor del viento</span></button>
+          <button type="button" className="cop-secondary" onClick={() => finishArea(recommended.affected)}><strong>Posible afectación · +{recommended.affectedMinutes} min</strong><span>{recommendedCounts.affected} personas · {(recommended.affected.radiusM / 1000).toLocaleString('es-ES', { maximumFractionDigits: 1 })} km según la previsión de propagación</span></button>
+          <p className="fine">Recomendación del modelo de propagación de la demo; no es un perímetro oficial. Al elegir una, revisa la selección y pulsa llamar.</p>
+        </div>}
         {!callArea && <button type="button" className="cop-secondary" onClick={() => finishArea({ ...(rosterCenter ?? { lng: scenario.incident.center[0], lat: scenario.incident.center[1] }), radiusM: rosterCenter ? 1000 : 3000 })}>{rosterCenter ? 'Usar todo el censo · 1 km' : 'Usar entorno del incendio · 3 km'}</button>}
         {!liveMode && callArea && !callableCount && !drawingArea && <p className="fine" role="status">No hay nuevos contactos pendientes en esta selección. Puedes dibujar otra zona; las sesiones GPS quedan excluidas.</p>}
         {dispatchError && <p className="fine" role="alert">{dispatchError}</p>}

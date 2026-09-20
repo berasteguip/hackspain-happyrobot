@@ -114,6 +114,15 @@ class Settings:
     phone_overrides: dict[str, str] = field(
         default_factory=lambda: _phone_map("PHONE_OVERRIDES")
     )
+    # Quien se registra desde el enlace con su propio teléfono entra en la lista blanca: es la
+    # persona dando su consentimiento, no un número del dataset. `false` para exigir `.env`.
+    register_auto_allow: bool = field(default_factory=lambda: _bool("REGISTER_AUTO_ALLOW", True))
+    # Ensayo con el enlace: aunque `CALL_ALLOWLIST` esté vacía, solo suenan los teléfonos que se
+    # registraron desde el enlace. Así los +3460099xxxx del dataset no consumen llamadas.
+    register_only_calls: bool = field(default_factory=lambda: _bool("REGISTER_ONLY_CALLS", False))
+    # `false`: el planner no llama ni manda SMS por su cuenta (rutas nuevas, convoyes, riesgo);
+    # solo suena lo que el operador rodea en el mapa. Para ensayos donde el mando decide.
+    auto_notify: bool = field(default_factory=lambda: _bool("AUTO_NOTIFY", True))
     # Llamadas simultáneas que se lanzan al rodear un círculo en Vigía.
     call_parallelism: int = field(default_factory=lambda: _int("CALL_PARALLELISM", 8))
     # Radio máximo que se acepta en /calls/dispatch: un círculo de 200 km no es una zona.

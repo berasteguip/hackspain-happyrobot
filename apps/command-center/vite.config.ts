@@ -5,10 +5,16 @@ import type { LocationPing as Ping } from './src/types.js'
 
 const pings = new Map<string, Ping>()
 
+// La API de crisis (`api/`, FastAPI) en local. Con ella levantada, el censo, las llamadas y
+// las posiciones salen de ahí; si está caída, el mapa sigue en su modo autocontenido.
+const CRISIS_API = process.env.VITE_CRISIS_API ?? 'http://127.0.0.1:8000'
+const CRISIS_PATHS = ['/api', '/calls', '/positions', '/people', '/instructions', '/health', '/state', '/gps', '/events']
+
 function locationApi(): Plugin {
   return {
     name: 'vigia-location-api',
     configureServer(server) {
+      if (CRISIS_API) return
       server.middlewares.use('/api/locations', (req, res, next) => {
         if (req.method === 'GET') {
           res.setHeader('Content-Type', 'application/json')
@@ -69,6 +75,7 @@ export default defineConfig({
     // servicios de túnel, no `true`, que abriría el dev server a DNS rebinding.
     allowedHosts: ['.trycloudflare.com', '.ngrok-free.app', '.ngrok-free.dev', '.ngrok.app', '.ngrok.io', '.loca.lt'],
     proxy: {
+      ...(CRISIS_API ? Object.fromEntries(CRISIS_PATHS.map(path => [path, { target: CRISIS_API, changeOrigin: true }])) : {}),
       '/firms': {
         target: 'https://firms.modaps.eosdis.nasa.gov',
         changeOrigin: true,
