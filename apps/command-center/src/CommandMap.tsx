@@ -7,7 +7,7 @@ import type { FeatureCollection, Polygon, Point, LineString } from 'geojson'
 import { FIRE_CELL_SIZE_M } from './scenario'
 import type { Incident } from './scenario'
 import { destination, haversineMeters } from './geo'
-import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
+import type { CallArea, Citizen, FireSpot, MapLayers, PaintedFire, SafeZone } from './types'
 import { TRIAGE_COLOR, TRIAGE_ORDER } from './crisisApi'
 import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints } from './fire-model'
 import type { Exposure, FireForecast } from './fire-model'
@@ -364,8 +364,9 @@ function overviewPadding(width: number) {
 const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   perimeter: ['fire-flame', 'fire-ember'],
   spread: ['fire-smoke'],
+  plannedFire: ['planned-fire-fill', 'planned-fire-edge', 'planned-fire-label'],
   thermal: ['thermal-core', 'thermal-satellite'],
-  citizens: ['people-glow', 'people-dot', 'people-escalated', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
+  citizens: ['people-glow', 'people-dot', 'people-escalated', 'people-rerouted', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
   zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
   hospitals: ['center-hospital', 'center-hospital-label'],
@@ -400,6 +401,12 @@ type Props = {
   drawingArea: boolean
   onAreaChange: (area: CallArea | null) => void
   onAreaComplete: (area: CallArea) => void
+  /** Frentes previstos pintados a mano, y el trazo que se está pintando ahora mismo. */
+  plannedFires: PaintedFire[]
+  fireStroke: [number, number][] | null
+  drawingFire: boolean
+  onFireStroke: (ring: [number, number][] | null) => void
+  onFireComplete: (ring: [number, number][]) => void
   recommended: RecommendedAreas | null
   units: DispatchUnit[]
   onUnitSelect: (id: string) => void
@@ -473,6 +480,7 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
         id: citizen.id, name: citizen.name, status: citizen.status, answered: Boolean(citizen.call),
         reference: !citizen.locationSource || citizen.locationSource === 'reference' || citizen.locationSource === 'unknown',
         color: citizenColor(citizen), rank: citizenRank(citizen), escalated: Boolean(citizen.escalation),
+        rerouted: Boolean(citizen.reroute && citizen.status !== 'safe'),
       },
       geometry: { type: 'Point', coordinates: [citizen.lng, citizen.lat] },
     })),
@@ -585,6 +593,18 @@ function zonePopupContent(zone: SafeZone, exposure: Exposure | undefined, horizo
   return content
 }
 
+/** Los frentes pintados y el trazo en curso, como polígonos. El trazo se cierra al vuelo para que se vea el relleno mientras se pinta. */
+function plannedFireGeo(fires: PaintedFire[], stroke: [number, number][] | null): FeatureCollection<Polygon> {
+  const rings = [...fires.map(fire => ({ id: fire.id, ring: fire.ring, live: false })), ...(stroke && stroke.length >= 3 ? [{ id: 'stroke', ring: stroke, live: true }] : [])]
+  return {
+    type: 'FeatureCollection',
+    features: rings.map(({ id, ring, live }) => {
+      const closed = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring : [...ring, ring[0]]
+      return { type: 'Feature', properties: { id, live, label: live ? 'Frente previsto' : 'Frente previsto · +15 min' }, geometry: { type: 'Polygon', coordinates: [closed] } }
+    }),
+  }
+}
+
 function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | null, areaIds: string[]) {
   for (const [key, ids] of Object.entries(LAYER_IDS)) {
     for (const id of ids) {
@@ -614,22 +634,22 @@ function fireAnchor(fires: FireSpot[]): { lng: number; lat: number } | null {
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, recommended, units, onUnitSelect, fireCells, centers, incident }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, plannedFires, fireStroke, drawingFire, onFireStroke, onFireComplete, recommended, units, onUnitSelect, fireCells, centers, incident }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
   const onSelectRef = useRef(onSelect)
   const onCenterSelectRef = useRef(onCenterSelect)
   const onUnitSelectRef = useRef(onUnitSelect)
-  const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete })
+  const interactionRef = useRef({ drawingArea, onAreaChange, onAreaComplete, drawingFire, onFireStroke, onFireComplete })
   const suppressClickRef = useRef(false)
   const demoMarkersRef = useRef(new Map<string, mapboxgl.Marker>())
-  useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete } }, [drawingArea, onAreaChange, onAreaComplete])
+  useEffect(() => { interactionRef.current = { drawingArea, onAreaChange, onAreaComplete, drawingFire, onFireStroke, onFireComplete } }, [drawingArea, onAreaChange, onAreaComplete, drawingFire, onFireStroke, onFireComplete])
   useEffect(() => {
     const markers = demoMarkersRef.current
     return () => { markers.forEach(marker => marker.remove()); markers.clear() }
   }, [])
-  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended })
+  const dataRef = useRef({ citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended, plannedFires, fireStroke })
   // El menú de encuadre vive dentro de un control de Mapbox (encima del zoom); React lo pinta ahí por portal.
   const [framingHost, setFramingHost] = useState<HTMLElement | null>(null)
   const [mapError, setMapError] = useState('')
@@ -637,7 +657,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   onSelectRef.current = onSelect
   onCenterSelectRef.current = onCenterSelect
   onUnitSelectRef.current = onUnitSelect
-  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended }
+  dataRef.current = { citizens, fires, zones, selectedId, layers, projection, forecast, zoneExposure, horizon, marginM, route, callArea, areaIds, units, recommended, plannedFires, fireStroke }
 
   useEffect(() => {
     if (!rootRef.current) return
@@ -707,6 +727,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea) })
       map.addLayer({ id: 'call-area-fill', type: 'fill', source: 'call-area', paint: { 'fill-color': '#77c8f4', 'fill-opacity': 0.09 } })
       map.addLayer({ id: 'call-area-edge', type: 'line', source: 'call-area', paint: { 'line-color': '#a7e1ff', 'line-width': 2, 'line-dasharray': [3, 2] } })
+      // Frente previsto: lo que el mando da por hecho antes de que arda. Naranja y discontinuo, para
+      // que nadie lo confunda con la huella real que pinta el mapa de calor.
+      map.addSource('planned-fire', { type: 'geojson', data: plannedFireGeo(current.plannedFires, current.fireStroke) })
+      map.addLayer({ id: 'planned-fire-fill', type: 'fill', source: 'planned-fire', paint: { 'fill-color': '#ff8a3d', 'fill-opacity': ['case', ['==', ['get', 'live'], true], 0.22, 0.16] } }, firstLabel)
+      map.addLayer({ id: 'planned-fire-edge', type: 'line', source: 'planned-fire', paint: { 'line-color': '#ffb070', 'line-width': 2, 'line-dasharray': [2, 1.5], 'line-opacity': 0.95 } })
+      map.addLayer({ id: 'planned-fire-label', type: 'symbol', source: 'planned-fire', filter: ['==', ['get', 'live'], false], layout: { 'symbol-placement': 'line', 'text-field': ['get', 'label'], 'text-size': 10, 'text-letter-spacing': 0.08, 'symbol-spacing': 400 }, paint: { 'text-color': '#ffd0a8', 'text-halo-color': '#101820', 'text-halo-width': 1.6 } })
       map.addSource('zones-area', { type: 'geojson', data: zoneAreas(current.zones, current.zoneExposure) })
       map.addLayer({ id: 'zone-area', type: 'fill', source: 'zones-area', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.2 } })
       map.addLayer({ id: 'zone-edge', type: 'line', source: 'zones-area', paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.8 } })
@@ -763,6 +789,8 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       } })
       // Casas escaladas a fuerzas de seguridad: un anillo rojo alrededor del punto hasta que alguien llegue.
       map.addLayer({ id: 'people-escalated', type: 'circle', source: 'people', filter: ['==', ['get', 'escalated'], true], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 11, 7, 14, 10, 17, 13], 'circle-opacity': 0, 'circle-stroke-color': '#ff3b3b', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.85 } })
+      // Personas con destino cambiado por un frente previsto: anillo naranja hasta que llegan.
+      map.addLayer({ id: 'people-rerouted', type: 'circle', source: 'people', filter: ['==', ['get', 'rerouted'], true], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 11, 7, 14, 10, 17, 13], 'circle-opacity': 0, 'circle-stroke-color': '#ffb070', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.9 } })
       map.addLayer({ id: 'people-area-highlight', type: 'circle', source: 'people', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.3, 11, 3, 14, 4.4, 17, 5.6], 'circle-opacity': 0, 'circle-stroke-color': '#d3f0ff', 'circle-stroke-width': 1, 'circle-stroke-opacity': 0.5 } }, 'people-dot')
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
@@ -779,7 +807,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       patchLayers(map, current.layers, current.selectedId, current.areaIds)
 
       map.on('click', (event) => {
-        if (interactionRef.current.drawingArea || suppressClickRef.current) { suppressClickRef.current = false; return }
+        if (interactionRef.current.drawingArea || interactionRef.current.drawingFire || suppressClickRef.current) { suppressClickRef.current = false; return }
         const { x, y } = event.point
         const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
         const unitHit = map.queryRenderedFeatures(box, { layers: ['police-car', 'ambulance-vehicle', 'helicopter-unit', 'unit-point', 'unit-label'] })[0]
@@ -845,7 +873,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.on('mousemove', (event) => {
         const { x, y } = event.point
         const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'ambulance-vehicle', 'helicopter-unit', 'unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
-        map.getCanvas().style.cursor = interactionRef.current.drawingArea ? 'crosshair' : features.length ? 'pointer' : ''
+        map.getCanvas().style.cursor = interactionRef.current.drawingArea || interactionRef.current.drawingFire ? 'crosshair' : features.length ? 'pointer' : ''
       })
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
       const pulse = () => {
@@ -899,6 +927,79 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'call-area')?.setData(callAreaGeo(callArea))
   }, [loaded, callArea])
+
+  useEffect(() => {
+    if (loaded && mapRef.current) source(mapRef.current, 'planned-fire')?.setData(plannedFireGeo(plannedFires, fireStroke))
+  }, [loaded, plannedFires, fireStroke])
+
+  // Pintar un frente previsto: trazo libre con el puntero, se cierra al soltar. Mismo cerrojo del
+  // mapa que el círculo de llamadas: mientras se pinta, el mapa no se mueve.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!loaded || !map || !drawingFire) return
+    popupRef.current?.remove()
+    const canvas = map.getCanvas()
+    const handlers = [map.dragPan, map.dragRotate, map.boxZoom, map.doubleClickZoom, map.scrollZoom, map.touchZoomRotate]
+    const enabled = handlers.map(handler => handler.isEnabled())
+    handlers.forEach(handler => handler.disable())
+    const previousTouchAction = canvas.style.touchAction
+    canvas.style.touchAction = 'none'
+    canvas.style.cursor = 'crosshair'
+    let stroke: [number, number][] = []
+    let last: [number, number] | null = null
+    let pointerId: number | null = null
+    const position = (event: PointerEvent): [number, number] => {
+      const bounds = canvas.getBoundingClientRect()
+      const point: [number, number] = [event.clientX - bounds.left, event.clientY - bounds.top]
+      last = point
+      const { lng, lat } = map.unproject(point)
+      return [lng, lat]
+    }
+    const down = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return
+      event.preventDefault()
+      pointerId = event.pointerId
+      suppressClickRef.current = true
+      canvas.setPointerCapture(event.pointerId)
+      stroke = [position(event)]
+      interactionRef.current.onFireStroke(null)
+    }
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return
+      event.preventDefault()
+      const bounds = canvas.getBoundingClientRect()
+      // Un punto cada pocos píxeles: suficiente para que el trazo sea suave sin que el anillo tenga miles de vértices.
+      if (last && Math.hypot(event.clientX - bounds.left - last[0], event.clientY - bounds.top - last[1]) < 5) return
+      stroke = [...stroke, position(event)]
+      interactionRef.current.onFireStroke(stroke)
+    }
+    const up = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return
+      event.preventDefault()
+      pointerId = null
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+      const ring = stroke
+      stroke = []
+      last = null
+      if (ring.length >= 3) interactionRef.current.onFireComplete(ring)
+      else interactionRef.current.onFireStroke(null)
+    }
+    const cancel = () => { stroke = []; last = null; pointerId = null; interactionRef.current.onFireStroke(null) }
+    canvas.addEventListener('pointerdown', down, true)
+    canvas.addEventListener('pointermove', move, true)
+    canvas.addEventListener('pointerup', up, true)
+    canvas.addEventListener('pointercancel', cancel, true)
+    return () => {
+      canvas.removeEventListener('pointerdown', down, true)
+      canvas.removeEventListener('pointermove', move, true)
+      canvas.removeEventListener('pointerup', up, true)
+      canvas.removeEventListener('pointercancel', cancel, true)
+      if (pointerId !== null && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId)
+      handlers.forEach((handler, i) => { if (enabled[i]) handler.enable() })
+      canvas.style.touchAction = previousTouchAction
+      canvas.style.cursor = ''
+    }
+  }, [loaded, drawingFire])
 
   useEffect(() => {
     if (loaded && mapRef.current) source(mapRef.current, 'recommended-areas')?.setData(recommendedGeo(recommended))

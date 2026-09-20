@@ -12,8 +12,8 @@
 
 import type { ReactNode } from 'react'
 import { HappyRobotLogo } from './HappyRobot'
-import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ESCALATION_STEPS, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_VIEWS } from './hrModel'
-import type { HrCallNode, HrChainLink, HrDiagramProps, HrEscalationRun, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrView } from './hrModel'
+import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ESCALATION_STEPS, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_REROUTE_STEPS, HR_STATE_LABEL, HR_VIEWS } from './hrModel'
+import type { HrCallNode, HrChainLink, HrDiagramProps, HrEscalationRun, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrRerouteOutcome, HrRerouteRun, HrView } from './hrModel'
 
 // --------------------------------------------------------------------------- primitivas del diagrama
 
@@ -199,6 +199,39 @@ export function EscalationDiagram({ run, units }: { run: HrEscalationRun; units:
 }
 
 /**
+ * El run de rerruta, paso a paso. Al terminar dice a dónde va cada grupo ahora; si Directions aún
+ * no ha contestado para alguien, se ve «calculando» en vez de un destino inventado.
+ */
+export function RerouteDiagram({ run, outcomes, pending }: { run: HrRerouteRun; outcomes: HrRerouteOutcome[]; pending: number }) {
+  const finished = run.step >= HR_REROUTE_STEPS.length
+  const stateAt = (index: number): HrNodeState => index < run.step ? 'done' : index === run.step ? 'active' : 'idle'
+  return (
+    <div className="hr-run" data-demo="hr-reroute" data-finished={finished}>
+      <div className="hr-run-head">
+        <span className={`hr-run-state ${finished ? 'done' : 'active'}`}><i aria-hidden="true" />{finished ? 'Enviado' : 'Ejecutando run'}</span>
+        <small>{run.label}</small>
+      </div>
+      {finished && (
+        <div className="hr-run-result" role="status">
+          <strong>Destino nuevo</strong>
+          <ul>
+            {outcomes.map(item => <li key={item.zoneId}><b>{item.code}</b><span>{item.name}</span><em>{item.count} {item.count === 1 ? 'persona' : 'personas'}</em></li>)}
+            {pending > 0 && <li key="pending"><b>…</b><span>Directions calculando la salida</span><em>{pending}</em></li>}
+          </ul>
+          <small>Cada persona recibe su ruta desde donde está ahora. Nadie vuelve a casa a empezar.</small>
+        </div>
+      )}
+      <HrFlow label="Pasos de la rerruta">
+        {HR_REROUTE_STEPS.map((step, index) => {
+          const state = stateAt(index)
+          return <HrNode key={step.id} kind={step.kind} lane={step.lane} state={state} label={step.label} detail={state === 'idle' ? undefined : <span title={step.hint}>{step.detail}</span>} demoId={`reroute-${step.id}`} />
+        })}
+      </HrFlow>
+    </div>
+  )
+}
+
+/**
  * Qué diagrama enseña cada ficha. Las que no tienen el suyo todavía enseñan el resumen y
  * «en preparación»; las fichas en las que HappyRobot no interviene enseñan el circuito completo.
  * No se exporta a propósito: es el único sitio donde se registra un diagrama nuevo.
@@ -219,9 +252,11 @@ export type HappyRobotCardProps = HrDiagramProps & {
   onClose: () => void
   /** Run de escalada en marcha o recién terminado: la tarjeta lo dibuja por encima de cualquier ficha. */
   escalation?: { run: HrEscalationRun; units: { callSign: string; label: string; eta: string }[] } | null
+  /** Run de rerruta por frente previsto: misma prioridad que la escalada, la tarjeta lo dibuja encima de la ficha. */
+  reroute?: { run: HrRerouteRun; outcomes: HrRerouteOutcome[]; pending: number } | null
 }
 
-export function HappyRobotCard({ view, connected, live, calls, collapsed, onToggleCollapse, onClose, escalation }: HappyRobotCardProps) {
+export function HappyRobotCard({ view, connected, live, calls, collapsed, onToggleCollapse, onClose, escalation, reroute }: HappyRobotCardProps) {
   const spec = HR_VIEWS[view]
   const Diagram = HR_DIAGRAMS[view]
   const status = connected && live ? { key: 'live', label: 'Llamadas reales' } : connected ? { key: 'connected', label: 'API conectada' } : { key: 'demo', label: 'Modo demo' }
@@ -247,7 +282,9 @@ export function HappyRobotCard({ view, connected, live, calls, collapsed, onTogg
         <div className="hr-card-body">
           {escalation
             ? <EscalationDiagram run={escalation.run} units={escalation.units} />
-            : Diagram
+            : reroute
+              ? <RerouteDiagram run={reroute.run} outcomes={reroute.outcomes} pending={reroute.pending} />
+              : Diagram
               ? <Diagram connected={connected} live={live} calls={calls} />
               : <div className="hr-pending"><p>{spec.summary}</p><span className="hr-tag">Diagrama en preparación</span></div>}
         </div>

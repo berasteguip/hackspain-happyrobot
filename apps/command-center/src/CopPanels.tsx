@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { EXPOSURE_COLOR, EXPOSURE_LABEL, exposureAt } from './fire-model'
+import { EXPOSURE_COLOR, EXPOSURE_LABEL, PLANNED_FIRE_MIN, exposureAt } from './fire-model'
 import type { FireForecast, FireSettings } from './fire-model'
 import { haversineMeters } from './geo'
 import { fetchRefugeRoutes, rankRefugeRoutes } from './routing'
@@ -30,13 +30,21 @@ export function FireSimBar({ settings, horizon, playing, windShifted, showWind, 
   </div>
 }
 
-export function FireControls({ settings, horizon, playing, onPlay, onReset, showWind, onWind, onShiftWind, windShifted, marginM, forecast, onFocus, zones }: {
+export function FireControls({ settings, horizon, playing, onPlay, onReset, showWind, onWind, onShiftWind, windShifted, marginM, forecast, onFocus, zones, plannedCount, onPaintFire, onClearPlanned }: {
   settings: FireSettings; horizon: number; playing: boolean; onPlay: () => void; onReset: () => void
   showWind: boolean; onWind: () => void; onShiftWind: () => void; windShifted: boolean; marginM: number
   forecast: FireForecast; onFocus: (point: { lng: number; lat: number }) => void; zones: SafeZone[]
+  /** Frentes previstos pintados a mano por el mando: cuántos hay, pintar otro, borrarlos. */
+  plannedCount: number; onPaintFire: () => void; onClearPlanned: () => void
 }) {
   return <div className="cop-content">
     <FireSimBar settings={settings} horizon={horizon} playing={playing} windShifted={windShifted} showWind={showWind} onPlay={onPlay} onShiftWind={onShiftWind} onReset={onReset} onWind={onWind} />
+    <h3>Frente previsto</h3>
+    <p className="fine">Pinta sobre el mapa por dónde crees que va a arder. Entra en el modelo a +{PLANNED_FIRE_MIN} min y, si corta el camino de alguien, HappyRobot le busca otra salida desde donde está.</p>
+    <div className="planned-fire-actions">
+      <button type="button" className="cop-secondary" data-demo="fire-paint" onClick={onPaintFire}><span>Pintar frente</span></button>
+      {plannedCount > 0 && <button type="button" className="cop-secondary" data-demo="fire-paint-clear" onClick={onClearPlanned}><span>Borrar {plannedCount === 1 ? 'el frente' : `los ${plannedCount} frentes`}</span></button>}
+    </div>
     <h3>Exposición</h3>
     <div className="cop-list">{zones.map(zone => {
       const exposure = exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)
