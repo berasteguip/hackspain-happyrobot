@@ -42,7 +42,7 @@ def _int(name: str, default: int) -> int:
 
 
 def _phone_map(name: str) -> dict[str, str]:
-    """`p-001:+34600112233,p-002:+34600445566` → `{"p-001": "+34600112233", ...}`.
+    """`p-001:+34600990111,p-002:+34600990222` → `{"p-001": "+34600990111", ...}`.
 
     Existe para que **ningún teléfono real entre en el repo**. El escenario se comitea con
     números del rango reservado y los de verdad se inyectan desde `.env`, que no se comitea.
@@ -101,12 +101,35 @@ class Settings:
     phone_overrides: dict[str, str] = field(
         default_factory=lambda: _phone_map("PHONE_OVERRIDES")
     )
-    # Llamadas simultáneas que se lanzan al rodear un círculo en Vigía.
-    call_parallelism: int = field(default_factory=lambda: _int("CALL_PARALLELISM", 8))
+    # Lo mismo que `PHONE_OVERRIDES` pero para una lista larga, y con nombre además del
+    # teléfono: una variable de entorno con 70 pares deja de ser editable a mano. Es un CSV
+    # `person_id,name,phone` en un directorio ignorado por git (`data/private/`). Si el fichero
+    # no existe no pasa nada: se cargan los nombres genéricos y los números del rango reservado.
+    # `ROSTER_CSV` vacío NO desactiva el roster: cae al sitio por defecto. Desactivarlo es
+    # borrar el fichero, que es lo que uno espera al no tener uno.
+    roster_csv: Path = field(
+        default_factory=lambda: Path(
+            (os.getenv("ROSTER_CSV") or "").strip()
+            or str(REPO_ROOT / "data" / "private" / "roster.csv")
+        )
+    )
+    # Llamadas simultáneas que se lanzan al rodear un círculo en Vigía: el tamaño del pool de
+    # hilos que hace los POST. Es un TECHO, no un objetivo — `dispatcher` nunca abre más hilos
+    # que personas hay en el círculo.
+    #
+    # Estaba en 8 y eso convertía "90 llamadas en paralelo" en once tandas de ocho, que es otra
+    # cosa y se nota en el mapa: los puntos se encienden por grupos. El número que importa es
+    # el de un ensayo con el grupo entero (~90), así que el techo va por encima. Si algo tiene
+    # que ceder con 90 conversaciones a la vez, que sea la plataforma —y que se vea, porque un
+    # 429 aterriza en el tablero como `failed` con su detalle—, no un `min()` nuestro.
+    call_parallelism: int = field(default_factory=lambda: _int("CALL_PARALLELISM", 128))
     # Radio máximo que se acepta en /calls/dispatch: un círculo de 200 km no es una zona.
     call_max_radius_m: float = field(default_factory=lambda: _float("CALL_MAX_RADIUS_M", 20000.0))
-    # Tope de llamadas por ráfaga. Rodear el mapa entero no debe lanzar 120 runs.
-    call_max_batch: int = field(default_factory=lambda: _int("CALL_MAX_BATCH", 25))
+    # Tope de llamadas por ráfaga. Sigue existiendo para que rodear el mapa entero de
+    # sierra-culebra (300 personas) no lance 300 runs de golpe, pero estaba en 25 y cortaba en
+    # seco un ensayo con el grupo: 65 de 90 salían como "fuera del tope", que es un fallo
+    # nuestro disfrazado de decisión. Por encima de 90 y por debajo del mapa entero.
+    call_max_batch: int = field(default_factory=lambda: _int("CALL_MAX_BATCH", 150))
 
     # --- Contexto que el agente de voz lee al descolgar ----------------------------------
     # El prompt del workflow los interpola literalmente ("le llama el asistente automático de
@@ -174,6 +197,11 @@ class Settings:
                 f"{len(self.phone_overrides)} teléfono(s) sustituido(s) desde el entorno"
                 if self.phone_overrides
                 else "ninguno (se usan los del escenario)"
+            ),
+            "roster_csv": (
+                str(self.roster_csv)
+                if self.roster_csv.is_file()
+                else "sin fichero (nombres genéricos del escenario)"
             ),
             "call_allowlist": (
                 f"{len(self.call_allowlist)} teléfono(s)"

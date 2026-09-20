@@ -8,11 +8,13 @@ propio intento con su propio estado, y que un punto que no suena dice POR QUÉ n
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 import dispatcher
 import notify
-from models import CallDispatch, CallState, Person
+from models import CallDispatch, CallState, Channel, Person
 from settings import reload_settings, settings
 
 # Facultad de Informática y Ciencias Matemáticas de la Complutense, a ~400 m una de la otra.
@@ -122,6 +124,72 @@ def test_el_tope_por_rafaga_corta_y_lo_dice(poblado, monkeypatch):
 
     assert len(intentos) == 2
     assert "tope de 2 llamadas" in descartados[0]["reason"]
+
+
+# --------------------------------------------------------------- la ráfaga grande (~90)
+#
+# El ensayo con el grupo entero son unas 90 personas en un círculo. Estos dos tests existen
+# para que el techo lo ponga HappyRobot y no nosotros: si alguien vuelve a bajar
+# `CALL_MAX_BATCH` o `CALL_PARALLELISM`, se entera aquí y no delante del jurado, cuando de 90
+# puntos rodeados suenen 25 y los otros 65 aparezcan como "fuera del tope".
+
+GRUPO_ENSAYO = 90
+
+
+def _poblar_grupo(state, n: int = GRUPO_ENSAYO) -> list[str]:
+    state.people.clear()
+    state.calls.clear()
+    ids = []
+    for i in range(1, n + 1):
+        pid = f"p-{i:03d}"
+        state.people[pid] = Person(
+            id=pid, name=f"Vecino {i:02d}", phone=f"+3460099{6000 + i:04d}",
+            lat=INFORMATICA[0], lon=INFORMATICA[1],
+        )
+        ids.append(pid)
+    return ids
+
+
+def test_noventa_en_el_circulo_son_noventa_llamadas(state):
+    """Con los valores que lleva el repo, ni uno se queda fuera por un tope nuestro."""
+    ids = _poblar_grupo(state)
+
+    _, intentos, descartados, _ = dispatcher.dispatch(state, CallDispatch(person_ids=ids))
+
+    assert len(intentos) == GRUPO_ENSAYO
+    assert descartados == [], f"tope propio recortando la ráfaga: {descartados[:3]}"
+
+
+def test_las_noventa_salen_a_la_vez_y_no_en_tandas(state, monkeypatch):
+    """Prueba de concurrencia real, sin cronómetro: 90 hilos tienen que coincidir en vuelo.
+
+    Cada llamada falsa espera en una barrera de 90. Si el pool abre menos hilos que eso —el
+    caso de un `CALL_PARALLELISM` bajo—, los que llegan primero nunca ven al número 90, la
+    barrera expira y el test falla. Con un cronómetro sería una prueba escamosa; así es una
+    afirmación exacta sobre cuántas conversaciones hay abiertas al mismo tiempo.
+    """
+    ids = _poblar_grupo(state)
+    barrera = threading.Barrier(GRUPO_ENSAYO, timeout=20)
+    coincidieron = []
+
+    def place_call_falsa(person, reason, estado, **kwargs):
+        try:
+            barrera.wait()
+            coincidieron.append(person.id)
+        except threading.BrokenBarrierError:
+            pass
+        return notify.NotifyResult(
+            ok=True, channel=Channel.call, simulated=True,
+            person_id=person.id, detail="SIMULADO (test de concurrencia)",
+        )
+
+    monkeypatch.setattr(notify, "place_call", place_call_falsa)
+    dispatcher.dispatch(state, CallDispatch(person_ids=ids))
+
+    assert len(coincidieron) == GRUPO_ENSAYO, (
+        f"solo {len(coincidieron)} de {GRUPO_ENSAYO} llamadas coincidieron en vuelo: "
+        f"CALL_PARALLELISM={settings.call_parallelism} las está sirviendo por tandas"
+    )
 
 
 # --------------------------------------------------------------------------- lista blanca

@@ -52,7 +52,7 @@ EDIFICIOS = [
 # historial de git para siempre. Aquí van números del rango reservado (contrato §1) y los de
 # verdad se inyectan al arrancar con PHONE_OVERRIDES en `.env`, que no se comitea:
 #
-#   PHONE_OVERRIDES=p-001:+34600112233,p-002:+34600445566,...
+#   PHONE_OVERRIDES=p-001:+34600990111,p-002:+34600990222,...
 #
 # Están los cuatro en el mismo sitio (es donde estamos ensayando), separados unas decenas
 # de metros para que se distingan en el mapa. Un círculo de ~150 m coge a estos cuatro y a
@@ -92,6 +92,17 @@ def sector_de(lat):
     return "s-1" if lat >= 40.4470 else "s-2"
 
 
+def tel_casa(i):
+    """El fijo de la casa, en su propio bloque del rango reservado (`+346009930xx`).
+
+    La casa NO comparte número con quien vive en ella: el contrato exige teléfonos únicos entre
+    `houses` y `people` —`generate.py` lo garantiza con su `PhonePool`— y este fichero los
+    repetía, así que `validate.py` lo rechazaba. Al arrancar, la casa sí hereda el móvil real de
+    su residente (`loader._apply_phone_overrides`): es el runtime el que los une, no el fichero.
+    """
+    return f"+3460099{3000 + i:04d}"
+
+
 houses, people = [], []
 
 for n, (nombre, tel) in enumerate(REALES, start=1):
@@ -100,7 +111,7 @@ for n, (nombre, tel) in enumerate(REALES, start=1):
     hid, pid = f"h-{n:03d}", f"p-{n:03d}"
     houses.append({
         "id": hid, "address": f"{edificio}, Ciudad Universitaria", "village": "Ciudad Universitaria",
-        "lat": lat, "lon": lon, "phone": tel, "residents_expected": 1,
+        "lat": lat, "lon": lon, "phone": tel_casa(n), "residents_expected": 1,
         "vulnerable": False, "vulnerability_reason": None, "sector_id": sector_de(lat),
         "call_attempts": 0, "last_call_at": None, "answered": False, "status": "pending",
         "minutes_to_front": None, "assigned_patrol_id": None, "patrol_eta_min": None,
@@ -128,7 +139,7 @@ for n, nombre in enumerate(NOMBRES):
     vulnerable = MOVILIDAD[n] in {"reduced", "immobile"}
     houses.append({
         "id": hid, "address": f"{edificio}, Ciudad Universitaria", "village": "Ciudad Universitaria",
-        "lat": lat, "lon": lon, "phone": tel, "residents_expected": 1 + (n % 3),
+        "lat": lat, "lon": lon, "phone": tel_casa(seq), "residents_expected": 1 + (n % 3),
         "vulnerable": vulnerable,
         "vulnerability_reason": "movilidad reducida declarada (dato sintético)" if vulnerable else None,
         "sector_id": sector_de(lat), "call_attempts": 0, "last_call_at": None, "answered": False,
@@ -146,6 +157,70 @@ for n, nombre in enumerate(NOMBRES):
         "consent_position": False, "call_attempts": 0,
         "notes": "Vecino sintético. Teléfono del rango reservado: no existe, no se marca.",
     })
+
+# El cono de avance (±30° sobre el rumbo 170°) amenaza a cualquier zona que tenga delante, SIN
+# límite de distancia: alejar las salidas hacia el sur no las salva, porque el fuego empuja justo
+# hacia allí. Las dos utilizables están al ESTE, perpendiculares a la carrera del frente —que
+# además es lo correcto operativamente: no se evacúa a nadie en la misma dirección en la que
+# avanza el fuego—. Príncipe Pío se deja al sur y nace AMENAZADA a propósito, para que el
+# escenario ejercite ese camino del planner.
+SAFE_ZONES = [
+    {"id": "x-a", "name": "Intercambiador de Plaza de Castilla", "lat": 40.46683,
+     "lon": -3.68917, "capacity": 900, "occupancy": 0, "status": "open",
+     "access_roads": ["Paseo de la Castellana"], "distance_to_fire_m": 2470},
+    {"id": "x-b", "name": "Intercambiador de Nuevos Ministerios", "lat": 40.44600,
+     "lon": -3.69200, "capacity": 1200, "occupancy": 0, "status": "open",
+     "access_roads": ["Paseo de la Castellana", "Calle de Raimundo Fernández Villaverde"],
+     "distance_to_fire_m": 3550},
+    {"id": "x-c", "name": "Estación de Príncipe Pío", "lat": 40.42055, "lon": -3.72030,
+     "capacity": 1200, "occupancy": 0, "status": "open",
+     "access_roads": ["Paseo de la Florida", "Cuesta de San Vicente"],
+     "distance_to_fire_m": 5400},
+]
+
+PATROLS = [
+    {"id": "pt-1", "name": "Patrulla Complutense 1", "lat": 40.44600, "lon": -3.72870,
+     "assigned_house_ids": [], "status": "standby", "channel": "+34600999901"},
+    {"id": "pt-2", "name": "Patrulla Moncloa 2", "lat": 40.43524, "lon": -3.71903,
+     "assigned_house_ids": [], "status": "standby", "channel": "+34600999902"},
+]
+
+# Norte de la Dehesa de la Villa. Lo bastante lejos de las salidas para que no las marque
+# `SAFE_ZONE_THREATENED_M` (3 km) nada más arrancar, y lo bastante cerca del campus para que el
+# cono de avance sí apunte a la gente.
+FIRE_PERIMETRO = [
+    [-3.7295, 40.4690], [-3.7205, 40.4695], [-3.7160, 40.4755],
+    [-3.7235, 40.4795], [-3.7330, 40.4760], [-3.7295, 40.4690],
+]
+
+
+def _bbox(margen_grados=0.004):
+    """Rectángulo que contiene TODO lo que se pinta, con un margen para que no roce el borde.
+
+    Se calcula, no se escribe a mano, y por dos motivos. Uno: el contrato obliga a que casas,
+    personas, salidas y patrullas caigan dentro, y las salidas de este escenario están a 3-5 km
+    del campus —un bbox centrado en la Complutense las dejaba fuera y recortaba del mapa justo
+    el sitio al que se manda a la gente—. Dos: escrito a mano se queda obsoleto en cuanto alguien
+    mueve una salida, y el fallo no se ve hasta que el mapa recorta en la demo.
+
+    Es un DICCIONARIO, no una lista: es lo que produce `generate.py` para sierra-culebra y lo
+    único que `validate.py` sabe leer (indexa `bbox["lat_min"]`; con una lista revienta con un
+    `TypeError` antes de poder informar de nada).
+
+    El perímetro del fuego entra también, aunque el validador no lo mire: si no se ve el frente,
+    no se entiende por qué la gente sale hacia donde sale.
+    """
+    lats = [r["lat"] for r in houses + people + SAFE_ZONES + PATROLS]
+    lons = [r["lon"] for r in houses + people + SAFE_ZONES + PATROLS]
+    lats += [pt[1] for pt in FIRE_PERIMETRO]
+    lons += [pt[0] for pt in FIRE_PERIMETRO]
+    return {
+        "lat_min": round(min(lats) - margen_grados, 5),
+        "lat_max": round(max(lats) + margen_grados, 5),
+        "lon_min": round(min(lons) - margen_grados, 5),
+        "lon_max": round(max(lons) + margen_grados, 5),
+    }
+
 
 scenario = {
     "meta": {
@@ -166,32 +241,14 @@ scenario = {
     },
     "map": {
         "center_lat": 40.4470, "center_lon": -3.7280, "zoom": 15,
-        "bbox": [-3.7400, 40.4370, -3.7150, 40.4580],
+        "bbox": _bbox(),
     },
     "villages": [
         {"name": "Ciudad Universitaria", "lat": 40.4470, "lon": -3.7280, "population": 24},
     ],
     "houses": houses,
     "people": people,
-    # El cono de avance (±30° sobre el rumbo 170°) amenaza a cualquier zona que tenga
-    # delante, SIN límite de distancia: alejar las salidas hacia el sur no las salva, porque
-    # el fuego empuja justo hacia allí. Las dos utilizables están al ESTE, perpendiculares a
-    # la carrera del frente —que además es lo correcto operativamente: no se evacúa a nadie
-    # en la misma dirección en la que avanza el fuego—. Príncipe Pío se deja al sur y nace
-    # AMENAZADA a propósito, para que el escenario ejercite ese camino del planner.
-    "safe_zones": [
-        {"id": "x-a", "name": "Intercambiador de Plaza de Castilla", "lat": 40.46683,
-         "lon": -3.68917, "capacity": 900, "occupancy": 0, "status": "open",
-         "access_roads": ["Paseo de la Castellana"], "distance_to_fire_m": 2470},
-        {"id": "x-b", "name": "Intercambiador de Nuevos Ministerios", "lat": 40.44600,
-         "lon": -3.69200, "capacity": 1200, "occupancy": 0, "status": "open",
-         "access_roads": ["Paseo de la Castellana", "Calle de Raimundo Fernández Villaverde"],
-         "distance_to_fire_m": 3550},
-        {"id": "x-c", "name": "Estación de Príncipe Pío", "lat": 40.42055, "lon": -3.72030,
-         "capacity": 1200, "occupancy": 0, "status": "open",
-         "access_roads": ["Paseo de la Florida", "Cuesta de San Vicente"],
-         "distance_to_fire_m": 5400},
-    ],
+    "safe_zones": SAFE_ZONES,
     "sectors": [
         {"id": "s-1", "name": "Sector 1 — Complutense norte",
          "polygon": {"type": "Polygon", "coordinates": [[[-3.7400, 40.4470], [-3.7150, 40.4470],
@@ -208,20 +265,9 @@ scenario = {
          "minutes_to_front": None, "air_priority_rank": 2,
          "air_priority_reason": "a sotavento del sector 1"},
     ],
-    "patrols": [
-        {"id": "pt-1", "name": "Patrulla Complutense 1", "lat": 40.44600, "lon": -3.72870,
-         "assigned_house_ids": [], "status": "standby", "channel": "+34600999901"},
-        {"id": "pt-2", "name": "Patrulla Moncloa 2", "lat": 40.43524, "lon": -3.71903,
-         "assigned_house_ids": [], "status": "standby", "channel": "+34600999902"},
-    ],
+    "patrols": PATROLS,
     "fire": {
-        # Norte de la Dehesa de la Villa. Lo bastante lejos de las salidas para que no las
-        # marque `SAFE_ZONE_THREATENED_M` (3 km) nada más arrancar, y lo bastante cerca del
-        # campus para que el cono de avance sí apunte a la gente.
-        "perimeter": {"type": "Polygon", "coordinates": [[
-            [-3.7295, 40.4690], [-3.7205, 40.4695], [-3.7160, 40.4755],
-            [-3.7235, 40.4795], [-3.7330, 40.4760], [-3.7295, 40.4690],
-        ]]},
+        "perimeter": {"type": "Polygon", "coordinates": [FIRE_PERIMETRO]},
         "wind": {"direction_deg": 350, "speed_kmh": 28, "gusts_kmh": 44},
         "spread_rate_mh": 900,
         "head_bearing_deg": 170,

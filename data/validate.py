@@ -107,6 +107,18 @@ def check_bbox(scenario: dict, errors: Errors):
         errors.add("map", "-", "bbox", "falta bbox")
         return
 
+    # Un bbox con la forma equivocada tiene que salir por aquí como UN error más, no como una
+    # excepción: `ucm-madrid.json` lo tuvo años como lista `[lon_min, lat_min, lon_max, lat_max]`
+    # y el validador reventaba con un `TypeError` en la primera casa, sin llegar a informar de
+    # nada —ni del bbox ni del resto del fichero—. Un validador que se cae no valida.
+    if not isinstance(bbox, dict):
+        errors.add("map", "-", "bbox", f"debe ser un objeto con lat_min/lat_max/lon_min/lon_max, no {type(bbox).__name__}")
+        return
+    faltan = [k for k in ("lat_min", "lat_max", "lon_min", "lon_max") if k not in bbox]
+    if faltan:
+        errors.add("map", "-", "bbox", f"faltan las claves {', '.join(faltan)}")
+        return
+
     def in_bbox(lat, lon):
         return (
             bbox["lat_min"] <= lat <= bbox["lat_max"]

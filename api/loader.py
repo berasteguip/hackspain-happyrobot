@@ -8,6 +8,7 @@ falte un fichero.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from pathlib import Path
@@ -87,6 +88,9 @@ def load_scenario(state, name: str | None = None) -> dict:
                 coll[entity.id] = entity
             resumen[coll_name] = len(coll)
 
+        # El roster primero y `PHONE_OVERRIDES` después: la variable de entorno es la que se
+        # toca a mano en el último minuto, así que tiene que poder pisar al fichero.
+        _apply_roster(state)
         _apply_phone_overrides(state)
 
         fire_raw = data.get("fire")
@@ -137,6 +141,98 @@ def _apply_phone_overrides(state) -> None:
         log.info(
             "PHONE_OVERRIDES: %d teléfono(s) sustituido(s) desde el entorno (no versionados)",
             aplicados,
+        )
+
+
+ROSTER_ALIAS = {
+    "person_id": "person_id", "id": "person_id", "persona": "person_id",
+    "name": "name", "nombre": "name",
+    "phone": "phone", "telefono": "phone", "teléfono": "phone",
+    "movil": "phone", "móvil": "phone", "tel": "phone",
+}
+
+
+def _apply_roster(state) -> None:
+    """Pone nombres y móviles reales encima del escenario, leyéndolos de un CSV sin versionar.
+
+    Es `PHONE_OVERRIDES` crecido. Para cuatro personas una variable de entorno vale; para
+    setenta no se puede editar a mano, y además hace falta el **nombre**, que el agente dice al
+    descolgar ("¿hablo con Marta?") y que `PHONE_OVERRIDES` no sabe tocar.
+
+    El fichero vive en `data/private/`, que está en `.gitignore`: el repo es público y una lista
+    de setenta móviles con nombre y apellido no se sube ni una vez, porque el historial de git
+    no se borra. Si el fichero no está, la API arranca con los nombres genéricos del escenario
+    y los números del rango reservado — que es lo que queremos por defecto.
+
+    Formato (la cabecera admite `id`/`nombre`/`teléfono` además de los nombres en inglés):
+
+        person_id,name,phone
+        p-005,Marta Ruiz,+34600995001
+        p-006,,+34600995002          ← sin nombre: se queda el genérico del escenario
+
+    Como en `_apply_phone_overrides`, la casa hereda el teléfono de quien vive en ella: si no,
+    `house_by_phone` seguiría mirando al número falso y una llamada entrante no casaría con la
+    ficha.
+    """
+    ruta = settings.roster_csv
+    if not ruta.is_file():
+        return
+
+    aplicados, sin_persona, sin_id = 0, [], 0
+    try:
+        with ruta.open(encoding="utf-8-sig", newline="") as fh:
+            filas = csv.DictReader(fh)
+            for fila in filas:
+                datos = {
+                    ROSTER_ALIAS[k.strip().lower()]: (v or "").strip()
+                    for k, v in fila.items()
+                    if k and k.strip().lower() in ROSTER_ALIAS
+                }
+                person_id = datos.get("person_id", "")
+                if not person_id:
+                    sin_id += 1
+                    continue
+                telefono = "".join(
+                    ch for ch in datos.get("phone", "") if ch.isdigit() or ch == "+"
+                )
+                # La plantilla sale con las dos columnas vacías. Una fila así no es un dato
+                # pendiente de nadie: es sitio reservado, y contarla haría que el log dijera
+                # "66 personas con teléfono real" delante de un fichero en blanco.
+                if not datos.get("name") and not telefono:
+                    continue
+                person = state.people.get(person_id)
+                if person is None:
+                    sin_persona.append(person_id)
+                    continue
+                if datos.get("name"):
+                    person.name = datos["name"]
+                if telefono:
+                    person.phone = telefono
+                    casa = state.houses.get(person.house_id or "")
+                    if casa is not None:
+                        casa.phone = telefono
+                aplicados += 1
+    except (OSError, csv.Error) as exc:
+        log.error("roster %s ilegible (%s); se sigue con los datos del escenario", ruta, exc)
+        return
+
+    if aplicados:
+        log.warning(
+            "ROSTER: %d persona(s) con NOMBRE y TELÉFONO REALES desde %s (no versionado). "
+            "Los dos cerrojos siguen mandando: ALLOW_REAL_CALLS=%s, CALL_ALLOWLIST=%s.",
+            aplicados,
+            ruta,
+            settings.allow_real_calls,
+            f"{len(settings.call_allowlist)} teléfono(s)" if settings.call_allowlist else "VACÍA",
+        )
+    if sin_id:
+        log.warning("ROSTER: %d fila(s) sin person_id; se ignoran", sin_id)
+    if sin_persona:
+        log.warning(
+            "ROSTER: %d id(s) que no existen en el escenario '%s': %s",
+            len(sin_persona),
+            state.scenario,
+            ", ".join(sin_persona[:10]) + ("…" if len(sin_persona) > 10 else ""),
         )
 
 

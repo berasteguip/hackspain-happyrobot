@@ -89,6 +89,39 @@ No se llama a Zamora, se llama a la zona de evacuación: 3 a 6 pueblos de 50 a 4
 
 Para la hackathon: dataset sintético de 3 pueblos con unas 120 casas (dirección, coordenadas, teléfono, movilidad), declarado como sintético. Capas 0 y 2 se ven funcionar; 1 y 3 se cuentan en el pitch.
 
+### 9.1 El banco de ensayo con gente de verdad (`ucm-grupo`)
+
+La demo va con `sierra-culebra`, que es sintético de arriba abajo. Aparte hay un escenario de
+ensayo, `data/scenarios/ucm-grupo.json`, para probar la ráfaga grande —rodear un círculo y que
+salgan decenas de llamadas en paralelo— contra móviles de personas que están en el evento y lo
+saben. Lo genera `data/generate_ucm_grupo.py [N]`.
+
+Dos manchas separadas ~570 m en la Ciudad Universitaria: el equipo (p-001..p-004, círculo de
+150 m) y el grupo (p-005 en adelante, círculo de 200 m). Están separadas a propósito para poder
+rodear una sin la otra sin afinar el radio al metro delante del jurado; el generador falla si
+alguien mueve una constante y las manchas se tocan.
+
+**Ni un nombre ni un móvil real entra en el repo**, que es público: el fichero versionado lleva
+`Vecino NN` y números del rango reservado. Los datos de verdad van en `data/private/roster.csv`
+(`person_id,name,phone`), directorio ignorado por git, y `api/loader.py` los aplica al cargar.
+Plantilla con los ids ya puestos: `python3 data/roster_template.py ucm-grupo --grupo`.
+
+**El techo de la ráfaga lo pone HappyRobot, no nuestro código.** Rodear a ~90 personas tiene que
+lanzar 90 llamadas a la vez, así que `CALL_PARALLELISM` está en 128 (era 8: convertía la ráfaga
+en once tandas, y se veía en el mapa encendiéndose por grupos) y `CALL_MAX_BATCH` en 150 (era 25:
+de 90 rodeados salían 25 y 65 «fuera del tope», un fallo nuestro disfrazado de decisión). El tope
+sigue existiendo para que rodear `sierra-culebra` entero no dispare 300 runs. Los dos los defiende
+`api/tests/test_dispatcher.py`, y el de concurrencia no mide tiempos: hace coincidir 90 llamadas
+en una barrera, así que con el paralelismo bajo falla siempre y nunca por casualidad.
+
+Lo que sí hay que mirar antes de un ensayo es `ALLOW_REAL_CALLS` y `CALL_ALLOWLIST` —que con
+noventa números reales deja de ser un cerrojo útil salvo que se rellene entera—.
+
+> HIPÓTESIS (sin verificar, 20 sep 2026): no sabemos el límite de runs en paralelo de nuestro
+> workspace de HappyRobot. Está en la lista de `docs/02-happyrobot/05-preguntas-stand.md`. Si
+> nos frenan, se verá en el tablero: cada run rechazado aterriza como `failed` con el cuerpo de
+> la respuesta, no como un hueco.
+
 ## 10. Qué es de HappyRobot y qué construimos nosotros
 
 | HappyRobot | Nosotros |

@@ -44,7 +44,8 @@ rúbrica, así que no es opcional.
 | IDs | prefijo + guion + número: `p-001` persona, `h-001` casa, `x-a` salida, `s-1` sector, `c-1` convoy, `pt-1` patrulla, `ev-000001` evento. |
 | Distancias | metros (`_m`). Velocidades: km/h (`_kmh`) para viento/coches, m/h (`_mh`) para avance del fuego. |
 | Tiempos calculados | minutos en float (`minutes_to_front`), segundos en int para rutas (`duration_s`). |
-| Teléfonos | E.164, siempre con prefijo país (`+34600990012`). **Todo teléfono del repo va en el rango reservado `+3460099xxxx`**, incluidos ejemplos, fixtures de test y datos de arranque. Nunca un prefijo geográfico real como `+34980` (Zamora): con `ALLOW_REAL_CALLS=true` eso marca a una persona. **Sin excepciones, tampoco para ensayar con teléfonos reales**: esos se inyectan al arrancar con `PHONE_OVERRIDES=p-001:+34...` desde `.env`, que no se comitea. Este repo es público y un móvil en un fichero versionado se queda en el historial de git para siempre — y normalmente no es tuyo el móvil que publicas. |
+| Teléfonos | E.164, siempre con prefijo país (`+34600990012`). **Todo teléfono del repo va en el rango reservado `+3460099xxxx`**, incluidos ejemplos, fixtures de test y datos de arranque. Nunca un prefijo geográfico real como `+34980` (Zamora): con `ALLOW_REAL_CALLS=true` eso marca a una persona. **Sin excepciones, tampoco para ensayar con teléfonos reales**: esos se inyectan al arrancar con `PHONE_OVERRIDES=p-001:+34...` desde `.env`, que no se comitea. Para una lista larga (el grupo entero) `PHONE_OVERRIDES` no da más de sí y además hace falta el **nombre**, que el agente dice al descolgar: eso va en `data/private/roster.csv` (`person_id,name,phone`), directorio ignorado por git, que `api/loader.py` aplica al cargar el escenario. Este repo es público y un móvil en un fichero versionado se queda en el historial de git para siempre — y normalmente no es tuyo el móvil que publicas. |
+| Nombres de personas | Mismo criterio que los teléfonos: en el repo, genéricos (`Vecino 12`) o inventados. Un nombre y un móvil juntos son un dato personal identificable; el nombre real entra por el roster, no por el escenario. |
 | Nulos | Un campo no calculado todavía es `null`, nunca `0`. `0` significa cero de verdad. |
 | Versión de estado | `state_version` entero que sube en cada mutación. El dashboard hace long-poll con él. |
 
@@ -432,6 +433,10 @@ ROUTING_PROVIDER=valhalla    # valhalla | osrm | straight
 VALHALLA_URL=http://localhost:8002
 ALLOW_REAL_CALLS=false       # ver regla 3 de la sección 6
 SCENARIO=sierra-culebra
+PHONE_OVERRIDES=             # p-001:+34...  teléfonos reales de un ensayo corto
+ROSTER_CSV=                  # por defecto data/private/roster.csv (nombres + móviles de una lista larga)
+CALL_PARALLELISM=128         # techo de llamadas simultáneas: dimensionado para rodear a ~90
+CALL_MAX_BATCH=150           # tope por ráfaga (sigue evitando que el mapa entero dispare 300 runs)
 ```
 
 Dos cosas verificadas que se cuelan aquí y no son cosmética:
