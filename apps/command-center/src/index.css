@@ -663,15 +663,51 @@ legend { padding: 0 7px; color: var(--muted); font-size: 12px; }
   font: 500 12px/1 var(--tour-serif); color: var(--tour-accent-ink); background: var(--tour-accent);
 }
 .tour-intro-actions {
-  display: flex; gap: 8px; margin: 0; padding: 14px 24px 22px;
+  display: grid; gap: 10px; margin: 0; padding: 14px 24px 18px; justify-items: center;
 }
-.tour-intro-actions .cop-primary { width: auto; flex: 1; background: var(--tour-accent); border-color: var(--tour-accent); color: var(--tour-accent-ink); font-weight: 600; border-radius: 999px; }
+.tour-intro-actions .cop-primary {
+  width: 100%; padding: 14px 20px; font-size: 15px; background: var(--tour-accent); border-color: var(--tour-accent); color: var(--tour-accent-ink);
+  font-weight: 600; border-radius: 999px; box-shadow: 0 8px 24px #d977574d; animation: tour-cta 2.4s ease-in-out infinite;
+}
 .tour-intro-actions .cop-primary:hover { background: var(--tour-accent-deep); border-color: var(--tour-accent-deep); }
-.tour-intro-actions .cop-secondary {
-  width: auto; flex: 0 0 auto; padding: 11px 16px; border: 1px solid var(--tour-line);
-  border-radius: 999px; text-align: center; color: var(--tour-muted); background: transparent;
+.tour-intro-skip { border: 0; background: transparent; padding: 2px 4px; font-size: 12px; color: var(--tour-muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--tour-line); cursor: pointer; }
+.tour-intro-skip:hover { color: var(--tour-ink); }
+.tour-intro-skip-confirm { margin: 0; font-size: 12px; line-height: 1.5; color: var(--tour-muted); text-align: center; }
+.tour-intro-skip-confirm button { border: 0; background: transparent; padding: 0 2px; font-size: 12px; font-weight: 600; color: var(--tour-accent); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.tour-intro-skip-confirm button + button { color: var(--tour-ink); margin-left: 6px; }
+@keyframes tour-cta { 0%, 100% { box-shadow: 0 8px 24px #d977574d; } 50% { box-shadow: 0 8px 30px #d9775785, 0 0 0 6px #d977572a; } }
+
+/* Baliza del siguiente clic: un solo anillo que late sobre el botón que toca pulsar ahora. */
+.tour-beacon { position: relative; z-index: 10002 !important; animation: tour-beacon 1.4s ease-out infinite; border-radius: 12px; }
+.tour-beacon.driver-popover-next-btn { animation-duration: 1.8s; border-radius: 999px; }
+@keyframes tour-beacon {
+  0% { box-shadow: 0 0 0 0 #d97757e6, 0 0 0 0 #d9775766; }
+  70% { box-shadow: 0 0 0 7px #d9775700, 0 0 0 18px #d9775700; }
+  100% { box-shadow: 0 0 0 0 #d9775700, 0 0 0 0 #d9775700; }
 }
-.tour-intro-actions .cop-secondary:hover { background: var(--tour-panel); color: var(--tour-ink); }
+/* Con la demo en marcha nadie cierra lo que el paso señala: ni la tarjeta, ni el panel, ni el recorrido. */
+body.tour-active .hr-card-close, body.tour-active [data-demo="panel-close"] { display: none !important; }
+body.tour-active .hr-card-brand { pointer-events: none; }
+.vigia-tour.driver-popover.is-locked .driver-popover-close-btn { display: none; }
+.vigia-tour .tour-live.is-warn { border-left-color: var(--tour-accent); color: var(--tour-accent-deep); }
+.vigia-tour.is-quitting .driver-popover-close-btn { color: var(--tour-accent-deep); }
+
+/* Aviso breve de HappyRobot: qué nodo trabaja y qué acaba de hacer. Sale bajo la barra superior y se va solo. */
+.hr-sync {
+  position: absolute; top: 90px; right: 20px; z-index: 10001; display: inline-flex; align-items: center; gap: 9px;
+  padding: 8px 12px 8px 10px; border-radius: 999px; background: #ffffff; color: #1a1d1f; border: 1px solid #e6e6e6;
+  box-shadow: 0 10px 28px #0000004a; font-size: 12px; pointer-events: none; animation: hr-sync-in 260ms cubic-bezier(.2,.8,.2,1) both;
+}
+.map-app.has-hr .hr-sync { right: 372px; }
+.hr-sync .hr-symbol { width: 16px; height: 16px; }
+.hr-sync-dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 0 0 #f59e0b66; animation: hr-sync-pulse 900ms ease-out infinite; }
+.hr-sync.is-done .hr-sync-dot { background: #22a06b; animation: none; box-shadow: 0 0 0 3px #22a06b22; }
+.hr-sync-node { font-weight: 600; letter-spacing: -0.1px; }
+.hr-sync-detail { color: #5c6166; }
+.hr-sync-detail::before { content: '·'; margin-right: 6px; color: #b5b9bd; }
+@keyframes hr-sync-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes hr-sync-pulse { 0% { box-shadow: 0 0 0 0 #f59e0b66; } 100% { box-shadow: 0 0 0 6px #f59e0b00; } }
+@media (prefers-reduced-motion: reduce) { .tour-beacon, .tour-intro-actions .cop-primary, .hr-sync-dot { animation: none; } }
 .vigia-tour.driver-popover {
   background: var(--tour-bg); color: var(--tour-ink); border: 1px solid var(--tour-line);
   border-radius: 18px; box-shadow: 0 24px 60px #0007, 0 1px 0 #fff8 inset; max-width: 340px; padding: 22px 22px 18px;
@@ -907,6 +943,9 @@ body.tour-interlude .driver-overlay path { opacity: 0.8 !important; }
 }
 .vigia-tour .tour-live.is-done { border-left-color: #3d7a5c; }
 .vigia-tour .driver-popover-next-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+/* Run de HappyRobot en marcha: el botón lo dice y late suave hasta que el run termina. */
+.vigia-tour .driver-popover-next-btn.is-busy:disabled { opacity: 0.7; background: transparent; color: var(--tour-ink, #2b2a28); border-style: dashed; animation: tour-busy 1.4s ease-in-out infinite; }
+@keyframes tour-busy { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.85; } }
 
 /* La marca azul sobre el mapa: círculo a escala (el ancho lo pone el mapa según el zoom), anillo
    discontinuo que respira y etiqueta debajo. No captura el puntero: debajo está el mapa. */

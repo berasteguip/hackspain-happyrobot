@@ -33,7 +33,7 @@ import { DEMO_ONLY } from './demoMode'
 import { flushSync } from 'react-dom'
 import { TourIntro } from './TourIntro'
 import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoTour } from './demoTour'
-import type { TourHint, TourTick, TourView } from './demoTour'
+import type { HrSyncNote, TourHint, TourTick, TourView } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
 import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_REROUTE_RELEASE_STEP, HR_REROUTE_STEPS, HR_UNIT_RUN_STEPS, runStepDelayMs } from './hrModel'
@@ -1083,8 +1083,8 @@ export function CommandCenter({ token }: { token: string }) {
   const [tourHint, setTourHint] = useState<TourHint | null>(null)
   const guided = scenario.guided
   const guidedIds = useMemo(() => guided ? citizens.filter(citizen => citizen.locality === guided.locality).map(citizen => citizen.id) : [], [citizens, guided])
-  const tourStateRef = useRef({ escalation, reroute, selectedId, callArea, areaIds, paintedFires, escalationUnits, rerouteOutcome, guidedIds, drawingArea, drawingFire, tourHint })
-  tourStateRef.current = { escalation, reroute, selectedId, callArea, areaIds, paintedFires, escalationUnits, rerouteOutcome, guidedIds, drawingArea, drawingFire, tourHint }
+  const tourStateRef = useRef({ escalation, reroute, unitRun, selectedId, callArea, areaIds, paintedFires, escalationUnits, rerouteOutcome, guidedIds, drawingArea, drawingFire, tourHint })
+  tourStateRef.current = { escalation, reroute, unitRun, selectedId, callArea, areaIds, paintedFires, escalationUnits, rerouteOutcome, guidedIds, drawingArea, drawingFire, tourHint }
   /** Las casas del grupo guiado, con su estado de ahora mismo. */
   const guidedNow = () => citizensRef.current.filter(citizen => tourStateRef.current.guidedIds.includes(citizen.id))
   const centroid = (group: { lng: number; lat: number }[]) => group.length ? { lng: group.reduce((sum, point) => sum + point.lng, 0) / group.length, lat: group.reduce((sum, point) => sum + point.lat, 0) / group.length } : null
@@ -1161,6 +1161,17 @@ export function CommandCenter({ token }: { token: string }) {
   /** Lo que el visitante tiene hecho de cada paso, y qué le falta. */
   const tourTick = (stepId: string): TourTick => {
     const state = tourStateRef.current
+    // HappyRobot está ejecutando un run (los nodos van pasando a la derecha): no se puede saltar.
+    const runBusy = Boolean(
+      (state.escalation && state.escalation.step < HR_ESCALATION_STEPS.length) ||
+      (state.reroute && state.reroute.step < HR_REROUTE_STEPS.length) ||
+      (state.unitRun && state.unitRun.step < HR_UNIT_RUN_STEPS.length),
+    )
+    const tick = tourTickFor(stepId)
+    return runBusy ? { ...tick, busy: true } : tick
+  }
+  const tourTickFor = (stepId: string): TourTick => {
+    const state = tourStateRef.current
     const group = guidedNow()
     const silent = silentPerson()
     const enrolled = group.filter(citizen => campaignRef.current.has(citizen.id))
@@ -1172,16 +1183,16 @@ export function CommandCenter({ token }: { token: string }) {
       case 'grupo':
         return { live: `${group.length} casas · ${group.filter(citizen => citizen.vulnerable).length} con alguien que no puede salir solo` }
       case 'dibuja': {
-        if (state.drawingArea) return { live: 'Arrastra desde el centro del grupo hacia fuera y suelta…' }
-        if (!state.callArea) return { live: 'Esperando tu círculo.' }
+        if (state.drawingArea) return { live: 'Arrastra sobre la marca azul y suelta.' }
+        if (!state.callArea) return { live: 'Esperando tu círculo.', target: '[data-demo="tool-area"]' }
         const inside = group.filter(citizen => state.areaIds.includes(citizen.id)).length
         const silentInside = Boolean(silent && state.areaIds.includes(silent.id))
         if (inside >= Math.min(group.length, 12) && silentInside) return { live: `${inside} de ${group.length} casas dentro del círculo.`, done: true }
-        return { live: inside ? `Solo ${inside} de ${group.length} dentro${silentInside ? '' : ', y falta la que importa'}. Pulsa «Zona» otra vez y dibuja un círculo más grande.` : 'El círculo no toca al grupo. Pulsa «Zona» otra vez y dibuja sobre la marca azul.' }
+        return { live: inside ? `Solo ${inside} de ${group.length} dentro${silentInside ? '' : ', y falta la que importa'}. Pulsa «Zona» otra vez y dibuja un círculo más grande.` : 'El círculo no toca al grupo. Pulsa «Zona» otra vez y dibuja sobre la marca azul.', target: '[data-demo="tool-area"]' }
       }
       case 'llama':
         if (enrolled.length) return { live: callsLine, done: true }
-        return { live: state.callArea ? `${state.areaIds.length} personas seleccionadas. Falta pulsar «Llamar · demo».` : 'Sin círculo: vuelve al paso anterior.' }
+        return { live: state.callArea ? `${state.areaIds.length} personas seleccionadas. Falta pulsar «Llamar · demo».` : 'Sin círculo: vuelve al paso anterior.', target: '[data-demo="campaign-primary"]' }
       case 'motor':
         return { live: callsLine ?? 'Sin llamadas en marcha: vuelve al paso 4.' }
       case 'roja': {
@@ -1193,7 +1204,7 @@ export function CommandCenter({ token }: { token: string }) {
       case 'escala': {
         const escalated = Boolean(silent?.escalation) || Boolean(state.escalation && silent && state.escalation.citizenIds.includes(silent.id))
         if (escalated) return { live: 'Run de escalada en marcha.', done: true }
-        return { live: state.selectedId === silent?.id ? 'El botón rojo está en su ficha, a la derecha.' : 'Abre su ficha: haz clic en el punto rojo.' }
+        return state.selectedId === silent?.id ? { live: 'El botón rojo está en su ficha, a la derecha.', target: '[data-demo="escalate-person"]' } : { live: 'Abre su ficha: haz clic en el punto rojo.' }
       }
       case 'run': {
         if (state.escalation) {
@@ -1220,8 +1231,8 @@ export function CommandCenter({ token }: { token: string }) {
           else return { live: 'Nadie del grupo está de camino: no hay camino que cortar.' }
         }
         if (state.drawingFire) return { live: 'Dibuja un círculo sobre la zona azul y suelta.' }
-        if (state.paintedFires.length) return { live: 'Ese trazo no corta el camino de nadie. Borra los frentes en Propagación y pinta sobre la zona azul.' }
-        return { live: 'Esperando tu frente.' }
+        if (state.paintedFires.length) return { live: 'Ese trazo no corta el camino de nadie. Pulsa «Frente» otra vez y pinta sobre la zona azul.', target: '[data-demo="tool-paint-fire"]' }
+        return { live: 'Esperando tu frente.', target: '[data-demo="tool-paint-fire"]' }
       }
       case 'rerruta': {
         if (state.reroute) {
@@ -1240,6 +1251,25 @@ export function CommandCenter({ token }: { token: string }) {
   }
   const tourTickRef = useRef(tourTick)
   tourTickRef.current = tourTick
+  // Avisos breves de HappyRobot durante el recorrido: se encolan y salen de uno en uno, ~1,6 s cada uno.
+  const [hrSync, setHrSync] = useState<(HrSyncNote & { id: number; done: boolean }) | null>(null)
+  const hrSyncQueue = useRef<HrSyncNote[]>([])
+  const hrSyncBusy = useRef(false)
+  const pumpHrSync = () => {
+    if (hrSyncBusy.current) return
+    const note = hrSyncQueue.current.shift()
+    if (!note) return
+    hrSyncBusy.current = true
+    const id = Date.now()
+    setHrSync({ ...note, id, done: false })
+    window.setTimeout(() => setHrSync(current => current?.id === id ? { ...current, done: true } : current), 1100)
+    window.setTimeout(() => {
+      setHrSync(current => current?.id === id ? null : current)
+      hrSyncBusy.current = false
+      window.setTimeout(pumpHrSync, 220)
+    }, 1900)
+  }
+  const queueHrSync = (notes: HrSyncNote[]) => { hrSyncQueue.current.push(...notes); pumpHrSync() }
   const tourOpen = (view: TourView) => {
     setDrawingArea(false)
     setDrawingFire(false)
@@ -1263,8 +1293,11 @@ export function CommandCenter({ token }: { token: string }) {
       // flushSync: Driver mide el anclaje justo después, así que la vista tiene que estar ya en el DOM.
       open: (view: TourView) => flushSync(() => tourOpenRef.current(view)),
       tick: (stepId) => tourTickRef.current(stepId),
+      sync: queueHrSync,
       close: () => {
         setTouring(false)
+        hrSyncQueue.current = []
+        setHrSync(null)
         setTourHint(null)
         setPanel(previous.panel)
         setSelectedId(previous.selectedId)
@@ -1307,6 +1340,7 @@ export function CommandCenter({ token }: { token: string }) {
         <button type="button" data-demo="tool-happyrobot" aria-label="Qué hace HappyRobot" aria-pressed={hrCard !== 'hidden'} className={hrCard !== 'hidden' ? 'active' : ''} onClick={toggleHappyRobot}><HappyRobotSymbol className="hr-symbol" /><span>HappyRobot</span></button>
       </nav>
       {/* La memoria compartida (src/CallLog.tsx) está oculta: se monta aquí cuando vuelva a la demo. */}
+      {hrSync && <div className={`hr-sync ${hrSync.done ? 'is-done' : ''}`} role="status" aria-live="polite" data-demo="hr-sync"><HappyRobotSymbol className="hr-symbol" /><span className="hr-sync-dot" aria-hidden="true" /><span className="hr-sync-node">{hrSync.node}</span><span className="hr-sync-detail">{hrSync.detail}</span></div>}
       {toasts.length > 0 && !panel && !selected && <ol className="alert-toasts" aria-live="polite">{toasts.map(alert => <li key={alert.id}><button type="button" data-demo="alert-toast" data-demo-id={alert.id} className={`alert-toast ${alert.severity}`} onClick={() => { setSelectedId(null); setDrawingArea(false); setHrCard('hidden'); setFocusTarget(alert.focus ?? null); setPanel('alerts'); setReadAlertIds(new Set(alerts.map(item => item.id))) }}>{alert.title}</button></li>)}</ol>}
       {((panel && panel !== 'campaign') || selected) && <aside id="map-panel" data-demo="panel" className="floating-panel" aria-label={panelTitle}>
         <header className="floating-panel-heading"><div className="floating-panel-title"><p className="eyebrow">{panelKicker}</p><h2>{panelTitle}</h2></div><button type="button" data-demo="panel-close" aria-label="Cerrar panel" onClick={closePanel}><Icon name="close" /></button></header>

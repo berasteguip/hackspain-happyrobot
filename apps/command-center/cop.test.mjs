@@ -84,7 +84,20 @@ test('el recorrido es una demo de manos: el visitante rodea, llama, escala y pin
   const intro = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
   assert.ok(intro.includes('Guía tú la evacuación'))
   assert.ok(intro.includes('Empezar'))
-  assert.ok(intro.includes('Explorar por mi cuenta'))
+  // Saltarse el recorrido es un enlace pequeño que pide un segundo clic: la salida fácil no es saltárselo.
+  assert.ok(intro.includes('tour-intro-skip'))
+  assert.ok(TOUR_INTRO.secondaryConfirm.includes('¿'))
+  assert.ok(!intro.includes('cop-secondary'))
+  // Con la demo en marcha la X no está y el anclaje que desaparece se vuelve a montar.
+  const read = (file) => readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
+  const tourSource = read('src/demoTour.ts')
+  assert.ok(tourSource.includes('isLocked('))
+  assert.ok(tourSource.includes("classList.add('tour-active')"))
+  assert.ok(tourSource.includes('actions.open(step.view); window.setTimeout'))
+  assert.ok(tourSource.includes('setBeacon('))
+  const css = read('src/index.css')
+  assert.ok(css.includes('body.tour-active .hr-card-close'))
+  assert.ok(css.includes('.is-locked .driver-popover-close-btn { display: none; }'))
   assert.ok(intro.includes('tour-intro-checklist'))
 })
 

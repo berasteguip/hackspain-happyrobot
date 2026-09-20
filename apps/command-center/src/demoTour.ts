@@ -46,12 +46,25 @@ export type TourTick = {
   live: string | null
   /** La acción del paso está hecha (solo tiene sentido en pasos `handsOn`). */
   done?: boolean
+  /**
+   * Dónde está el siguiente clic AHORA MISMO: selector del botón que el visitante tiene que pulsar.
+   * Cambia con el estado (primero «Zona», después el círculo del mapa). Sin selector, la baliza es
+   * la marca azul del mapa o el propio «Siguiente».
+   */
+  target?: string | null
+  /** HappyRobot está ejecutando un run ahora mismo: «Siguiente» se bloquea hasta que termine. */
+  busy?: boolean
 }
+
+/** Un aviso breve de HappyRobot: nodo que trabaja y qué ha hecho. Se muestra ~1,6 s y se va. */
+export type HrSyncNote = { node: string; detail: string }
 
 export type DemoTourActions = {
   open: (view: TourView) => void
   close: () => void
   tick: (stepId: string) => TourTick
+  /** Encola avisos de sincronización de HappyRobot (uno tras otro, arriba a la derecha). */
+  sync: (notes: HrSyncNote[]) => void
 }
 
 export type DemoTourStep = {
@@ -72,6 +85,10 @@ export type DemoTourStep = {
    */
   interlude?: boolean
   view: TourView
+  /** Avisos breves de HappyRobot al entrar en el paso: lo que la plataforma «hace» por detrás. */
+  sync?: HrSyncNote[]
+  /** Avisos al completar la acción de un paso de manos. */
+  syncDone?: HrSyncNote[]
 }
 
 /**
@@ -95,40 +112,47 @@ export const DEMO_TOUR_STEPS: DemoTourStep[] = [
     id: 'situacion', element: '[data-demo="tour-fire"]', side: 'left', view: { focus: 'fire' },
     title: 'El fuego',
     description: 'La mancha arde ya. Los anillos, hasta dónde llega en una hora con este viento.',
+    sync: [{ node: 'Incoming hook', detail: 'perímetro y viento recibidos' }],
   },
   {
     id: 'grupo', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'group', hint: 'group' },
     title: 'Veinte casas a favor del viento',
     description: 'Nadie las ha avisado. Su refugio es el PE-02, al sureste.',
+    sync: [{ node: 'Query Twin with SQL', detail: '20 hogares · 3 con movilidad reducida' }],
   },
   {
     id: 'dibuja', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'group', hint: 'draw', handsOn: true },
     title: 'Rodéalas',
     description: 'Todo el que caiga dentro recibe la llamada.',
-    task: 'Pulsa «Zona» arriba a la derecha y arrastra sobre el círculo azul.',
+    task: 'Pulsa «Zona» y dibuja un círculo sobre la marca azul.',
+    syncDone: [{ node: 'Python Sandbox', detail: 'teléfonos dentro del polígono' }],
   },
   {
     id: 'llama', element: '[data-demo="campaign-primary"]', side: 'top', view: { handsOn: true },
     title: 'Llama a las veinte a la vez',
     description: 'Cada punto suena y cambia de color. La que no descuelga se queda en rojo.',
     task: 'Pulsa «Llamar · demo».',
+    syncDone: [{ node: 'Outbound Voice Agent', detail: '20 llamadas en paralelo' }, { node: 'Send SMS', detail: 'enlace de ubicación enviado' }],
   },
   {
     id: 'motor', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
     title: 'Dentro de cada llamada',
     description: 'Voz, datos extraídos, SMS con la ruta y vuelta al mapa. El nodo encendido es lo que pasa ahora.',
+    sync: [{ node: 'AI Extract', detail: 'edad, movilidad, acompañantes' }],
   },
   {
     id: 'roja', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'group', hint: 'person', handsOn: true },
     title: 'Una casa en rojo',
     description: 'Angustias, 84 años, sola. Dos intentos, nadie contesta.',
     task: 'Haz clic en el punto rojo.',
+    sync: [{ node: 'Paths', detail: 'sin respuesta tras 2 intentos' }],
   },
   {
     id: 'escala', element: '[data-demo="escalate-person"]', side: 'left', view: { person: true, handsOn: true },
     title: 'Manda a alguien a su puerta',
     description: 'Tú apruebas. HappyRobot hace el resto.',
     task: 'Pulsa «Enviar fuerzas de seguridad».',
+    syncDone: [{ node: 'Approval Process', detail: 'aprobado por operador' }],
   },
   {
     id: 'run', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
@@ -139,12 +163,14 @@ export const DEMO_TOUR_STEPS: DemoTourStep[] = [
     id: 'camino', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'route', hint: 'walkers' },
     title: 'Las otras diecinueve van andando',
     description: 'Cada punto, su ruta desde su puerta hasta el PE-02.',
+    sync: [{ node: 'Google Maps Directions', detail: '19 rutas a pie' }, { node: 'Write to Twin', detail: 'posiciones sincronizadas' }],
   },
   {
     id: 'pinta', element: '[data-demo="tour-hint"]', side: 'left', view: { focus: 'route', hint: 'paint', handsOn: true },
     title: 'Pinta fuego sobre su camino',
     description: 'Fuego que aún no arde. El sistema lo trata como si ya lo hiciera.',
-    task: 'Pulsa «Frente» arriba a la derecha y dibuja sobre la zona azul.',
+    task: 'Pulsa «Frente» y pinta sobre la zona azul.',
+    syncDone: [{ node: 'Webhook POST', detail: 'frente previsto recibido' }],
   },
   {
     id: 'rerruta', element: '[data-demo="hr-card"]', side: 'left', view: { happyRobot: true },
@@ -165,6 +191,7 @@ export const DEMO_TOUR_STEPS: DemoTourStep[] = [
     id: 'fin', element: '[data-demo="tool-area"]', side: 'bottom', view: {},
     title: 'Ahora tú',
     description: 'Rodea la ETSIT, gira el viento, envía un medio. Todo sigue vivo.',
+    sync: [{ node: 'Write to Twin', detail: 'run archivado · 2 escenas' }],
   },
 ]
 
@@ -174,13 +201,24 @@ export const TOUR_INTRO = {
     'Llama a veinte casas. Una no descuelga: mándale un helicóptero.',
     'Pinta fuego sobre el camino de las demás y mira cómo giran.',
   ],
-  primary: 'Empezar',
-  secondary: 'Explorar por mi cuenta',
+  primary: 'Empezar · 2 min',
+  secondary: 'Prefiero explorar sin guía',
+  /** Segundo clic del enlace de salto: se le avisa de lo que se pierde antes de dejarle ir. */
+  secondaryConfirm: 'Sin el recorrido no verás las dos escenas. ¿Explorar igualmente?',
   replay: 'Ver recorrido',
 }
 
 /** Cuánto espera el recorrido, con la acción ya hecha, antes de pasar solo al paso siguiente. */
 const ADVANCE_DELAY_MS = 1400
+/** Cuánto vale el primer clic en la X antes de que haga falta otro. */
+const QUIT_CONFIRM_MS = 4000
+/**
+ * Con la demo en marcha (llamadas sonando, run corriendo) la X desaparece: salir a medias deja al
+ * visitante con la vista a medio montar. Se puede salir al principio (aún no ha pasado nada) y al final.
+ */
+function isLocked(index: number) {
+  return index > 0 && index < DEMO_TOUR_STEPS.length - 2
+}
 
 let activeTour: { isActive: () => boolean; destroy: () => void } | null = null
 let tourGeneration = 0
@@ -202,7 +240,8 @@ export function stopDemoTour() {
   if (activeTour?.isActive()) activeTour.destroy()
   activeTour = null
   removeInterlude()
-  document.body.classList.remove('tour-hands-on')
+  setBeacon(null)
+  document.body.classList.remove('tour-hands-on', 'tour-active')
 }
 
 /**
@@ -337,9 +376,27 @@ function makeDraggable(popover: HTMLElement) {
   })
 }
 
+/**
+ * La baliza del siguiente clic: un anillo que late sobre el botón que toca pulsar ahora. Solo hay
+ * una a la vez; se mueve cuando el estado cambia (pulsado «Zona», la baliza pasa al mapa) y se
+ * quita al cambiar de paso o al cerrar.
+ */
+let beaconEl: HTMLElement | null = null
+
+function setBeacon(selector: string | null | undefined) {
+  const next = selector ? document.querySelector<HTMLElement>(selector) : null
+  if (next === beaconEl) return
+  beaconEl?.classList.remove('tour-beacon')
+  beaconEl = next
+  beaconEl?.classList.add('tour-beacon')
+}
+
 function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number, total: number, tick: TourTick) {
   popover.closeButton.setAttribute('aria-label', 'Cerrar recorrido')
   for (const selector of ['.tour-task', '.tour-live', '.tour-progress', '.tour-media']) popover.wrapper.querySelector(selector)?.remove()
+  popover.wrapper.classList.toggle('is-hands-on', Boolean(step.view.handsOn))
+  popover.wrapper.classList.toggle('is-locked', isLocked(index))
+  popover.wrapper.classList.remove('is-quitting')
   makeDraggable(popover.wrapper)
   applyDragOffset(popover.wrapper)
 
@@ -386,10 +443,28 @@ function applyTick(line: HTMLElement, popover: PopoverDOM, step: DemoTourStep, t
   line.hidden = !text
   if (line.textContent !== text) line.textContent = text
   line.classList.toggle('is-done', Boolean(tick.done))
-  if (step.view.handsOn) {
-    popover.nextButton.disabled = !tick.done
-    popover.nextButton.title = tick.done ? '' : 'Haz lo que dice el paso para seguir'
+  if (tick.busy) {
+    popover.nextButton.disabled = true
+    popover.nextButton.title = 'HappyRobot está trabajando. Espera a que termine el run.'
+    popover.nextButton.textContent = 'HappyRobot trabajando…'
+    popover.nextButton.classList.add('is-busy')
+  } else {
+    popover.nextButton.textContent = 'Siguiente'
+    popover.nextButton.classList.remove('is-busy')
+    if (step.view.handsOn) {
+      popover.nextButton.disabled = !tick.done
+      popover.nextButton.title = tick.done ? '' : 'Haz lo que dice el paso para seguir'
+    } else {
+      popover.nextButton.disabled = false
+      popover.nextButton.title = ''
+    }
   }
+  // La baliza: en un paso de manos, el botón que toca (o nada, si toca el mapa: la marca azul ya late).
+  // En un paso de lectura, «Siguiente», para que nunca haya duda de por dónde se sigue.
+  if (tick.busy) setBeacon(null)
+  else if (step.view.handsOn) setBeacon(tick.done ? null : tick.target)
+  else if (!step.interlude) setBeacon('.vigia-tour .driver-popover-next-btn')
+  else setBeacon(null)
 }
 
 export async function startDemoTour(actions: DemoTourActions) {
@@ -404,6 +479,7 @@ export async function startDemoTour(actions: DemoTourActions) {
   const last = total - 1
   let liveTimer = 0
   let advanceTimer = 0
+  let quitArmedAt = 0
   const stopLive = () => {
     if (liveTimer) window.clearInterval(liveTimer)
     if (advanceTimer) window.clearTimeout(advanceTimer)
@@ -433,10 +509,36 @@ export async function startDemoTour(actions: DemoTourActions) {
     prevBtnText: 'Atrás',
     doneBtnText: 'Explorar',
     popoverClass: 'vigia-tour',
+    // Salir cuesta dos clics (o dos Escape): en dos minutos de demo, una X pulsada sin querer lo tira todo.
+    onCloseClick: () => {
+      const now = Date.now()
+      const popover = document.querySelector<HTMLElement>('.vigia-tour')
+      const line = popover?.querySelector<HTMLElement>('.tour-live')
+      if (isLocked(tour.getActiveIndex() ?? 0)) {
+        // Esc con la demo en marcha: se le dice por dónde se sale, y nada se cierra.
+        quitArmedAt = now
+        popover?.classList.add('is-quitting')
+        if (line) { line.hidden = false; line.textContent = 'El recorrido se cierra al final, en «Explorar».'; line.classList.add('is-warn') }
+        window.setTimeout(() => { if (Date.now() - quitArmedAt >= QUIT_CONFIRM_MS) { popover?.classList.remove('is-quitting'); line?.classList.remove('is-warn') } }, QUIT_CONFIRM_MS + 50)
+        return
+      }
+      if (now - quitArmedAt < QUIT_CONFIRM_MS) { tour.destroy(); return }
+      quitArmedAt = now
+      popover?.classList.add('is-quitting')
+      if (line) { line.hidden = false; line.textContent = '¿Salir del recorrido? Pulsa la X otra vez.'; line.classList.add('is-warn') }
+      window.setTimeout(() => {
+        if (Date.now() - quitArmedAt < QUIT_CONFIRM_MS) return
+        popover?.classList.remove('is-quitting')
+        line?.classList.remove('is-warn')
+      }, QUIT_CONFIRM_MS + 50)
+    },
     onNextClick: (_element, _step, { state }) => {
       const index = state.activeIndex ?? 0
+      const current = actions.tick(DEMO_TOUR_STEPS[index]?.id ?? '')
+      // Con un run de HappyRobot en marcha no se avanza: está sacando los datos.
+      if (current.busy) return
       // En un paso de manos, «Siguiente» solo vale con la acción hecha (el botón va deshabilitado, pero la flecha del teclado no).
-      if (DEMO_TOUR_STEPS[index]?.view.handsOn && !actions.tick(DEMO_TOUR_STEPS[index].id).done) return
+      if (DEMO_TOUR_STEPS[index]?.view.handsOn && !current.done) return
       const next = index + 1
       if (next > last) tour.destroy()
       else showStep(next)
@@ -450,7 +552,8 @@ export async function startDemoTour(actions: DemoTourActions) {
     onDestroyed: () => {
       stopLive()
       removeInterlude()
-      document.body.classList.remove('tour-hands-on')
+      setBeacon(null)
+      document.body.classList.remove('tour-hands-on', 'tour-active')
       if (generation !== tourGeneration) return
       markTourSeen()
       actions.close()
@@ -466,9 +569,12 @@ export async function startDemoTour(actions: DemoTourActions) {
   function showStep(index: number) {
     stopLive()
     dragOffset = { x: 0, y: 0 }
+    setBeacon(null)
+    quitArmedAt = 0
     const step = DEMO_TOUR_STEPS[index]
     document.body.classList.toggle('tour-hands-on', Boolean(step.view.handsOn))
     actions.open(step.view)
+    if (step.sync?.length) actions.sync(step.sync)
     // Los anclajes de dentro de un panel pueden estar al final de una lista con scroll.
     document.querySelector(step.element)?.scrollIntoView({ block: 'center', behavior: 'instant' })
     tour.drive(index)
@@ -483,15 +589,25 @@ export async function startDemoTour(actions: DemoTourActions) {
     // anclaje se mueve (el mapa se desplaza, la tarjeta crece) y, hecha la acción, se avanza solo.
     let lastRect = ''
     let advancing = false
+    let missingTicks = 0
     liveTimer = window.setInterval(() => {
       if (!tour.isActive() || tour.getActiveIndex() !== index) { stopLive(); return }
+      // Si el visitante cierra la ficha o la tarjeta que el paso señala (o pulsa el mapa y la ficha
+      // cambia), el anclaje desaparece. En vez de dejar la tarjeta huérfana, se vuelve a montar la vista.
+      if (!document.querySelector(step.element)) {
+        missingTicks += 1
+        if (missingTicks >= 2) { missingTicks = 0; actions.open(step.view); window.setTimeout(() => { if (tour.isActive() && tour.getActiveIndex() === index) tour.refresh() }, 60) }
+        return
+      }
+      missingTicks = 0
       const tick = actions.tick(step.id)
       const popover = tour.getActiveStep() && document.querySelector<HTMLElement>('.vigia-tour')
       const line = popover?.querySelector<HTMLElement>('.tour-live')
       const next = popover?.querySelector<HTMLButtonElement>('.driver-popover-next-btn')
-      if (line && next) applyTick(line, { nextButton: next } as PopoverDOM, step, tick)
+      if (line && next && !popover?.classList.contains('is-quitting')) applyTick(line, { nextButton: next } as PopoverDOM, step, tick)
       if (step.view.handsOn && tick.done && !advancing && index < last) {
         advancing = true
+        if (step.syncDone?.length) actions.sync(step.syncDone)
         advanceTimer = window.setTimeout(() => { if (tour.isActive() && tour.getActiveIndex() === index) showStep(index + 1) }, ADVANCE_DELAY_MS)
       }
       const box = document.querySelector(step.element)?.getBoundingClientRect()
@@ -501,5 +617,6 @@ export async function startDemoTour(actions: DemoTourActions) {
   }
 
   activeTour = tour
+  document.body.classList.add('tour-active')
   showStep(0)
 }
