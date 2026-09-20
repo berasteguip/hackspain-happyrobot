@@ -74,6 +74,10 @@ test('el recorrido es una demo de manos: el visitante rodea, llama, escala y pin
   assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'dibuja').task.includes('Zona'))
   assert.ok(DEMO_TOUR_STEPS.find((step) => step.id === 'pinta').task.includes('Frente'))
   assert.equal(TOUR_INTRO.checklist.length, 2)
+  // El cierre con Inés no es una tarjeta: es el único interludio, con su texto largo aparte.
+  const { INTERLUDE } = await server.ssrLoadModule('/src/demoTour.ts')
+  assert.deepEqual(DEMO_TOUR_STEPS.filter((step) => step.interlude).map((step) => step.id), ['contraste'])
+  assert.ok(INTERLUDE.lead.includes('Inés Galindo Jiménez') && INTERLUDE.insight.includes('población') && INTERLUDE.close.startsWith('router'))
   assert.equal(TOUR_STORAGE_KEY, 'vigia-tour-seen')
   assert.equal(shouldShowTourIntro(), false)
   const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
@@ -783,41 +787,54 @@ test('la tarjeta de HappyRobot corre el despacho de un medio paso a paso y despu
   const { HappyRobotCard } = await server.ssrLoadModule('/src/HappyRobotCard.tsx')
   const { HR_UNIT_RUN_STEPS } = await server.ssrLoadModule('/src/hrModel.ts')
   const render = (unit, unitRun) => renderToStaticMarkup(createElement(HappyRobotCard, { view: 'unit', connected: false, live: false, unit, unitRun, collapsed: false, onToggleCollapse() {}, onClose() {} }))
-  const stepState = (html, id) => html.match(new RegExp(`<li class="hr-node" data-state="([a-z]+)"[^>]*><div class="hr-node-row" data-demo="hr-node" data-demo-id="${id}"`))?.[1]
+  // El despacho se cuenta como escenario: la hilera de pasos arriba (data-state por paso) y un protagonista debajo.
+  const stepState = (html, id) => html.match(new RegExp(`<li data-state="([a-z]+)" title="[^"]*" data-demo="hr-node" data-demo-id="${id}"`))?.[1]
+  const focus = (html) => html.slice(html.indexOf('hr-stage-focus'))
   const target = { lng: -3.7, lat: 40.4, label: 'Rosa Gil' }
   const run = { id: 'run-1', kind: 'ambulance', target, agent: 'Operador · demo', label: 'Petición del mando', step: 3, startedAt: 0 }
   const running = render(undefined, run)
   assert.ok(running.includes(`Ejecutando run · 4/${HR_UNIT_RUN_STEPS.length}`) && running.includes('Despacho · Ambulancia'), 'sin vehículo todavía, la tarjeta ya corre el run')
+  assert.ok(running.includes('hr-stage-trail') && !running.includes('hr-flow'), 'el despacho usa el escenario secuencial, no la lista vertical')
   assert.equal(stepState(running, HR_UNIT_RUN_STEPS[0].id), 'done')
   assert.equal(stepState(running, HR_UNIT_RUN_STEPS[3].id), 'active')
   assert.equal(stepState(running, HR_UNIT_RUN_STEPS[4].id), 'idle')
-  assert.equal(stepState(running, 'watch'), 'idle', 'el seguimiento espera a que salga el vehículo')
-  for (const label of ['Workflow Function Request', 'Query Twin with SQL · v_person_support', 'Query Twin with SQL · v_available_transport', 'Python Sandbox · elegir medio', 'Paths · ¿hay medio viable?', 'Approval Process', 'Loop · colección, paralelo', 'Outbound Voice Agent · conductor', 'Extract · desenlace y ETA', 'Paths · según el desenlace', 'Outbound Text Agent · SMS', 'POST «Medio → Vigía»', 'Loop End', 'ETA frente al fuego', 'Parte al llegar']) assert.ok(running.includes(label), label)
-  for (const word of ['Confirmar', 'Rechazar', 'Bloqueo', 'Mando']) assert.ok(running.includes(`<strong>${word}</strong>`), word)
-  assert.ok(running.includes('hr-flow-nested'), 'el cuerpo del loop va anidado')
+  assert.ok(focus(running).includes(HR_UNIT_RUN_STEPS[3].label) && !focus(running).includes(HR_UNIT_RUN_STEPS[4].label), 'el protagonista es solo el paso en curso')
+  assert.ok(focus(running).includes('4/13'), 'el protagonista dice en qué paso va')
+  for (const label of ['Workflow Function Request', 'Query Twin with SQL · v_person_support', 'Query Twin with SQL · v_available_transport', 'Python Sandbox · elegir medio', 'Paths · ¿hay medio viable?', 'Approval Process', 'Loop · colección, paralelo', 'Outbound Voice Agent · conductor', 'Extract · desenlace y ETA', 'Paths · según el desenlace', 'Outbound Text Agent · SMS', 'POST «Medio → Vigía»', 'Loop End']) assert.ok(running.includes(label), label)
   const base = { id: 'u-1', callSign: 'A-01', kind: 'ambulance', mission: 'dispatch', revision: 1, agent: 'Operador · demo', summary: 'Operador · demo pide ambulancia en Hospital del Prado para Rosa Gil.', origin: 'Hospital del Prado', target: 'Rosa Gil', distanceKm: 2.8, escalated: false, stops: [{ label: 'Rosa Gil', km: 2.8, etaMin: 7 }] }
   const onWay = render({ ...base, status: 'en_route', etaMin: 7 })
   assert.ok(onWay.includes('A-01 · Ambulancia') && onWay.includes('En camino · 7 min'), 'con vehículo, la pill es su estado real')
   for (const step of HR_UNIT_RUN_STEPS) assert.equal(stepState(onWay, step.id), 'done', `${step.id} hecho`)
-  assert.equal(stepState(onWay, 'watch'), 'active')
-  assert.equal(stepState(onWay, 'report'), 'idle')
-  assert.ok(onWay.includes('Elegido A-01 desde Hospital del Prado · 2,8 km por carretera.') && onWay.includes('2,8 km · llega en 7 min') && onWay.includes('<b>7 min</b>'), 'sandbox y vigilancia cuentan el despacho real')
-  assert.ok(onWay.includes('>Destino<') && onWay.includes('2,8 km · 7 min'), 'un despacho enseña su destino como única parada')
+  assert.ok(onWay.includes('Elegido A-01 desde Hospital del Prado · 2,8 km por carretera.') && onWay.includes('2,8 km · llega en 7 min'), 'sandbox y vigilancia cuentan el despacho real')
+  assert.ok(onWay.includes('A-01 en camino') && onWay.includes('hr-unit-stops') && onWay.includes('2,8 km · 7 min'), 'un despacho enseña su destino como única parada')
   const arrived = render({ ...base, status: 'on_scene' })
-  assert.equal(stepState(arrived, 'watch'), 'done')
-  assert.equal(stepState(arrived, 'report'), 'active')
-  assert.ok(arrived.includes('Medio en el acceso'), 'al llegar hay bloque de resultado')
+  assert.ok(arrived.includes('En el acceso') && arrived.includes('Medio en el acceso'), 'al llegar hay bloque de resultado')
   const held = render({ ...base, status: 'hold', hold: 'Sin carretera disponible.' })
   assert.equal(stepState(held, 'vigia'), 'error')
-  assert.equal(stepState(held, 'watch'), 'idle')
   assert.ok(held.includes('Sin carretera disponible.'), 'el motivo del hold se lee')
   const patrol = render({ ...base, mission: 'patrol', target: undefined, status: 'patrolling', stops: [{ label: 'Plaza', km: 0.4, etaMin: 1 }, { label: 'Hospital', km: 1.9, etaMin: 3 }] })
-  for (const id of [HR_UNIT_RUN_STEPS[0].id, 'vigia', 'watch']) assert.equal(stepState(patrol, id), 'idle', `${id} en reposo en patrulla`)
+  for (const id of [HR_UNIT_RUN_STEPS[0].id, 'vigia']) assert.equal(stepState(patrol, id), 'idle', `${id} en reposo en patrulla`)
   const stopsBlock = patrol.slice(patrol.indexOf('hr-unit-stops'))
-  assert.ok(patrol.includes('Patrullando') && stopsBlock.includes('Próximas paradas') && stopsBlock.indexOf('Plaza') < stopsBlock.indexOf('Hospital') && stopsBlock.includes('0,4 km · 1 min'), 'las paradas salen en orden con distancia y tiempo')
+  assert.ok(patrol.includes('Patrullando') && patrol.includes('Próximas paradas') && stopsBlock.indexOf('Plaza') < stopsBlock.indexOf('Hospital') && stopsBlock.includes('0,4 km · 1 min'), 'las paradas salen en orden con distancia y tiempo')
   const escalated = render({ ...base, status: 'en_route', etaMin: 3, agent: 'HappyRobot · Escalada', escalated: true })
   assert.equal(stepState(escalated, 'approval'), 'done')
   assert.ok(escalated.includes('run de escalada') && escalated.includes('Guardia Civil y 1-1-2'), 'un medio de la escalada cuenta de dónde viene')
+})
+
+test('un paso de run tarda lo que tardaría de verdad: una llamada más que una condición, con margen aleatorio y sin ser instantáneo', async () => {
+  const { runStepDelayMs, HR_ESCALATION_STEPS } = await server.ssrLoadModule('/src/hrModel.ts')
+  const fixed = (value) => () => value
+  // Sin azar (jitter al mínimo, sin parada): la voz dura más que una lectura y esta más que una bifurcación.
+  assert.ok(runStepDelayMs({ kind: 'voice' }, fixed(0.99)) > runStepDelayMs({ kind: 'db' }, fixed(0.99)))
+  assert.ok(runStepDelayMs({ kind: 'db' }, fixed(0.99)) > runStepDelayMs({ kind: 'paths' }, fixed(0.99)))
+  // Con el peor azar (jitter máximo y parada máxima) ningún paso pasa de doce segundos; con el mejor, ninguno baja de un segundo.
+  for (const kind of ['voice', 'db', 'code', 'human', 'sms', 'paths', 'loop', 'trigger']) {
+    assert.ok(runStepDelayMs({ kind }, fixed(0)) >= 1000, `${kind} nunca es instantáneo`)
+    assert.ok(runStepDelayMs({ kind }, fixed(0.999)) <= 12000, `${kind} nunca se eterniza`)
+  }
+  // El run entero de escalada, en su versión media, ronda el medio minuto: se ve trabajar, no se hace esperar.
+  const total = HR_ESCALATION_STEPS.reduce((sum, step) => sum + runStepDelayMs(step, fixed(0.5)), 0)
+  assert.ok(total > 20000 && total < 45000, `escalada media: ${total} ms`)
 })
 
 test('las paradas y la estela de un medio siguen su ruta: el despacho hasta el destino, la patrulla dando la vuelta', () => {

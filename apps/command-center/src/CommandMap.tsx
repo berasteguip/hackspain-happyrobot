@@ -374,7 +374,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   healthCenters: ['center-health', 'center-health-label'],
   fireStations: ['center-fire', 'center-fire-label'],
   routes: ['refuge-route-casing', 'refuge-route-line'],
-  callArea: ['call-area-fill', 'call-area-edge', 'recommended-fill', 'recommended-edge', 'recommended-label'],
+  callArea: ['call-area-fill', 'call-area-edge', 'call-area-drag-edge', 'recommended-fill', 'recommended-edge', 'recommended-label'],
   units: ['unit-point', 'ambulance-vehicle', 'police-car', 'helicopter-unit', 'unit-label', 'unit-route-casing', 'unit-route-line', 'unit-route-ahead', 'unit-stop', 'unit-stop-label'],
 }
 
@@ -761,6 +761,9 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       map.addSource('call-area', { type: 'geojson', data: callAreaGeo(current.callArea) })
       map.addLayer({ id: 'call-area-fill', type: 'fill', source: 'call-area', paint: { 'fill-color': '#77c8f4', 'fill-opacity': 0.09 } })
       map.addLayer({ id: 'call-area-edge', type: 'line', source: 'call-area', paint: { 'line-color': '#a7e1ff', 'line-width': 2, 'line-dasharray': [3, 2] } })
+      // La guía del arrastre: el rectángulo esquina a esquina, como en un escritorio. Solo vive mientras se arrastra.
+      map.addSource('call-area-drag', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+      map.addLayer({ id: 'call-area-drag-edge', type: 'line', source: 'call-area-drag', paint: { 'line-color': '#a7e1ff', 'line-width': 1, 'line-dasharray': [1.5, 1.5], 'line-opacity': 0.7 } })
       // Frente previsto: lo que el mando da por hecho antes de que arda. Naranja y discontinuo, para
       // que nadie lo confunda con la huella real que pinta el mapa de calor.
       map.addSource('planned-fire', { type: 'geojson', data: plannedFireGeo(current.plannedFires, current.fireStroke) })
@@ -1079,10 +1082,21 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       const bounds = canvas.getBoundingClientRect()
       return map.unproject([event.clientX - bounds.left, event.clientY - bounds.top])
     }
+    // Como la selección de un escritorio: donde pinchas es una ESQUINA, no el centro. El círculo
+    // crece desde ahí hasta donde está el puntero (su diámetro es la diagonal que arrastras), así
+    // que todo lo que quede dentro del rectángulo que ves cae dentro del círculo. El rectángulo se
+    // dibuja como guía mientras arrastras y desaparece al soltar.
+    const drag = (map.getSource('call-area-drag') as GeoJSONSource | undefined)
+    const rectangle = (a: { lng: number; lat: number }, b: { lng: number; lat: number }): FeatureCollection<Polygon> => ({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[a.lng, a.lat], [b.lng, a.lat], [b.lng, b.lat], [a.lng, b.lat], [a.lng, a.lat]]] } }],
+    })
+    const clearDrag = () => drag?.setData({ type: 'FeatureCollection', features: [] })
     const areaAt = (event: PointerEvent): CallArea | null => {
       if (!start) return null
       const point = position(event)
-      return { ...start, radiusM: Math.min(20000, haversineMeters(start.lng, start.lat, point.lng, point.lat)) }
+      const diagonal = haversineMeters(start.lng, start.lat, point.lng, point.lat)
+      return { lng: (start.lng + point.lng) / 2, lat: (start.lat + point.lat) / 2, radiusM: Math.min(20000, diagonal / 2) }
     }
     const down = (event: PointerEvent) => {
       if (!event.isPrimary || event.button !== 0) return
@@ -1095,8 +1109,9 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       interactionRef.current.onAreaChange({ ...start, radiusM: 0 })
     }
     const move = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return
+      if (event.pointerId !== pointerId || !start) return
       event.preventDefault()
+      drag?.setData(rectangle(start, position(event)))
       interactionRef.current.onAreaChange(areaAt(event))
     }
     const up = (event: PointerEvent) => {
@@ -1105,11 +1120,12 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       const area = areaAt(event)
       start = null
       pointerId = null
+      clearDrag()
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
       if (area && area.radiusM >= 50) interactionRef.current.onAreaComplete(area)
       else interactionRef.current.onAreaChange(null)
     }
-    const cancel = () => { start = null; pointerId = null; interactionRef.current.onAreaChange(null) }
+    const cancel = () => { start = null; pointerId = null; clearDrag(); interactionRef.current.onAreaChange(null) }
     canvas.addEventListener('pointerdown', down, true)
     canvas.addEventListener('pointermove', move, true)
     canvas.addEventListener('pointerup', up, true)

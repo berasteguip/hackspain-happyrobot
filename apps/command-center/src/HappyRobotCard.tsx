@@ -13,8 +13,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { HappyRobotLogo } from './HappyRobot'
-import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ESCALATION_STEPS, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_REROUTE_STEPS, HR_STATE_LABEL, HR_UNIT_RUN_STEPS, HR_UNIT_SCRIPT, HR_UNIT_TOOLS, HR_VIEWS } from './hrModel'
-import type { HrCallNode, HrChainLink, HrDiagramProps, HrEscalationRun, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrRerouteOutcome, HrRerouteRun, HrUnitPulse, HrUnitRun, HrUnitStep, HrView } from './hrModel'
+import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ESCALATION_STEPS, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_REROUTE_STEPS, HR_STATE_LABEL, HR_UNIT_RUN_STEPS, HR_VIEWS } from './hrModel'
+import type { HrCallNode, HrChainLink, HrDiagramProps, HrEscalationRun, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrRerouteOutcome, HrRerouteRun, HrUnitPulse, HrUnitRun, HrView } from './hrModel'
 import { UNIT_LABEL, UNIT_STATUS_LABEL } from './units'
 
 // --------------------------------------------------------------------------- primitivas del diagrama
@@ -183,103 +183,70 @@ export function CallDiagram({ calls }: HrDiagramProps) {
 type StageStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; outcome?: 'done' | 'error' }
 
 /**
- * El despacho de un medio: el workflow «Despacho de medio» nodo a nodo, en el formato del run de
- * escalada. Con un run en marcha (`unitRun`) los pasos avanzan con reloj: el que corre late, los
- * hechos quedan en verde, los que faltan esperan en gris, y la tarjeta se desplaza para seguirlo.
- * El vehículo sale en el paso de Vigía. Después, y siempre que se pulsa un vehículo ya en marcha,
- * el guion se enseña completado y el seguimiento lo marca el vehículo real: la ETA frente al fuego
- * mientras va de camino, el parte cuando llega, ámbar si no hubo carretera.
+ * El despacho de un medio, en el escenario del run: el workflow «Despacho de medio» nodo a nodo,
+ * un paso protagonista a la vez, como la escalada y la rerruta. Con un run en marcha (`unitRun`)
+ * los pasos avanzan con reloj y el vehículo sale en el paso de Vigía. Después, y siempre que se
+ * pulsa un vehículo ya en marcha, el escenario se enseña completado y el protagonista es el
+ * seguimiento real del vehículo: la ETA frente al fuego mientras va de camino, el parte cuando
+ * llega, ámbar si no hubo carretera.
  */
 export function UnitDiagram({ unit, unitRun }: HrDiagramProps) {
   const run = unitRun && (!unit || unitRun.unitId === unit.id) ? unitRun : undefined
-  const rootRef = useRef<HTMLDivElement>(null)
-  const runDone = run ? run.step >= HR_UNIT_RUN_STEPS.length : Boolean(unit && unit.mission === 'dispatch')
-  const activeId = run && !runDone ? HR_UNIT_RUN_STEPS[run.step]?.id : undefined
-  // Seguir el paso en curso: con quince filas, el que late puede quedar por debajo del pliegue.
-  useEffect(() => {
-    if (!activeId || !rootRef.current) return
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    rootRef.current.querySelector(`[data-demo-id="${activeId}"]`)?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
-  }, [activeId])
   if (!unit && !run) return null
+  const runDone = run ? run.step >= HR_UNIT_RUN_STEPS.length : true
   const dispatched = Boolean(unit && unit.mission === 'dispatch')
   const kind = unit?.kind ?? run!.kind
   const flies = kind === 'helicopter'
   const km = unit?.distanceKm !== undefined ? `${unit.distanceKm.toLocaleString('es-ES', { maximumFractionDigits: 1 })} km` : ''
-  const stepState = (step: HrUnitStep): HrNodeState => {
-    if (step.phase === 'run') {
-      if (run) {
-        const index = HR_UNIT_RUN_STEPS.indexOf(step)
-        return index < run.step ? 'done' : index === run.step ? 'active' : 'idle'
-      }
-      if (!dispatched) return 'idle'
-      return step.id === 'vigia' && unit?.status === 'hold' ? 'error' : 'done'
-    }
-    if (!unit || !runDone || unit.status === 'hold') return 'idle'
-    if (step.id === 'watch') return unit.status === 'on_scene' ? 'done' : 'active'
-    return unit.status === 'on_scene' ? 'active' : 'idle'
-  }
   // El detalle de los pasos sale del despacho real cuando lo hay: es lo que el CECOP sabe ahora.
-  const stepDetail = (step: HrUnitStep, state: HrNodeState): ReactNode => {
-    if (state === 'idle') return undefined
-    let text = step.detail
-    if (unit && dispatched) {
-      if (step.id === 'trigger') text = unit.summary
-      else if (step.id === 'sandbox') text = unit.revision > 1 ? `Revisión ${unit.revision}: ${unit.callSign} estaba libre y se redirige desde su posición actual.` : `Elegido ${unit.callSign} desde ${unit.origin}${km ? ` · ${km} ${flies ? 'en vuelo directo' : 'por carretera'}` : ''}.`
-      else if (step.id === 'approval' && unit.escalated) text = `Aprobado por el operador en el run de escalada (${unit.agent}).`
-      else if (step.id === 'call-driver' && unit.escalated) text = `En la escalada la llamada fue a Guardia Civil y 1-1-2, que asignaron ${unit.callSign}.`
-      else if (step.id === 'sms') text = `Al conductor, el enlace con la ruta. A quien espera en ${unit.target}: «${unit.callSign} llega${unit.etaMin ? ` en ${unit.etaMin} min` : ''}».`
-      else if (step.id === 'vigia') text = unit.status === 'hold' ? `${unit.hold ?? 'Sin carretera disponible.'} Se reintenta desde el plan operativo.` : `${unit.callSign} sale hacia ${unit.target}: ruta y paradas en el mapa.`
-      else if (step.id === 'watch') text = unit.status === 'requested' ? (flies ? 'Trazando el vuelo en línea recta…' : 'Calculando la carretera hasta el acceso…') : unit.status === 'on_scene' ? `${km} recorridos. En el acceso: el loop cierra.` : `${km}${km ? ' · ' : ''}llega en ${unit.etaMin ?? '?'} min. El frente no toca la ruta.`
-      else if (step.id === 'report') text = 'En el acceso. Esperando el parte del conductor: casa vaciada, personas recogidas, medio libre.'
-    } else if (run && step.id === 'trigger') text = `${run.label}: ${UNIT_LABEL[run.kind].toLowerCase()} para ${run.target.label}.`
-    return <span title={step.hint}>{text}{step.chain && <Chain links={step.chain} />}</span>
-  }
-  const stepCount = (step: HrUnitStep) => step.id === 'watch' && unit?.status === 'en_route' && unit.etaMin ? `${unit.etaMin} min` : undefined
-  const stepLabel = (step: HrUnitStep) => step.id === 'watch' && flies ? 'Loop · cada minuto, vuelo frente al fuego' : step.label
-  const head = run && !runDone ? { cls: 'active', label: `Ejecutando run · ${Math.min(run.step + 1, HR_UNIT_RUN_STEPS.length)}/${HR_UNIT_RUN_STEPS.length}` }
+  const steps: StageStep[] = HR_UNIT_RUN_STEPS.map(step => {
+    let detail = step.detail
+    if (run && step.id === 'trigger') detail = `${run.label}: ${UNIT_LABEL[run.kind].toLowerCase()} para ${run.target.label}.`
+    else if (unit && dispatched) {
+      if (step.id === 'trigger') detail = unit.summary
+      else if (step.id === 'sandbox') detail = unit.revision > 1 ? `Revisión ${unit.revision}: ${unit.callSign} estaba libre y se redirige desde su posición actual.` : `Elegido ${unit.callSign} desde ${unit.origin}${km ? ` · ${km} ${flies ? 'en vuelo directo' : 'por carretera'}` : ''}.`
+      else if (step.id === 'approval' && unit.escalated) detail = `Aprobado por el operador en el run de escalada (${unit.agent}).`
+      else if (step.id === 'call-driver' && unit.escalated) detail = `En la escalada la llamada fue a Guardia Civil y 1-1-2, que asignaron ${unit.callSign}.`
+      else if (step.id === 'sms') detail = `Al conductor, el enlace con la ruta. A quien espera en ${unit.target}: «${unit.callSign} llega${unit.etaMin ? ` en ${unit.etaMin} min` : ''}».`
+      else if (step.id === 'vigia') detail = `${unit.callSign} sale hacia ${unit.target}: ruta y paradas en el mapa.`
+    }
+    return { id: step.id, kind: step.kind, lane: step.lane, label: step.label, detail, hint: step.hint, outcome: step.id === 'vigia' && unit?.status === 'hold' ? 'error' : 'done' }
+  })
+  const head = run && !runDone ? undefined
     : !unit ? { cls: 'done', label: 'Enviado' }
     : unit.status === 'en_route' ? { cls: 'active', label: `En camino${unit.etaMin ? ` · ${unit.etaMin} min` : ''}` }
     : unit.status === 'requested' ? { cls: 'active', label: 'Calculando ruta' }
     : unit.status === 'on_scene' ? { cls: 'done', label: 'En el acceso' }
     : unit.status === 'hold' ? { cls: 'error', label: 'Sin ruta' }
     : { cls: 'idle', label: 'Patrullando' }
-  const node = (step: HrUnitStep, children?: ReactNode) => {
-    const state = stepState(step)
-    return <HrNode key={step.id} kind={step.kind} lane={step.lane} state={state} label={stepLabel(step)} detail={stepDetail(step, state)} count={stepCount(step)} demoId={step.id}>{children}</HrNode>
-  }
+  const watch = unit && dispatched ? (unit.status === 'hold' ? `${unit.hold ?? 'Sin carretera disponible.'} Se reintenta desde el plan operativo.`
+    : unit.status === 'requested' ? (flies ? 'Trazando el vuelo en línea recta…' : 'Calculando la carretera hasta el acceso…')
+    : unit.status === 'on_scene' ? `${km} recorridos. En el acceso: el loop cierra con el parte del conductor.`
+    : `Loop cada minuto: ${km}${km ? ' · ' : ''}llega en ${unit.etaMin ?? '?'} min. El frente no toca la ruta.`) : null
+  const chosen = unit && dispatched ? steps.find(step => step.id === 'sandbox')?.detail : null
+  const result = unit
+    ? unit.status === 'on_scene'
+      ? <>
+        <strong>Medio en el acceso</strong>
+        <ul><li><b>{unit.callSign}</b><span>{UNIT_LABEL[unit.kind]} · {unit.target}</span><em>{km}</em></li></ul>
+        <small>El parte del conductor cierra el despacho: casa vaciada, personas recogidas, medio libre.</small>
+      </>
+      : <>
+        <strong>{unit.status === 'hold' ? 'Sin ruta' : dispatched ? `${unit.callSign} en camino` : 'Próximas paradas'}</strong>
+        {unit.stops.length > 0 && <ul data-demo="hr-unit-stops">{unit.stops.map((stop, index) => <li key={stop.label + index}><b>{index + 1}</b><span>{stop.label}</span><em>{[stop.km !== undefined ? `${stop.km.toLocaleString('es-ES', { maximumFractionDigits: 1 })} km` : '', stop.etaMin !== undefined ? `${stop.etaMin} min` : ''].filter(Boolean).join(' · ')}</em></li>)}</ul>}
+        <small>{[chosen, watch].filter(Boolean).join(' ') || 'Circuito por calles; en el mapa, el tramo a rayas es el que va a recorrer ahora.'}</small>
+      </>
+    : <><strong>Enviado</strong><small>El medio sale en el mapa con su ruta y sus paradas.</small></>
   return (
-    <div ref={rootRef} className="hr-run" data-demo="hr-unit" data-status={unit?.status ?? 'run'}>
-      <div className="hr-run-head">
-        <span className={`hr-run-state ${head.cls}`}><i aria-hidden="true" />{head.label}</span>
-        <small title={unit?.summary}>{unit?.target ?? run?.target.label ?? 'Sin tarea asignada'}</small>
-      </div>
-      {unit?.status === 'on_scene' && (
-        <div className="hr-run-result" role="status">
-          <strong>Medio en el acceso</strong>
-          <ul><li><b>{unit.callSign}</b><span>{UNIT_LABEL[unit.kind]} · {unit.target}</span><em>{km}</em></li></ul>
-          <small>El parte del conductor cierra el despacho: casa vaciada, personas recogidas, medio libre.</small>
-        </div>
-      )}
-      {unit && unit.status !== 'on_scene' && unit.stops.length > 0 && (
-        <div className="hr-run-result plain" data-demo="hr-unit-stops">
-          <strong>{dispatched ? 'Destino' : 'Próximas paradas'}</strong>
-          <ul>{unit.stops.map((stop, index) => <li key={stop.label + index}><b>{index + 1}</b><span>{stop.label}</span><em>{[stop.km !== undefined ? `${stop.km.toLocaleString('es-ES', { maximumFractionDigits: 1 })} km` : '', stop.etaMin !== undefined ? `${stop.etaMin} min` : ''].filter(Boolean).join(' · ')}</em></li>)}</ul>
-          <small>{dispatched ? 'La estela del mapa es la carretera que le queda.' : 'Circuito por calles; en el mapa, el tramo a rayas es el que va a recorrer ahora.'}</small>
-        </div>
-      )}
-      <HrFlow label="Despacho de un medio">
-        {HR_UNIT_SCRIPT.filter(step => !step.inLoop).map(step => node(step, step.id === 'loop' && (
-          <ol className="hr-flow hr-flow-nested" aria-label="Por cada asignación">
-            {HR_UNIT_SCRIPT.filter(inner => inner.inLoop).map(inner => node(inner, inner.id === 'call-driver' && (
-              <ol className="hr-tools" aria-label="Tools del agente">
-                {HR_UNIT_TOOLS.map(tool => <li key={tool.id}><CompactNode node={tool} chain={tool.chain} demo="hr-unit-node" /></li>)}
-              </ol>
-            )))}
-          </ol>
-        )))}
-      </HrFlow>
-    </div>
+    <RunStage
+      steps={steps}
+      step={run ? run.step : steps.length}
+      idle={!run && !dispatched}
+      label={unit?.target ?? run?.target.label ?? 'Sin tarea asignada'}
+      head={head}
+      demoId="hr-unit"
+      result={result}
+    />
   )
 }
 
@@ -300,8 +267,9 @@ function UnitContext({ unit, run }: { unit?: HrUnitPulse; run?: HrUnitRun | null
  * dónde va cada grupo). Es la misma información que la lista vertical, contada como secuencia:
  * pum, pum, pum. Lo que pasa en el mapa lo dispara el CECOP; aquí solo se dibuja.
  */
-function RunStage({ steps, step, label, result, demoId }: { steps: StageStep[]; step: number; label: string; result: ReactNode; demoId: string }) {
-  const finished = step >= steps.length
+function RunStage({ steps, step, label, result, demoId, head, idle = false }: { steps: StageStep[]; step: number; label: string; result: ReactNode; demoId: string; head?: { cls: string; label: string }; idle?: boolean }) {
+  // `idle`: el run no ha corrido (un medio de patrulla): la hilera en reposo y el resultado delante.
+  const finished = idle || step >= steps.length
   // El paso que se retira: se conserva un instante para animar su salida mientras entra el nuevo.
   const [leaving, setLeaving] = useState<number | null>(null)
   const shownRef = useRef(step)
@@ -312,7 +280,7 @@ function RunStage({ steps, step, label, result, demoId }: { steps: StageStep[]; 
     const timer = window.setTimeout(() => setLeaving(null), 420)
     return () => window.clearTimeout(timer)
   }, [step])
-  const stateAt = (index: number): HrNodeState => index < step ? (steps[index].outcome ?? 'done') : index === step ? 'active' : 'idle'
+  const stateAt = (index: number): HrNodeState => idle ? 'idle' : index < step ? (steps[index].outcome ?? 'done') : index === step ? 'active' : 'idle'
   const card = (index: number, phase: 'in' | 'out') => {
     const item = steps[index]
     if (!item) return null
@@ -329,16 +297,17 @@ function RunStage({ steps, step, label, result, demoId }: { steps: StageStep[]; 
       </article>
     )
   }
+  const state = head ?? (finished ? { cls: 'done', label: 'Enviado' } : { cls: 'active', label: `Ejecutando run · ${step + 1}/${steps.length}` })
   return (
     <div className="hr-run hr-stage" data-demo={demoId} data-finished={finished}>
       <div className="hr-run-head">
-        <span className={`hr-run-state ${finished ? 'done' : 'active'}`}><i aria-hidden="true" />{finished ? 'Enviado' : 'Ejecutando run'}</span>
+        <span className={`hr-run-state ${state.cls}`}><i aria-hidden="true" />{state.label}</span>
         <small>{label}</small>
       </div>
       <ol className="hr-stage-trail" aria-label="Pasos del run">
         {steps.map((item, index) => {
           const state = stateAt(index)
-          return <li key={item.id} data-state={state} title={`${item.label} · ${HR_STATE_LABEL[state] || 'pendiente'}`} data-demo="hr-node" data-demo-id={item.id}><span><HrIcon kind={item.kind} /></span></li>
+          return <li key={item.id} data-state={state} title={`${item.label} · ${HR_STATE_LABEL[state] || 'pendiente'}${state === 'idle' ? '' : `\n${item.detail}`}`} data-demo="hr-node" data-demo-id={item.id}><span><HrIcon kind={item.kind} /></span></li>
         })}
       </ol>
       <div className="hr-stage-focus" aria-live="polite">

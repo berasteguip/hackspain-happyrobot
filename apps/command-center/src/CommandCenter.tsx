@@ -36,7 +36,7 @@ import { TOUR_INTRO, markTourSeen, shouldShowTourIntro, startDemoTour, stopDemoT
 import type { TourHint, TourTick, TourView } from './demoTour'
 import { focusPersonFromUrl, readMe } from './me'
 import { HappyRobotCard } from './HappyRobotCard'
-import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_REROUTE_RELEASE_STEP, HR_REROUTE_STEPS, HR_UNIT_RUN_STEPS } from './hrModel'
+import { HR_ESCALATION_STEPS, HR_ESCALATION_UNITS, HR_REROUTE_RELEASE_STEP, HR_REROUTE_STEPS, HR_UNIT_RUN_STEPS, runStepDelayMs } from './hrModel'
 import type { HrCallsPulse, HrEscalationRun, HrRerouteOutcome, HrRerouteRun, HrUnitPulse, HrUnitRun, HrView } from './hrModel'
 import type { CallRun, CallStateName, DispatchResultSkip, RosterEntry } from './crisisApi'
 import type { CallArea, CallEvent, Citizen, FireSpot, LocationPing, MapLayers, PaintedFire, SafeZone } from './types'
@@ -756,7 +756,7 @@ export function CommandCenter({ token }: { token: string }) {
         }
       }
       setUnitRun(current => current?.id === unitRun.id ? { ...current, step: current.step + 1, unitId } : current)
-    }, step.ms)
+    }, runStepDelayMs(step))
     return () => window.clearTimeout(timer)
   }, [unitRun])
   const targetFromCitizens = (ids: string[], fallback?: { lng: number; lat: number }, label = 'zona seleccionada'): DispatchTarget | null => {
@@ -810,7 +810,7 @@ export function CommandCenter({ token }: { token: string }) {
       const last = escalation.step === HR_ESCALATION_STEPS.length - 1
       const unitIds = last ? completeEscalationRef.current(escalation) : escalation.unitIds
       setEscalation(current => current?.id === escalation.id ? { ...current, step: current.step + 1, unitIds } : current)
-    }, step.ms)
+    }, runStepDelayMs(step))
     return () => window.clearTimeout(timer)
   }, [escalation])
   const escalationUnits = useMemo(() => escalation ? escalation.unitIds.map(id => units.find(unit => unit.id === id)).filter((unit): unit is DispatchUnit => Boolean(unit)).map(unit => ({ callSign: unit.callSign, label: `${UNIT_LABEL[unit.kind]} · ${UNIT_STATUS_LABEL[unit.status]}`, eta: unitEta(unit) })) : [], [escalation, units])
@@ -890,7 +890,7 @@ export function CommandCenter({ token }: { token: string }) {
     const timer = window.setTimeout(() => {
       if (reroute.step + 1 === HR_REROUTE_RELEASE_STEP) releaseRerouteRef.current(reroute)
       setReroute(current => current?.id === reroute.id ? { ...current, step: current.step + 1 } : current)
-    }, step.ms)
+    }, runStepDelayMs(step))
     return () => window.clearTimeout(timer)
   }, [reroute])
   const rerouteOutcome = useMemo(() => {

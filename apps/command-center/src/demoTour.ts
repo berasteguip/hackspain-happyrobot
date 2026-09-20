@@ -65,7 +65,29 @@ export type DemoTourStep = {
   task?: string
   /** Imágenes que acompañan al paso (ruta pública y texto alternativo). */
   media?: { src: string; alt: string; wide?: boolean }[]
+  /**
+   * Un interludio: no es una tarjeta junto a un elemento, es una pausa a pantalla completa con su
+   * propio texto largo (`INTERLUDE`). Se usa una vez, para contar de dónde sale el proyecto antes
+   * de soltar al visitante.
+   */
+  interlude?: boolean
   view: TourView
+}
+
+/**
+ * El interludio de cierre: la historia detrás del proyecto, contada despacio. Antes de construir
+ * fuimos a preguntar a quien estudia el riesgo en España, y de esa conversación sale por qué
+ * router empieza por las casas y no por los camiones. Las fotos van en `media` del paso.
+ */
+export const INTERLUDE = {
+  kicker: 'Antes de construir nada',
+  title: 'Fuimos a preguntar a quien lleva años estudiando esto',
+  lead: 'Queríamos trabajar en emergencias, pero no desde la intuición. Así que antes de escribir una línea buscamos a alguien que conociera el problema de primera mano: preguntamos, pedimos contactos, tiramos de cada hilo. Llegamos hasta Inés Galindo Jiménez, del Departamento de Riesgos Geológicos y Cambio Climático del IGME-CSIC.',
+  insight: 'El eslabón débil de una emergencia no son los medios ni los mandos. Es la población: quien está indefensa, quien la sufre y quien no tiene experiencia. Lo que falta es algo que la ayude a ella, una persona a la vez.',
+  close: 'router nace de esa conversación. Por eso empieza por las casas y no por los camiones: saber quién hay en cada una y acompañar a cada persona hasta que está a salvo.',
+  credit: 'Inés Galindo Jiménez · Riesgos Geológicos y Cambio Climático · IGME-CSIC',
+  back: 'Atrás',
+  next: 'Seguir',
 }
 
 export const DEMO_TOUR_STEPS: DemoTourStep[] = [
@@ -130,9 +152,9 @@ export const DEMO_TOUR_STEPS: DemoTourStep[] = [
     description: 'Recalcula desde donde están, no desde casa, y avisa a cada uno. Mira los puntos.',
   },
   {
-    id: 'contraste', element: '[data-demo="tour-fire"]', side: 'left', view: { focus: 'fire' },
-    title: 'Un problema que sí ocurre',
-    description: 'Inés Galindo Jiménez, del Departamento de Riesgos Geológicos y Cambio Climático (CSIC-IGME), nos ayudó a dar con la idea: saber quién hay en cada casa y guiar persona a persona.',
+    id: 'contraste', element: '[data-demo="tour-fire"]', side: 'left', view: { focus: 'fire' }, interlude: true,
+    title: 'Fuimos a preguntar a quien lleva años estudiando esto',
+    description: 'Inés Galindo Jiménez, del Departamento de Riesgos Geológicos y Cambio Climático (IGME-CSIC), nos ayudó a entender dónde está el problema de verdad: en la población.',
     media: [
       { src: '/ines/ines-1.webp', alt: 'Inés Galindo Jiménez' },
       { src: '/ines/ines-2.jpg', alt: 'Inés Galindo en el campo, frente a una colada de lava' },
@@ -179,7 +201,103 @@ export function stopDemoTour() {
   tourGeneration += 1
   if (activeTour?.isActive()) activeTour.destroy()
   activeTour = null
+  removeInterlude()
   document.body.classList.remove('tour-hands-on')
+}
+
+/**
+ * El interludio vive fuera de Driver: un velo propio a pantalla completa con las fotos a un lado
+ * y el texto al otro. Driver sigue activo por debajo (así el paso cuenta en la barra y «Atrás» y
+ * «Seguir» son los mismos que en el resto), pero su tarjeta se oculta con `tour-interlude` en el body.
+ */
+function removeInterlude() {
+  document.querySelector('.tour-interlude')?.remove()
+  document.body.classList.remove('tour-interlude')
+}
+
+function renderInterlude(step: DemoTourStep, index: number, total: number, go: (to: number) => void, quit: () => void) {
+  removeInterlude()
+  document.body.classList.add('tour-interlude')
+  const root = document.createElement('section')
+  root.className = 'tour-interlude'
+  root.setAttribute('role', 'dialog')
+  root.setAttribute('aria-modal', 'true')
+  root.setAttribute('aria-labelledby', 'tour-interlude-title')
+  root.dataset.demo = 'tour-interlude'
+
+  const inner = document.createElement('div')
+  inner.className = 'tour-interlude-inner'
+
+  const media = document.createElement('div')
+  media.className = 'tour-interlude-media'
+  for (const item of step.media ?? []) {
+    if (item.wide) continue
+    const img = document.createElement('img')
+    img.src = item.src
+    img.alt = item.alt
+    img.loading = 'eager'
+    img.draggable = false
+    media.appendChild(img)
+  }
+
+  const copy = document.createElement('div')
+  copy.className = 'tour-interlude-copy'
+  const kicker = document.createElement('span')
+  kicker.className = 'tour-interlude-kicker'
+  kicker.textContent = INTERLUDE.kicker
+  const title = document.createElement('h2')
+  title.id = 'tour-interlude-title'
+  title.textContent = INTERLUDE.title
+  const lead = document.createElement('p')
+  lead.textContent = INTERLUDE.lead
+  const insight = document.createElement('blockquote')
+  insight.textContent = INTERLUDE.insight
+  const closing = document.createElement('p')
+  closing.textContent = INTERLUDE.close
+  const credit = document.createElement('div')
+  credit.className = 'tour-interlude-credit'
+  const logo = step.media?.find(item => item.wide)
+  if (logo) {
+    const img = document.createElement('img')
+    img.src = logo.src
+    img.alt = logo.alt
+    img.draggable = false
+    credit.appendChild(img)
+  }
+  const creditText = document.createElement('span')
+  creditText.textContent = INTERLUDE.credit
+  credit.appendChild(creditText)
+
+  const actions = document.createElement('div')
+  actions.className = 'tour-interlude-actions'
+  const back = document.createElement('button')
+  back.type = 'button'
+  back.className = 'tour-interlude-back'
+  back.textContent = INTERLUDE.back
+  back.addEventListener('click', () => go(index - 1))
+  const next = document.createElement('button')
+  next.type = 'button'
+  next.className = 'tour-interlude-next'
+  next.dataset.demo = 'tour-interlude-next'
+  next.textContent = index + 1 < total ? INTERLUDE.next : 'Explorar'
+  next.addEventListener('click', () => go(index + 1))
+  const progress = document.createElement('span')
+  progress.className = 'tour-interlude-progress'
+  progress.textContent = `${index + 1} / ${total}`
+  actions.append(back, progress, next)
+
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'tour-interlude-close'
+  close.setAttribute('aria-label', 'Cerrar recorrido')
+  close.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>'
+  close.addEventListener('click', quit)
+
+  copy.append(kicker, title, lead, insight, closing, credit, actions)
+  inner.append(media, copy)
+  root.append(close, inner)
+  document.body.appendChild(root)
+  window.requestAnimationFrame(() => next.focus())
 }
 
 /**
@@ -233,7 +351,7 @@ function decoratePopover(popover: PopoverDOM, step: DemoTourStep, index: number,
   progress.appendChild(bar)
   popover.wrapper.prepend(progress)
 
-  if (step.media?.length) {
+  if (step.media?.length && !step.interlude) {
     const media = document.createElement('div')
     media.className = 'tour-media'
     for (const item of step.media) {
@@ -331,6 +449,7 @@ export async function startDemoTour(actions: DemoTourActions) {
     },
     onDestroyed: () => {
       stopLive()
+      removeInterlude()
       document.body.classList.remove('tour-hands-on')
       if (generation !== tourGeneration) return
       markTourSeen()
@@ -353,6 +472,13 @@ export async function startDemoTour(actions: DemoTourActions) {
     // Los anclajes de dentro de un panel pueden estar al final de una lista con scroll.
     document.querySelector(step.element)?.scrollIntoView({ block: 'center', behavior: 'instant' })
     tour.drive(index)
+    if (step.interlude) {
+      renderInterlude(step, index, total, to => {
+        if (!tour.isActive()) return
+        if (to > last) tour.destroy()
+        else showStep(Math.max(0, to))
+      }, () => tour.destroy())
+    } else removeInterlude()
     // Mientras el paso está en pantalla: la línea en directo se refresca, el foco se recoloca si el
     // anclaje se mueve (el mapa se desplaza, la tarjeta crece) y, hecha la acción, se avanza solo.
     let lastRect = ''

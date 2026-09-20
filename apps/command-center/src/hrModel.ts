@@ -176,8 +176,26 @@ export const HR_UNIT_SCRIPT: HrUnitStep[] = [
   },
 ]
 
-/** Los pasos que corren con reloj, en orden de ejecución. El CECOP los avanza con `setTimeout(ms)`. */
+/** Los pasos que corren con reloj, en orden de ejecución. El CECOP los avanza con `setTimeout(runStepDelayMs(step))`. */
 export const HR_UNIT_RUN_STEPS: HrUnitStep[] = HR_UNIT_SCRIPT.filter(step => step.phase === 'run')
+
+/**
+ * Cuánto tarda un paso de un run en la demo. No es instantáneo a propósito: si los nodos pasan
+ * a golpe de dos segundos parece un vídeo, no una plataforma trabajando. Cada tipo de nodo tiene
+ * su ritmo (una llamada de voz dura lo que dura una llamada; una condición se decide en nada),
+ * con un margen aleatorio y, de vez en cuando, un paso que se queda pensando un poco más. Así
+ * dos runs seguidos no paran en los mismos sitios. Un run de once nodos ronda el medio minuto.
+ */
+export function runStepDelayMs(step: { kind: HrNodeKind }, random: () => number = Math.random): number {
+  const base = step.kind === 'voice' ? 6000
+    : step.kind === 'db' || step.kind === 'code' || step.kind === 'route' || step.kind === 'extract' ? 3000
+    : step.kind === 'human' ? 2600
+    : step.kind === 'sms' || step.kind === 'webhook' || step.kind === 'dbWrite' || step.kind === 'send' ? 2200
+    : 1600
+  const jitter = 0.7 + random() * 0.6
+  const stall = random() < 0.25 ? 1500 + random() * 2500 : 0
+  return Math.round(base * jitter + stall)
+}
 
 /** Las cuatro tools del agente que habla con el conductor, con lo que cada una dispara detrás. */
 export const HR_UNIT_TOOLS: HrCallTool[] = [
