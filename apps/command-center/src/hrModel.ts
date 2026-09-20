@@ -126,7 +126,7 @@ export const HR_CALL_TOOLS: HrCallTool[] = [
 ]
 
 /** Qué ficha del CECOP está abierta. `overview` es «ninguna»: se enseña el circuito completo. */
-export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'centers' | 'cop' | 'incidents' | 'layers'
+export type HrView = 'overview' | 'campaign' | 'people' | 'person' | 'alerts' | 'centers' | 'cop' | 'incidents' | 'layers' | 'escalation'
 
 /**
  * Cuánto de esta ficha pasa de verdad por HappyRobot hoy.
@@ -177,4 +177,39 @@ export const HR_VIEWS: Record<HrView, HrViewSpec> = {
   cop: { title: 'Propagación y viento', summary: 'Un giro de viento reasigna salidas y la API dispararía rellamadas con la instrucción nueva. Hoy no conecta.', coverage: 'planned' },
   incidents: { title: 'Escenarios', summary: 'Cambiar de escenario no toca HappyRobot.', coverage: 'none' },
   layers: { title: 'Capas y leyenda', summary: 'Las capas son geometría del mapa. HappyRobot no interviene.', coverage: 'none' },
+  escalation: { title: 'Escalada · sin respuesta', summary: 'Nadie descolgó. El mando aprueba y HappyRobot rellama, ordena por riesgo, avisa a Guardia Civil y 1-1-2 y deja constancia en Vigía.', coverage: 'partial' },
+}
+
+// --------------------------------------------------------------------------- escalada a fuerzas de seguridad
+
+/**
+ * Un paso del run de escalada. Cada uno es un nodo real de la plataforma (el `hint` lleva su
+ * nombre en el editor) encadenado como lo montaría el workflow «Escalada · hogar sin respuesta».
+ * `ms` es cuánto tarda en la demo: la suma ronda los diez segundos.
+ */
+export type HrEscalationStep = { id: string; kind: HrNodeKind; lane: HrLane; label: string; detail: string; hint: string; ms: number; outcome?: 'done' | 'error' }
+
+export const HR_ESCALATION_STEPS: HrEscalationStep[] = [
+  { id: 'hook', kind: 'trigger', lane: 'api', label: 'Disparo desde Vigía', detail: 'La API manda los hogares con dos intentos sin respuesta: id, teléfono, coordenadas y minutos hasta el frente.', hint: 'Incoming hook · POST /hooks/escalada', ms: 1100 },
+  { id: 'approval', kind: 'human', lane: 'mando', label: 'Aprobado por operador', detail: 'El mando ha pedido la escalada. Sin este paso el run no sigue.', hint: 'Approval Process del workflow', ms: 800 },
+  { id: 'lookup', kind: 'db', lane: 'happyrobot', label: 'Consultar el registro', detail: 'Qué se sabe ya de esas casas: acompañantes, movilidad, quién contestó al lado.', hint: 'Query Twin with SQL · call_log', ms: 1300 },
+  { id: 'recall', kind: 'voice', lane: 'vecino', label: 'Último intento de llamada', detail: 'Rellamada corta al hogar y a la persona de contacto si consta.', hint: 'Outbound Voice Agent · «Rellamada»', ms: 1900, outcome: 'error' },
+  { id: 'rank', kind: 'route', lane: 'happyrobot', label: 'Ordenar por riesgo y acceso', detail: 'A quién le llega antes el fuego, y por dónde se entra: carretera para la ambulancia, a vista para el helicóptero.', hint: 'Google Maps · Distance Matrix + Python Sandbox', ms: 1400 },
+  { id: 'organism', kind: 'building', lane: 'happyrobot', label: 'Llamada a Guardia Civil y 1-1-2', detail: 'Coordenadas, cuántos viven y quién corre más peligro. Pide helicóptero y ambulancia.', hint: 'Outbound Voice Agent · «Llamada a organismo»', ms: 2100 },
+  { id: 'brief', kind: 'sms', lane: 'happyrobot', label: 'Parte escrito a los medios', detail: 'Lista de casas ordenada, acceso y punto de encuentro. Copia al CECOPI.', hint: 'Send SMS + Slack · canal del CECOPI', ms: 1000 },
+  { id: 'vigia', kind: 'webhook', lane: 'api', label: 'Anotar y devolver a Vigía', detail: 'La escalada queda escrita y el mapa marca a esas casas como «fuerzas en camino».', hint: 'Write to Twin + POST «Escalada → Vigía»', ms: 800 },
+]
+
+/** Lo que se lanza al terminar el run, en este orden. */
+export const HR_ESCALATION_UNITS = ['helicopter', 'ambulance'] as const
+
+/** Estado del run que el CECOP mantiene mientras la tarjeta lo dibuja. */
+export type HrEscalationRun = {
+  id: string
+  citizenIds: string[]
+  label: string
+  startedAt: number
+  /** Índice del paso en curso; `>= HR_ESCALATION_STEPS.length` es «terminado». */
+  step: number
+  unitIds: string[]
 }

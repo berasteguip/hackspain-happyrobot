@@ -12,8 +12,8 @@
 
 import type { ReactNode } from 'react'
 import { HappyRobotLogo } from './HappyRobot'
-import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_VIEWS } from './hrModel'
-import type { HrCallNode, HrChainLink, HrDiagramProps, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrView } from './hrModel'
+import { HR_CALL_TOOLS, HR_CALL_TRUNK, HR_COVERAGE_LABEL, HR_ESCALATION_STEPS, HR_ICONS, HR_LANE_LABEL, HR_LOOP, HR_STATE_LABEL, HR_VIEWS } from './hrModel'
+import type { HrCallNode, HrChainLink, HrDiagramProps, HrEscalationRun, HrLane, HrLoopStep, HrNodeKind, HrNodeState, HrView } from './hrModel'
 
 // --------------------------------------------------------------------------- primitivas del diagrama
 
@@ -166,6 +166,39 @@ export function CallDiagram({ calls }: HrDiagramProps) {
 }
 
 /**
+ * El run de escalada, paso a paso. Es la misma anatomía que la llamada, pero en vertical y con
+ * reloj: el nodo en curso late, los hechos quedan marcados, la rellamada termina «sin resultado»
+ * a propósito (nadie descolgó, por eso estamos aquí) y al final se anuncia qué medios salieron.
+ * Lo que pasa en el mapa (los medios moviéndose) lo dispara el CECOP cuando `run.step` llega
+ * al final; aquí solo se dibuja.
+ */
+export function EscalationDiagram({ run, units }: { run: HrEscalationRun; units: { callSign: string; label: string; eta: string }[] }) {
+  const finished = run.step >= HR_ESCALATION_STEPS.length
+  const stateAt = (index: number, outcome?: 'done' | 'error'): HrNodeState => index < run.step ? (outcome ?? 'done') : index === run.step ? 'active' : 'idle'
+  return (
+    <div className="hr-run" data-demo="hr-escalation" data-finished={finished}>
+      <div className="hr-run-head">
+        <span className={`hr-run-state ${finished ? 'done' : 'active'}`}><i aria-hidden="true" />{finished ? 'Enviado' : 'Ejecutando run'}</span>
+        <small>{run.label}</small>
+      </div>
+      {finished && (
+        <div className="hr-run-result" role="status">
+          <strong>Medios en camino</strong>
+          <ul>{units.map(unit => <li key={unit.callSign}><b>{unit.callSign}</b><span>{unit.label}</span><em>{unit.eta || 'calculando'}</em></li>)}</ul>
+          <small>Las casas quedan marcadas en el mapa hasta que alguien llame a la puerta.</small>
+        </div>
+      )}
+      <HrFlow label="Pasos de la escalada">
+        {HR_ESCALATION_STEPS.map((step, index) => {
+          const state = stateAt(index, step.outcome)
+          return <HrNode key={step.id} kind={step.kind} lane={step.lane} state={state} label={step.label} detail={state === 'idle' ? undefined : <span title={step.hint}>{state === 'error' ? 'Sin respuesta. Se escala.' : step.detail}</span>} demoId={step.id} />
+        })}
+      </HrFlow>
+    </div>
+  )
+}
+
+/**
  * Qué diagrama enseña cada ficha. Las que no tienen el suyo todavía enseñan el resumen y
  * «en preparación»; las fichas en las que HappyRobot no interviene enseñan el circuito completo.
  * No se exporta a propósito: es el único sitio donde se registra un diagrama nuevo.
@@ -184,9 +217,11 @@ export type HappyRobotCardProps = HrDiagramProps & {
   collapsed: boolean
   onToggleCollapse: () => void
   onClose: () => void
+  /** Run de escalada en marcha o recién terminado: la tarjeta lo dibuja por encima de cualquier ficha. */
+  escalation?: { run: HrEscalationRun; units: { callSign: string; label: string; eta: string }[] } | null
 }
 
-export function HappyRobotCard({ view, connected, live, calls, collapsed, onToggleCollapse, onClose }: HappyRobotCardProps) {
+export function HappyRobotCard({ view, connected, live, calls, collapsed, onToggleCollapse, onClose, escalation }: HappyRobotCardProps) {
   const spec = HR_VIEWS[view]
   const Diagram = HR_DIAGRAMS[view]
   const status = connected && live ? { key: 'live', label: 'Llamadas reales' } : connected ? { key: 'connected', label: 'API conectada' } : { key: 'demo', label: 'Modo demo' }
@@ -210,9 +245,11 @@ export function HappyRobotCard({ view, connected, live, calls, collapsed, onTogg
           <span className={`hr-tag coverage ${spec.coverage}`}>{HR_COVERAGE_LABEL[spec.coverage]}</span>
         </div>
         <div className="hr-card-body">
-          {Diagram
-            ? <Diagram connected={connected} live={live} calls={calls} />
-            : <div className="hr-pending"><p>{spec.summary}</p><span className="hr-tag">Diagrama en preparación</span></div>}
+          {escalation
+            ? <EscalationDiagram run={escalation.run} units={escalation.units} />
+            : Diagram
+              ? <Diagram connected={connected} live={live} calls={calls} />
+              : <div className="hr-pending"><p>{spec.summary}</p><span className="hr-tag">Diagrama en preparación</span></div>}
         </div>
       </div>
     </aside>

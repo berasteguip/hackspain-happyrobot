@@ -21,6 +21,74 @@ import { DEMO_PEOPLE } from './demo-points'
 import { WindOverlay } from './WindOverlay'
 
 const PERSON_COLOR = '#459eff'
+/** Rojo de «nadie descolgó». Distinto del rojo del triaje crítico a ojo, pero de la misma familia. */
+const NO_ANSWER_COLOR = '#ff3b3b'
+
+/**
+ * El helicóptero visto desde arriba: fuselaje oscuro, cola y un disco de rotor luminoso, que es
+ * lo que se reconoce en un mapa nocturno. Mira hacia arriba; la capa lo gira con el rumbo.
+ */
+function helicopterMarker() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const context = canvas.getContext('2d')!
+  // disco del rotor
+  const disc = context.createRadialGradient(64, 60, 10, 64, 60, 50)
+  disc.addColorStop(0, '#d9f1ff10')
+  disc.addColorStop(0.75, '#c9e7ff28')
+  disc.addColorStop(0.9, '#c9e7ff88')
+  disc.addColorStop(1, '#c9e7ff00')
+  context.fillStyle = disc
+  context.beginPath()
+  context.arc(64, 60, 50, 0, Math.PI * 2)
+  context.fill()
+  context.strokeStyle = '#e6f4ff'
+  context.lineWidth = 1.5
+  context.beginPath()
+  context.arc(64, 60, 46, 0, Math.PI * 2)
+  context.stroke()
+  // palas
+  context.strokeStyle = '#f4faffcc'
+  context.lineWidth = 3
+  for (const angle of [0.3, 0.3 + Math.PI / 2]) {
+    context.beginPath()
+    context.moveTo(64 + Math.cos(angle) * 46, 60 + Math.sin(angle) * 46)
+    context.lineTo(64 - Math.cos(angle) * 46, 60 - Math.sin(angle) * 46)
+    context.stroke()
+  }
+  // cola
+  context.fillStyle = '#17232b'
+  context.beginPath()
+  context.roundRect(60, 74, 8, 44, 4)
+  context.fill()
+  context.fillStyle = '#c9e7ff'
+  context.fillRect(52, 110, 24, 4)
+  // fuselaje
+  context.save()
+  context.shadowColor = '#00000090'
+  context.shadowBlur = 8
+  const body = context.createLinearGradient(48, 0, 80, 0)
+  body.addColorStop(0, '#22323c')
+  body.addColorStop(0.5, '#3a4f5c')
+  body.addColorStop(1, '#1b2830')
+  context.fillStyle = body
+  context.beginPath()
+  context.ellipse(64, 58, 15, 26, 0, 0, Math.PI * 2)
+  context.fill()
+  context.restore()
+  // cabina
+  context.fillStyle = '#8fd3ff'
+  context.beginPath()
+  context.ellipse(64, 44, 9, 9, 0, 0, Math.PI * 2)
+  context.fill()
+  // luz anticolisión
+  context.fillStyle = '#ff4d4f'
+  context.beginPath()
+  context.arc(64, 72, 3, 0, Math.PI * 2)
+  context.fill()
+  return context.getImageData(0, 0, 128, 128)
+}
 
 function emojiMarker(emoji: string, statusColor?: string) {
   const canvas = document.createElement('canvas')
@@ -297,7 +365,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   perimeter: ['fire-flame', 'fire-ember'],
   spread: ['fire-smoke'],
   thermal: ['thermal-core', 'thermal-satellite'],
-  citizens: ['people-glow', 'people-dot', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
+  citizens: ['people-glow', 'people-dot', 'people-escalated', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
   zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
   hospitals: ['center-hospital', 'center-hospital-label'],
@@ -305,7 +373,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   fireStations: ['center-fire', 'center-fire-label'],
   routes: ['refuge-route-casing', 'refuge-route-line'],
   callArea: ['call-area-fill', 'call-area-edge', 'recommended-fill', 'recommended-edge', 'recommended-label'],
-  units: ['unit-point', 'ambulance-vehicle', 'police-car', 'unit-label'],
+  units: ['unit-point', 'ambulance-vehicle', 'police-car', 'helicopter-unit', 'unit-label'],
 }
 
 type Props = {
@@ -404,7 +472,7 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
       properties: {
         id: citizen.id, name: citizen.name, status: citizen.status, answered: Boolean(citizen.call),
         reference: !citizen.locationSource || citizen.locationSource === 'reference' || citizen.locationSource === 'unknown',
-        color: citizenColor(citizen), rank: citizenRank(citizen),
+        color: citizenColor(citizen), rank: citizenRank(citizen), escalated: Boolean(citizen.escalation),
       },
       geometry: { type: 'Point', coordinates: [citizen.lng, citizen.lat] },
     })),
@@ -420,6 +488,9 @@ function citizensGeo(citizens: Citizen[]): FeatureCollection<Point> {
  * cuando router corre sin backend.
  */
 function citizenColor(citizen: Citizen): string {
+  // Nadie descolgó: es la casa que hay que ir a mirar, y va en rojo por encima del triaje
+  // «sin clasificar» que deja la llamada perdida.
+  if (citizen.status === 'no_answer') return NO_ANSWER_COLOR
   if (citizen.triage) return TRIAGE_COLOR[citizen.triage.level]
   if (citizen.call) return '#4de3a6'
   if (citizen.status === 'ringing') return '#f3bd61'
@@ -428,6 +499,7 @@ function citizenColor(citizen: Citizen): string {
 
 /** Quién se pinta encima cuando dos puntos se solapan: primero el que hay que sacar antes. */
 function citizenRank(citizen: Citizen): number {
+  if (citizen.status === 'no_answer') return TRIAGE_ORDER.length + 3
   if (citizen.triage) return TRIAGE_ORDER.length - TRIAGE_ORDER.indexOf(citizen.triage.level) + 2
   if (citizen.call) return 2
   return citizen.status === 'ringing' ? 1 : 0
@@ -689,15 +761,19 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         'circle-stroke-color': '#0a1117',
         'circle-stroke-opacity': 0.85,
       } })
+      // Casas escaladas a fuerzas de seguridad: un anillo rojo alrededor del punto hasta que alguien llegue.
+      map.addLayer({ id: 'people-escalated', type: 'circle', source: 'people', filter: ['==', ['get', 'escalated'], true], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 11, 7, 14, 10, 17, 13], 'circle-opacity': 0, 'circle-stroke-color': '#ff3b3b', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.85 } })
       map.addLayer({ id: 'people-area-highlight', type: 'circle', source: 'people', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.3, 11, 3, 14, 4.4, 17, 5.6], 'circle-opacity': 0, 'circle-stroke-color': '#d3f0ff', 'circle-stroke-width': 1, 'circle-stroke-opacity': 0.5 } }, 'people-dot')
       map.addLayer({ id: 'people-selection', type: 'circle', source: 'people', paint: { 'circle-radius': 7, 'circle-opacity': 0, 'circle-stroke-color': '#e2edf3', 'circle-stroke-width': 1 } })
       map.addLayer({ id: 'people-label', type: 'symbol', source: 'people', layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-offset': [0, -1.8], 'text-allow-overlap': true }, paint: { 'text-color': '#e2edf3', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       map.addSource('units', { type: 'geojson', data: unitsGeo(current.units) })
       map.addImage('unit-marker-fire', fireUnitPinMarker(), { pixelRatio: 2 })
       map.addImage('ambulance-marker', ambulanceMarker(), { pixelRatio: 2 })
+      map.addImage('helicopter-marker', helicopterMarker(), { pixelRatio: 2 })
       for (let i = 0; i < POLICE_VIEWS; i++) map.addImage(`police-car-${i}`, policeCarMarker(i * 360 / POLICE_VIEWS), { pixelRatio: 2 })
       map.addLayer({ id: 'police-car', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'police'], layout: { 'icon-image': policeCarImage(map.getBearing()), 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.45, 14, 0.62, 17, 0.72], 'icon-anchor': 'center', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
       map.addLayer({ id: 'ambulance-vehicle', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'ambulance'], layout: { 'icon-image': 'ambulance-marker', 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.42, 14, 0.57, 17, 0.66], 'icon-rotate': ['get', 'heading'], 'icon-anchor': 'center', 'icon-pitch-alignment': 'map', 'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+      map.addLayer({ id: 'helicopter-unit', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'helicopter'], layout: { 'icon-image': 'helicopter-marker', 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 14, 0.7, 17, 0.85], 'icon-rotate': ['get', 'heading'], 'icon-anchor': 'center', 'icon-pitch-alignment': 'map', 'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
       map.addLayer({ id: 'unit-point', type: 'symbol', source: 'units', filter: ['==', ['get', 'kind'], 'fire'], layout: { 'icon-image': 'unit-marker-fire', 'icon-size': ['interpolate', ['linear'], ['zoom'], 10, 0.66, 14, 0.88, 17, 1], 'icon-anchor': 'bottom', 'icon-pitch-alignment': 'viewport', 'icon-rotation-alignment': 'viewport', 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
       map.addLayer({ id: 'unit-label', type: 'symbol', source: 'units', layout: { 'text-field': ['get', 'name'], 'text-size': 10, 'text-offset': ['case', ['==', ['get', 'kind'], 'fire'], ['literal', [0, -6.2]], ['literal', [0, 2.8]]], 'text-anchor': ['case', ['==', ['get', 'kind'], 'fire'], 'bottom', 'top'] }, paint: { 'text-color': '#e8f1f6', 'text-halo-color': '#101820', 'text-halo-width': 2 } })
       patchLayers(map, current.layers, current.selectedId, current.areaIds)
@@ -706,7 +782,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         if (interactionRef.current.drawingArea || suppressClickRef.current) { suppressClickRef.current = false; return }
         const { x, y } = event.point
         const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [[x - 8, y - 8], [x + 8, y + 8]]
-        const unitHit = map.queryRenderedFeatures(box, { layers: ['police-car', 'ambulance-vehicle', 'unit-point', 'unit-label'] })[0]
+        const unitHit = map.queryRenderedFeatures(box, { layers: ['police-car', 'ambulance-vehicle', 'helicopter-unit', 'unit-point', 'unit-label'] })[0]
         if (unitHit?.properties?.id) {
           popup.remove()
           onUnitSelectRef.current(String(unitHit.properties.id))
@@ -768,7 +844,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'ambulance-vehicle', 'unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'ambulance-vehicle', 'helicopter-unit', 'unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
         map.getCanvas().style.cursor = interactionRef.current.drawingArea ? 'crosshair' : features.length ? 'pointer' : ''
       })
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')

@@ -201,6 +201,7 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px; background: #459eff; }
 .dot.answered, .legend-point.answered { background: #8abca4; }
 .dot.ringing { background: var(--warn); }
+.dot.no_answer, .legend-point.no_answer { background: #ff3b3b; box-shadow: 0 0 0 2px #ff3b3b33; }
 .person-detail { padding: 0 18px 18px; }
 .back-button { margin: 18px 0; background: transparent; border: 0; color: var(--muted); padding: 0; font-size: 11px; }
 .back-button:hover { color: var(--text); }
@@ -211,8 +212,21 @@ input[type="checkbox"] { accent-color: #9cbfc9; width: 16px; height: 16px; flex-
 .person-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 18px; }
 .status-badge { font-size: 9px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; border: 1px solid #ffffff1c; color: #becdd4; border-radius: 4px; padding: 2px 6px; }
 .status-badge.tracking, .status-badge.evacuating { border-color: #a3c3cf33; color: #b7d1de; background: #a3c3cf0a; }
-.status-badge.no_answer { border-color: #d3ac7833; color: #d3b38b; background: #d3ac7808; }
+.status-badge.no_answer { border-color: #ff3b3b55; color: #ff8a8a; background: #ff3b3b10; }
 .status-badge.safe { border-color: #8abca444; color: #a1c7b3; }
+
+/* --- escalada a fuerzas de seguridad ------------------------------------------------------ */
+.escalate-section { display: grid; gap: 8px; }
+.escalate-button { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 42px; padding: 10px 14px; border-radius: 7px; border: 1px solid #ff3b3b; background: #ff3b3b; color: #fff5f5; font-weight: 600; font-size: 12px; letter-spacing: 0.01em; box-shadow: 0 0 0 0 #ff3b3b66; animation: escalate-glow 2.2s ease-in-out infinite; }
+.escalate-button .app-icon { width: 16px; height: 16px; }
+.escalate-button:hover:not(:disabled) { background: #ff5252; border-color: #ff5252; }
+.escalate-button:disabled { opacity: 0.6; animation: none; }
+.campaign-dock .dock-escalate { width: auto; flex: 0 0 auto; white-space: nowrap; padding: 10px 12px; font-size: 11px; }
+.escalate-done { display: grid; gap: 4px; padding: 12px; border-radius: 7px; border: 1px solid #ff3b3b55; background: #ff3b3b0e; }
+.escalate-done strong { font-size: 12px; color: #ff9a9a; }
+.escalate-done span { font-size: 11px; color: var(--text); }
+.escalate-done small { font-size: 10px; color: var(--muted, #9fb0b8); }
+@keyframes escalate-glow { 0%, 100% { box-shadow: 0 0 0 0 #ff3b3b55; } 50% { box-shadow: 0 0 0 6px #ff3b3b00; } }
 .detail-section { padding: 20px 0; border-top: 1px solid var(--line); }
 .detail-section h3, .detail-section > summary { font-size: 12px; color: #bacbd3; font-weight: 500; margin: 0 0 14px; }
 .location-card { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid #a3c3cf20; background: #a3c3cf08; border-radius: 9px; }
@@ -481,6 +495,29 @@ button.hr-node-row:hover .hr-node-icon { border-color: #2c738755; }
 .hr-node-pulse { position: absolute; right: -3px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--hr-move); animation: hr-pulse 1.6s ease-in-out infinite; }
 .hr-node[data-state="done"] .hr-node-icon { color: var(--hr-safe); border-color: #3d7a5c44; }
 .hr-node[data-state="error"] .hr-node-icon { color: var(--hr-warn); border-color: #9a6a2455; background: #9a6a240a; }
+
+/* El run de escalada dentro de la tarjeta. */
+.hr-run { display: grid; gap: 14px; }
+.hr-run-head { display: flex; align-items: baseline; gap: 10px; }
+.hr-run-head small { font-size: 11px; color: var(--hr-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hr-run-state { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; border: 1px solid var(--hr-line); white-space: nowrap; }
+.hr-run-state > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.hr-run-state.active { color: var(--hr-move); border-color: #2c738744; background: #2c73870d; }
+.hr-run-state.active > i { animation: hr-pulse 1.2s ease-in-out infinite; }
+.hr-run-state.done { color: #fff; background: var(--hr-safe); border-color: var(--hr-safe); animation: hr-sent 420ms ease-out; }
+.hr-run .hr-node[data-state="idle"] .hr-node-copy strong { color: var(--hr-muted); font-weight: 400; }
+.hr-run .hr-node[data-state="idle"] .hr-node-icon { opacity: 0.55; }
+.hr-run .hr-node[data-state="idle"] .hr-node-side em { opacity: 0.5; }
+.hr-run .hr-node[data-state="error"] .hr-node-copy small { color: var(--hr-warn); }
+.hr-run-result { display: grid; gap: 8px; padding: 12px 14px; border-radius: 9px; border: 1px solid #3d7a5c44; background: #3d7a5c0c; animation: hr-sent 420ms ease-out; }
+.hr-run-result strong { font-size: 12px; color: var(--hr-safe); }
+.hr-run-result ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.hr-run-result li { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: var(--hr-ink); }
+.hr-run-result li b { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 34px; }
+.hr-run-result li span { flex: 1; color: var(--hr-soft); }
+.hr-run-result li em { font-style: normal; font-size: 10px; color: var(--hr-muted); font-variant-numeric: tabular-nums; }
+.hr-run-result small { font-size: 10px; color: var(--hr-muted); line-height: 1.5; }
+@keyframes hr-sent { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .hr-node[data-state="mock"] .hr-node-icon { border-style: dashed; border-color: #9a6a2450; background: transparent; color: #9c8d76; }
 .hr-node[data-state="mock"] .hr-node-copy strong { color: var(--hr-soft); }
 /* Aguas abajo de un nodo en curso el flujo corre más rápido y se tiñe; el previsto no corre. */
