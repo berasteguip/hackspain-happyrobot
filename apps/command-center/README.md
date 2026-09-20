@@ -36,6 +36,7 @@ No se protege escondiéndolo, se protege **restringiéndolo por URL** en el pane
 sí es secreto.
 
 - Centro de mando: http://localhost:5173
+- Guía del puesto de mando (fuerza el recorrido): http://localhost:5173/?guia=1
 - Página de consentimiento del ciudadano: http://localhost:5173/track
 - Reutilizar un id del escenario: http://localhost:5173/track?id=c-01
 

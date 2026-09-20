@@ -575,6 +575,40 @@ https://www.openstreetmap.org/way/388670230. CS Argüelles, OSM nodo
 903735671 — https://www.openstreetmap.org/node/903735671. Comisaría
 Moncloa-Aravaca, OSM way 319941974 — https://www.openstreetmap.org/way/319941974.
 
+## Plan operativo (20 sep)
+
+El panel antes llamado «Avisos y medios» se convierte en un borrador de plan operativo. En una
+sola vista muestra la prioridad actual, hasta tres señales decisivas, el orden de comunicación,
+la cobertura de ambulancias y patrullas, la siguiente acción y la vigencia del plan. El historial
+completo y los controles de despacho permanecen en «Detalle operativo».
+
+El operador activa el plan al iniciar una campaña. Si gira el viento o aparece un cambio de
+propagación o corte de ruta posterior, el plan queda en «Revisión requerida» hasta que el mando
+adopta una revisión nueva. Un caso sin respuesta puede encabezar la cola de acciones sin invalidar
+todo el plan. Es una capa de presentación sobre los detectores, campaña y medios de la demo; no
+es un motor de decisión validado para emergencias reales.
+
+Fuente: petición del equipo e implementación local en
+[CopPanels.tsx](../../apps/command-center/src/CopPanels.tsx) y
+[CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx), 2026-09-20.
+
+## Guía de onboarding — 2026-09-20
+
+Al terminar la entradilla, la primera visita (o `?guia=1`) muestra una tarjeta.
+El recorrido usa driver.js y señala **cinco controles**: el fuego y sus
+círculos de riesgo, un punto de persona, las herramientas, la barra de llamadas
+y Plan. No abre paneles ni lanza la campaña. El botón **Guía** (abajo a la izquierda) lo vuelve a lanzar. Si la URL
+lleva `?p=` (vista de una persona), la tarjeta no aparece sola.
+
+El objetivo es que alguien que no ha visto la plataforma sepa: el mapa es el
+incendio y la gente; la primera acción es «Llamar zona de riesgo»; si se pierde,
+abre Plan.
+
+Fuente: petición de producto 2026-09-20.
+[demoTour.ts](../../apps/command-center/src/demoTour.ts),
+[TourIntro.tsx](../../apps/command-center/src/TourIntro.tsx),
+driver.js — https://driverjs.com/ (consultado 2026-09-20).
+
 ## Fuentes
 
 - FireMap.live, referencia visual de rachas de viento (largo/brillo según intensidad; no se usa su GFS) — https://firemap.live/ (consultado 2026-09-19).

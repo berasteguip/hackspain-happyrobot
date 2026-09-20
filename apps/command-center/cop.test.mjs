@@ -24,17 +24,43 @@ const at = (x, y) => [forecast.origin[0] + (x + 0.5) * forecast.cellSizeM / fore
 test('el mapa abre despejado y conserva accesos a escenario, campaña y todas las herramientas', async () => {
   const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
   const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test' }))
-  for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Avisos', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
+  for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Plan operativo', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
   assert.ok(html.includes('class="brand-logo"'), 'la cabecera lleva el logotipo')
   assert.ok(html.includes('aria-label="router"'), 'y se anuncia como router')
   assert.ok(html.includes('intro-partner'), 'y la entradilla acredita a HappyRobot')
   assert.ok(html.includes('Simulación local'))
   assert.ok(html.includes('campaign-dock'))
+  assert.ok(html.includes('data-demo="tour-start"'))
+  assert.ok(html.includes('Guía'))
   assert.ok(!html.includes('class="forecast-summary"'))
   assert.ok(!html.includes('class="minimal-legend"'))
   assert.ok(!html.includes('class="incident-list"'))
   assert.ok(!html.includes('type="password"'))
   assert.ok(!html.includes('class="floating-panel"'))
+})
+
+test('la guía señala escenario, herramientas, llamadas y plan, sin abrir paneles', async () => {
+  const { TOUR_STEPS, shouldShowTourIntro, TOUR_STORAGE_KEY } = await server.ssrLoadModule('/src/demoTour.ts')
+  assert.equal(TOUR_STEPS.length, 5)
+  assert.deepEqual(TOUR_STEPS.map((step) => step.element), [
+    '[data-demo="tour-fire"]',
+    '[data-demo="tour-people"]',
+    '[data-demo="tools"]',
+    '[data-demo="campaign-dock"]',
+    '[data-demo="tool-alerts"]',
+  ])
+  assert.ok(TOUR_STEPS[0].description.includes('zona de riesgo'))
+  assert.ok(TOUR_STEPS[1].title.includes('punto azul'))
+  assert.ok(TOUR_STEPS[2].title.includes('panel'))
+  assert.ok(TOUR_STEPS[3].description.includes('Llamar zona de riesgo'))
+  assert.ok(TOUR_STEPS[4].title.includes('Plan'))
+  assert.equal(TOUR_STORAGE_KEY, 'vigia-tour-seen')
+  assert.equal(shouldShowTourIntro(), false)
+  const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
+  const intro = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
+  assert.ok(intro.includes('Así se usa el puesto de mando'))
+  assert.ok(intro.includes('Ver guía'))
+  assert.ok(intro.includes('Saltar'))
 })
 
 test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {
@@ -47,6 +73,16 @@ test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles
     assert.ok(html.includes(SITE_EMOJI[center.kind]))
     assert.ok(html.includes(center.name))
   }
+})
+
+test('el plan operativo resume prioridad, comunicación, recursos y vigencia', async () => {
+  const { AlertsPanel } = await server.ssrLoadModule('/src/CopPanels.tsx')
+  const html = renderToStaticMarkup(createElement(AlertsPanel, {
+    alerts: [], units: [], selectedUnitId: null, unitsPaused: false,
+    plan: { status: 'draft', revision: 1, reviewedAt: 0, recommendedCount: 24, affectedCount: 31, campaignCount: 0, answered: 0, silent: 0, moving: 0, waiting: 0, live: false },
+    onToggleUnits() {}, onRetryUnit() {}, onAction() {}, onDispatch() {}, onFocus() {}, onFocusUnit() {}, onAdoptPlan() {}, onStartRecommended() {}, onOpenCampaign() {},
+  }))
+  for (const label of ['Prioridad actual', 'Contactar con 24 personas', 'Señales decisivas', 'Orden de comunicación', 'Cobertura de recursos', 'Vigencia del plan']) assert.ok(html.includes(label), label)
 })
 
 test('el viento visual escala suavemente con el zoom y limita velocidad, longitud y densidad', async () => {

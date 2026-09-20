@@ -19,6 +19,9 @@
  *
  * Aquí solo van los vecinos concretos que el guion necesite pulsar directamente
  * sobre el mapa, por id. Mantener la lista corta.
+ *
+ * La guía de onboarding añade dos anclas más (`tour-fire`, `tour-people`) desde
+ * CommandMap, sobre el foco y un vecino representativo; no hace falta listarlas aquí.
  */
 export const DEMO_PEOPLE: string[] = [
   // 'c-01',

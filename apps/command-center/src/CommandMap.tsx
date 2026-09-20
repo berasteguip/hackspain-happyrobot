@@ -528,6 +528,20 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
+function pickTourPerson(citizens: Citizen[]): Citizen | null {
+  if (!citizens.length) return null
+  const center = citizens.reduce((acc, citizen) => ({ lng: acc.lng + citizen.lng / citizens.length, lat: acc.lat + citizen.lat / citizens.length }), { lng: 0, lat: 0 })
+  return citizens.reduce((best, citizen) => haversineMeters(citizen.lng, citizen.lat, center.lng, center.lat) < haversineMeters(best.lng, best.lat, center.lng, center.lat) ? citizen : best)
+}
+
+function fireAnchor(fires: FireSpot[]): { lng: number; lat: number } | null {
+  if (!fires.length) return null
+  return {
+    lng: fires.reduce((sum, fire) => sum + fire.lng, 0) / fires.length,
+    lat: fires.reduce((sum, fire) => sum + fire.lat, 0) / fires.length,
+  }
+}
+
 export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, recommended, units, onUnitSelect, fireCells, centers, incident }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
@@ -884,19 +898,23 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
   // selector estable. Ver src/demo-points.ts.
   useEffect(() => {
     const map = mapRef.current
-    if (!map) return
+    if (!map || !loaded) return
     const showZone = (zone: SafeZone) => {
       onSelectRef.current(null)
       popupRef.current?.setLngLat([zone.lng, zone.lat])
         .setDOMContent(zonePopupContent(zone, dataRef.current.zoneExposure[zone.id], dataRef.current.horizon))
         .addTo(map)
     }
+    const fire = fireAnchor(fires)
+    const person = pickTourPerson(citizens)
     const wanted = [
       ...zones.map(zone => ({ demo: 'meeting-point', id: zone.id, lng: zone.lng, lat: zone.lat, onClick: () => showZone(zone) })),
       ...centers.map(center => ({ demo: 'center-marker', id: center.id, lng: center.lng, lat: center.lat, onClick: () => { popupRef.current?.remove(); onCenterSelectRef.current(center.id) } })),
       ...citizens
         .filter(citizen => citizen.id === selectedId || DEMO_PEOPLE.includes(citizen.id))
         .map(citizen => ({ demo: 'person-marker', id: citizen.id, lng: citizen.lng, lat: citizen.lat, onClick: () => { popupRef.current?.remove(); onSelectRef.current(citizen.id) } })),
+      ...(fire ? [{ demo: 'tour-fire', id: 'fire', lng: fire.lng, lat: fire.lat, onClick: () => {} }] : []),
+      ...(person ? [{ demo: 'tour-people', id: person.id, lng: person.lng, lat: person.lat, onClick: () => { popupRef.current?.remove(); onSelectRef.current(person.id) } }] : []),
     ]
     const markers = demoMarkersRef.current
     const keys = new Set(wanted.map(item => `${item.demo}:${item.id}`))
@@ -908,7 +926,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       let marker = markers.get(key)
       if (!marker) {
         const element = document.createElement('div')
-        element.className = 'demo-marker'
+        element.className = item.demo.startsWith('tour-') ? 'demo-marker tour-anchor' : 'demo-marker'
         element.dataset.demo = item.demo
         element.dataset.demoId = item.id
         element.setAttribute('aria-hidden', 'true')
@@ -919,7 +937,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       }
       marker.getElement().onclick = item.onClick
     }
-  }, [zones, centers, citizens, selectedId])
+  }, [loaded, zones, centers, citizens, selectedId, fires])
 
   useEffect(() => { popupRef.current?.remove() }, [zoneExposure, horizon, marginM, layers])
 
