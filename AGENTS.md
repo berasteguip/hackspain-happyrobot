@@ -162,11 +162,12 @@ reintento y móvil. Script temporal: `/tmp/vigia-patrol-ui.mjs`. Se consultó Ma
 con el token público aportado: los ocho circuitos Madrid/Gredos devolvieron geometrías válidas;
 esto no valida seguridad operativa frente al incendio. Sin llamadas ni cambios en workflows.
 
-Cambio visual posterior de Mateo: solo la policía pasa de pin a coche azul con volumen.
+Cambio visual posterior de Mateo: la policía pasa de pin a coche azul con volumen.
 `heading` se calcula sobre la carretera con una ventana de 8 m a ambos lados para suavizar
 curvas. El mapa selecciona entre 24 vistas del coche y compensa el giro de cámara; la posición
-permanece sobre la ruta. Ambulancias y bomberos móviles conservan su pin. No usar un emoji
-ni volver a implementar decisiones de agente como parte de este ajuste. 49 tests, lint y build.
+permanece sobre la ruta. Ajuste 2026-09-20: la ambulancia también se representa como vehículo
+compacto visto desde arriba y gira con su `heading`; bomberos móviles conserva su pin. No usar
+un emoji ni volver a implementar decisiones de agente como parte de este ajuste. 49 tests, lint y build.
 Navegador verificado con `/tmp/vigia-police-car-ui.mjs`: 24 vistas, cambios de rumbo,
 compensación de cámara y clic sobre el coche; proveedores externos controlados.
 
