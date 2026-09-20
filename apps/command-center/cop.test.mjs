@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { createServer } from 'vite'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
 after(() => server.close())
-const { buildFireForecast, forecastGeo, exposureAt, routeBlocked } = await server.ssrLoadModule('/src/fire-model.ts')
+const { buildFireForecast, forecastGeo, forecastHeatPoints, cellVisualHeat, exposureAt, routeBlocked } = await server.ssrLoadModule('/src/fire-model.ts')
 const { fetchRefugeRoutes, rankRefugeRoutes, planCitizenRoute, fetchDrivingRoute } = await server.ssrLoadModule('/src/routing.ts')
 const { detectAlerts, initialWatch, mergeAlerts, ALERT_ACTION_LABEL } = await server.ssrLoadModule('/src/alerts.ts')
 const { createDispatch, moveUnits, planUnitRoute, unitOrigin, originsFrom } = await server.ssrLoadModule('/src/units.ts')
@@ -18,6 +20,32 @@ const footprint = { type: 'FeatureCollection', features: [{ type: 'Feature', pro
 const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
 const forecast = buildFireForecast(footprint, settings)
 const at = (x, y) => [forecast.origin[0] + (x + 0.5) * forecast.cellSizeM / forecast.lngScale, forecast.origin[1] + (y + 0.5) * forecast.cellSizeM / 111320]
+
+test('el mapa abre despejado y conserva accesos a escenario, campaña y todas las herramientas', async () => {
+  const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
+  const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test' }))
+  for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Avisos', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
+  assert.ok(html.includes('<span class="brand-symbol" aria-hidden="true">R</span><strong>router</strong>'))
+  assert.ok(html.includes('Simulación local'))
+  assert.ok(html.includes('campaign-dock'))
+  assert.ok(!html.includes('class="forecast-summary"'))
+  assert.ok(!html.includes('class="minimal-legend"'))
+  assert.ok(!html.includes('class="incident-list"'))
+  assert.ok(!html.includes('type="password"'))
+  assert.ok(!html.includes('class="floating-panel"'))
+})
+
+test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {
+  const { SITE_EMOJI } = await server.ssrLoadModule('/src/response.ts')
+  assert.deepEqual(SITE_EMOJI, { hospital: '🏥', health: '🏥', fire: '🚒', meeting: '⛺' })
+  const { ResponsePanel } = await server.ssrLoadModule('/src/CopPanels.tsx')
+  const html = renderToStaticMarkup(createElement(ResponsePanel, { selectedId: null, onSelect() {}, scenario: 'test', notices: [], onNotices() {}, centers: RESPONSE_CENTERS, settlements: GREDOS_SCENARIO.settlements }))
+  assert.equal((html.match(/class="site-emoji"/g) ?? []).length, RESPONSE_CENTERS.length)
+  for (const center of RESPONSE_CENTERS) {
+    assert.ok(html.includes(SITE_EMOJI[center.kind]))
+    assert.ok(html.includes(center.name))
+  }
+})
 
 test('el viento visual escala suavemente con el zoom y limita velocidad, longitud y densidad', async () => {
   const { windVisualStyle } = await server.ssrLoadModule('/src/wind.ts')
@@ -68,6 +96,21 @@ test('viento hacia el este favorece el este; sin viento la expansión es simétr
   assert.ok(exposureAt(forecast, ...at(3, 0), 120, 0).minute < exposureAt(forecast, ...at(-3, 0), 120, 0).minute)
   const calm = buildFireForecast(footprint, { ...settings, windKmh: 0 })
   assert.equal(exposureAt(calm, ...at(3, 0), 120, 0).minute, exposureAt(calm, ...at(-3, 0), 120, 0).minute)
+})
+
+test('el frente visual florece antes de la celda y no salta a calor pleno', () => {
+  const later = [...forecast.cells.values()].find(cell => cell.minute > 8 && cell.minute < 40)
+  assert.ok(later)
+  assert.equal(cellVisualHeat(0, 0), 1)
+  assert.ok(cellVisualHeat(later.minute, later.minute - 8) < cellVisualHeat(later.minute, later.minute))
+  assert.ok(cellVisualHeat(later.minute, later.minute) < cellVisualHeat(later.minute, later.minute + 20))
+  const start = forecastHeatPoints(forecast, 0).features.length
+  const mid = forecastHeatPoints(forecast, later.minute).features.length
+  const late = forecastHeatPoints(forecast, 80).features.length
+  assert.equal(start, 0)
+  assert.ok(mid > 0)
+  assert.ok(late > mid)
+  assert.ok(forecastHeatPoints(forecast, later.minute).features.every(point => point.properties.heat > 0 && point.properties.heat <= 1))
 })
 
 test('avance cero, huella vacía y parámetros inválidos', () => {
@@ -436,11 +479,12 @@ test('el medio avanza por carretera y llega al destino', () => {
 test('Directions hacia un medio informa el HTTP sin exponer el token', async () => {
   const unit = createDispatch('police', { lng: at(8, 8)[0], lat: at(8, 8)[1], label: 'zona' }, 1, 0)
   const planned = await planUnitRoute('secret-unit-token', unit, undefined, async () => ({ ok: false, status: 401 }))
-  assert.equal(planned.status, 'en_route')
-  assert.equal(planned.route.coords.length, 2)
+  assert.equal(planned.status, 'hold')
+  assert.equal(planned.route, undefined)
+  assert.match(planned.hold, /401/)
   assert.ok(!JSON.stringify(planned).includes('secret-unit-token'))
   const [moved] = moveUnits([planned], 1)
-  assert.notEqual(moved.lng, planned.lng)
+  assert.strictEqual(moved, planned)
   const failed = await fetchDrivingRoute('secret-unit-token', at(8, 8), at(20, 20), 'u-1', undefined, async () => ({ ok: false, status: 403 }))
   assert.equal(failed.route, undefined)
   assert.match(failed.error, /403/)
@@ -459,6 +503,112 @@ test('el envío usa el destino pedido, no un refugio', async () => {
   assert.ok(url.includes(`${unit.origin.lng},${unit.origin.lat};${dest[0]},${dest[1]}`))
   assert.equal(planned.status, 'en_route')
   assert.equal(planned.route.coords.at(-1)[0], dest[0])
+})
+
+test('la orientación sigue la carretera y anticipa suavemente el giro', async () => {
+  const { routeHeading } = await server.ssrLoadModule('/src/units.ts')
+  const path = road('turn', { id: 'turn' }, [[-3, 40], [-3, 40.001], [-2.999, 40.001]], 60, 'dispatch')
+  assert.ok(routeHeading(path, 20) < 1)
+  assert.ok(Math.abs(routeHeading(path, path.cumulative[1] + 20) - 90) < 1)
+  assert.ok(routeHeading(path, path.cumulative[1]) > 25 && routeHeading(path, path.cumulative[1]) < 65)
+  const unit = { ...createDispatch('police', { lng: -2.999, lat: 40.001, label: 'destino' }, 0, 0), status: 'en_route', route: path, heading: 0 }
+  const [moving] = moveUnits([unit], 4)
+  assert.ok(moving.heading > 80 && moving.heading < 100)
+  assert.equal(moveUnits([moving], 0)[0].heading, moving.heading)
+})
+
+test('cada escenario tiene dos patrullas y dos ambulancias simuladas con IDs propios', async () => {
+  const { createPatrolFleet } = await server.ssrLoadModule('/src/units.ts')
+  const madrid = createPatrolFleet(MADRID_SCENARIO)
+  const gredos = createPatrolFleet(GREDOS_SCENARIO)
+  for (const fleet of [madrid, gredos]) {
+    assert.equal(fleet.length, 4)
+    assert.equal(fleet.filter(unit => unit.kind === 'police').length, 2)
+    assert.equal(fleet.filter(unit => unit.kind === 'ambulance').length, 2)
+    assert.equal(new Set(fleet.map(unit => unit.id)).size, 4)
+    assert.ok(fleet.every(unit => unit.mission === 'patrol' && unit.status === 'requested' && !unit.route && unit.patrol.stops.length === 3))
+  }
+  assert.ok(madrid.every(unit => !gredos.some(other => other.id === unit.id)))
+})
+
+const mockUnitRoad = async url => {
+  const [origin, destination] = decodeURIComponent(new URL(url).pathname.split('/').at(-1)).split(';').map(point => point.split(',').map(Number))
+  return { ok: true, json: async () => ({ routes: [{ geometry: { coordinates: [origin, [destination[0], origin[1]], destination] }, duration: 180 }] }) }
+}
+
+test('el patrullaje encadena calles en circuito y reutiliza la ruta al dar vueltas', async () => {
+  const { createPatrolFleet } = await server.ssrLoadModule('/src/units.ts')
+  let requests = 0
+  const patrol = await planUnitRoute('test', createPatrolFleet(MADRID_SCENARIO)[0], undefined, async url => { requests++; return mockUnitRoad(url) })
+  assert.equal(patrol.status, 'patrolling')
+  assert.equal(requests, 3)
+  assert.deepEqual(patrol.route.coords[0], patrol.route.coords.at(-1))
+  assert.ok(patrol.route.coords.length > 3)
+  const [moved] = moveUnits([patrol], 1)
+  assert.ok(haversineMeters(patrol.lng, patrol.lat, moved.lng, moved.lat) > 0)
+  const [lap] = moveUnits([patrol], patrol.route.durationSec / 4)
+  assert.equal(lap.status, 'patrolling')
+  assert.ok(haversineMeters(patrol.lng, patrol.lat, lap.lng, lap.lat) < 0.01)
+  assert.equal(requests, 3)
+  const fleet = [patrol]
+  assert.strictEqual(moveUnits(fleet, NaN), fleet)
+})
+
+test('redirigir conserva unidad y posición y descarta un resultado antiguo de planificación', async () => {
+  const { createPatrolFleet, redirectUnit, applyUnitPlan, pickAvailableUnit } = await server.ssrLoadModule('/src/units.ts')
+  const initial = createPatrolFleet(MADRID_SCENARIO)[0]
+  const patrol = await planUnitRoute('test', initial, undefined, mockUnitRoad)
+  const [moving] = moveUnits([patrol], 20)
+  const target = { lng: -3.725, lat: 40.451, label: 'Destino de prueba' }
+  const redirected = redirectUnit(moving, target, 1000)
+  assert.equal(redirected.id, moving.id)
+  assert.equal(redirected.callSign, moving.callSign)
+  assert.equal(redirected.revision, moving.revision + 1)
+  assert.equal(redirected.mission, 'dispatch')
+  assert.equal(redirected.status, 'requested')
+  assert.equal(redirected.lng, moving.lng)
+  assert.equal(redirected.lat, moving.lat)
+  assert.equal(redirected.route, undefined)
+  assert.strictEqual(moveUnits([redirected], 10)[0], redirected)
+  assert.strictEqual(applyUnitPlan([redirected], patrol)[0], redirected)
+  assert.equal(pickAvailableUnit([redirected], 'police', target), undefined)
+  assert.equal(pickAvailableUnit([moving], 'police', target)?.id, moving.id)
+  let origin
+  const planned = await planUnitRoute('test', redirected, undefined, async url => { origin = decodeURIComponent(new URL(url).pathname.split('/').at(-1)).split(';')[0]; return mockUnitRoad(url) })
+  assert.equal(origin, `${moving.lng},${moving.lat}`)
+  assert.equal(applyUnitPlan([redirected], planned)[0].status, 'en_route')
+  const retargeted = redirectUnit(redirected, { ...target, lng: -3.724 }, 1001)
+  assert.strictEqual(applyUnitPlan([retargeted], planned)[0], retargeted)
+  assert.equal(moveUnits([planned], 10000)[0].status, 'on_scene')
+  assert.throws(() => redirectUnit(moving, { ...target, lat: 91 }, 1001))
+})
+
+test('un circuito incompleto se queda parado y no inventa el tramo que falta', async () => {
+  const { createPatrolFleet } = await server.ssrLoadModule('/src/units.ts')
+  const initial = createPatrolFleet(MADRID_SCENARIO)[0]
+  let requests = 0
+  const failed = await planUnitRoute('test', initial, undefined, url => ++requests === 1 ? mockUnitRoad(url) : Promise.resolve({ ok: false, status: 503 }))
+  assert.equal(failed.status, 'hold')
+  assert.equal(failed.route, undefined)
+  assert.equal(failed.lng, initial.lng)
+  assert.equal(failed.lat, initial.lat)
+  assert.strictEqual(moveUnits([failed], 100)[0], failed)
+  assert.equal(requests, 2)
+  const controller = new AbortController()
+  controller.abort()
+  await assert.rejects(planUnitRoute('test', initial, controller.signal, mockUnitRoad), { name: 'AbortError' })
+})
+
+test('los medios terminan en el acceso de carretera, sin conectores rectos a edificios', async () => {
+  const target = { lng: -3.71, lat: 40.44, label: 'Edificio' }
+  const unit = createDispatch('ambulance', target, 1, 0, originsFrom(MADRID_SCENARIO.centers, MADRID_SCENARIO.police))
+  const start = [unit.lng + 0.00005, unit.lat]
+  const end = [target.lng - 0.00005, target.lat]
+  const planned = await planUnitRoute('test', unit, undefined, async () => ({ ok: true, json: async () => ({ routes: [{ geometry: { coordinates: [start, end] }, duration: 180 }] }) }))
+  assert.deepEqual(planned.route.coords, [start, end])
+  const [arrived] = moveUnits([planned], 10000)
+  assert.equal(arrived.lng, end[0])
+  assert.equal(arrived.lat, end[1])
 })
 
 test('mergeAlerts antepone lo nuevo y recorta el historial', () => {

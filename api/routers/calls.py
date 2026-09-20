@@ -15,14 +15,18 @@ from fastapi import APIRouter, HTTPException
 import dispatcher
 import planner
 from models import (
+    NO_CONTACT_RESULTS,
     TERMINAL_CALL_STATES,
     Actor,
     CallDispatch,
     CallDispatchResponse,
+    CallExtracted,
+    CallObservation,
     CallOutcome,
     CallRun,
     CallStarted,
     CallState,
+    DecisionLogEntry,
     DecisionType,
     House,
     HouseStatus,
@@ -31,6 +35,8 @@ from models import (
     Person,
     PersonStatus,
     PositionSource,
+    Triage,
+    TriageLevel,
     VulnerablePerson,
     WriteResponse,
     utcnow_iso,
@@ -91,6 +97,19 @@ def _resolve_person(outcome: CallOutcome) -> tuple[Person, list]:
 @router.post("/calls/outcome", response_model=WriteResponse)
 def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     """Lo que la llamada dejó: datos extraídos, negativa a salir, o silencio."""
+    _, decisiones = apply_outcome(outcome)
+    decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
+    etiqueta = "call-outcome" if outcome.answered else "call-outcome(sin respuesta)"
+    return write_response(decisiones, event=etiqueta)
+
+
+def apply_outcome(outcome: CallOutcome) -> tuple[Person, list]:
+    """El resultado de una llamada aplicado al estado, **sin correr el planner**.
+
+    El planner se queda fuera a propósito: `/calls/observation` necesita escribir además el
+    triaje antes de replanificar, y dos pasadas del planner por una sola llamada ensuciarían el
+    timeline con decisiones duplicadas. Quien llame a esto es responsable de replanificar.
+    """
     person, decisiones = _resolve_person(outcome)
     house = state.houses.get(person.house_id or "")
     ex = outcome.extracted
@@ -101,8 +120,7 @@ def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     if not outcome.answered:
         decisiones.extend(_no_answer(person, house, outcome))
         state.last_event_id = decisiones[0].id if decisiones else state.last_event_id
-        decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
-        return write_response(decisiones, event="call-outcome(sin respuesta)")
+        return person, decisiones
 
     # ---------------------------------------------------------------- contestó
     cambios: dict = {"call_attempts": (person.call_attempts or 0) + 1}
@@ -180,8 +198,7 @@ def post_call_outcome(outcome: CallOutcome) -> WriteResponse:
     # Contestar cambia los datos con los que se eligió la salida: se revisa.
     state.mark_exit_dirty([person.id])
     state.mark_route_dirty([person.id])
-    decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
-    return write_response(decisiones, event="call-outcome")
+    return person, decisiones
 
 
 def _no_answer(person: Person, house: House | None, outcome: CallOutcome) -> list:
@@ -380,6 +397,132 @@ def _find_or_create_neighbor_person(
         decisiones.append(entrada)
         state.last_event_id = entrada.id
     return nueva
+
+
+# --------------------------------------------------------------------------------------
+# El camino de vuelta: el extract del agente entra en el estado
+# --------------------------------------------------------------------------------------
+
+
+@router.post("/calls/observation", response_model=WriteResponse)
+def post_call_observation(obs: CallObservation) -> WriteResponse:
+    """**El nodo `Observación` del workflow, al colgar, postea aquí.**
+
+    Cierra el círculo que hasta ahora solo iba de ida: la app rodeaba una zona, disparaba el
+    webhook del workflow y ahí se perdía el rastro. El agente clasificaba a la persona en
+    rojo/naranja/amarillo/verde dentro de HappyRobot y ese veredicto no salía de la plataforma.
+
+    No sustituye a `/calls/outcome`: lo envuelve. Primero se aplica lo que la llamada dejó
+    —contestó o no, qué dijo, cuántos intentos— por el mismo camino de siempre, y después se
+    escribe el triaje. Así una observación no inventa un segundo mecanismo de llamadas: el
+    tablero, la casa y la cola se enteran exactamente igual que antes.
+
+    Lo que SÍ es nuevo es el color. `minutes_to_front` sigue siendo geometría y sigue ordenando
+    la cola; `triage.level` es lo que dijo una persona, y es lo que el mando ve en el mapa.
+    Cuando discrepan —`prior_bajo_obs_alta`— esa es justo la información que ningún sensor
+    tenía, y la que el operador necesita mirar primero.
+    """
+    outcome = CallOutcome(
+        run_id=obs.run_id,
+        person_id=obs.person_id,
+        phone=obs.phone,
+        answered=obs.answered_call(),
+        duration_s=obs.duration_s,
+        # La zona que dijo la persona es una posición declarada de las malas (texto libre, sin
+        # geocodificar), pero `/calls/outcome` ya sabe qué hacer con ella: usar la casa como
+        # aproximación y dejarlo escrito.
+        extracted=CallExtracted(declared_location=obs.declared_zone),
+        agent_notes=obs.notes,
+        transcript_url=obs.run_url,
+    )
+    person, decisiones = apply_outcome(outcome)
+    entrada = _record_triage(person, obs)
+    if entrada:
+        decisiones.append(entrada)
+    decisiones.extend(planner.run_planner(state, trigger_event_id=state.last_event_id))
+    return write_response(decisiones, event=f"call-observation({obs.level or 'sin nivel'})")
+
+
+TRIAGE_ES: dict[TriageLevel, str] = {
+    TriageLevel.red: "ROJO",
+    TriageLevel.orange: "NARANJA",
+    TriageLevel.yellow: "AMARILLO",
+    TriageLevel.green: "VERDE",
+    TriageLevel.unknown: "sin clasificar",
+}
+
+
+def _record_triage(person: Person, obs: CallObservation) -> DecisionLogEntry | None:
+    """Escribe el veredicto del agente sobre la persona, con su motivo en español."""
+    nivel = TriageLevel.from_text(obs.level)
+    previo = TriageLevel.from_text(obs.prior_level)
+    triage = Triage(
+        level=nivel,
+        prior_level=previo if previo != TriageLevel.unknown else None,
+        confidence=obs.confidence,
+        discrepancy=obs.discrepancy,
+        call_result=obs.call_result,
+        declared_zone=obs.declared_zone,
+        place_type=obs.place_type,
+        flames=obs.flames,
+        notes=obs.notes,
+        reason=_triage_reason(obs, previo),
+        run_id=obs.run_id,
+        run_url=obs.run_url,
+    )
+    return state.mutate(
+        f"{person.name or person.id}: el agente cierra la llamada en {TRIAGE_ES[nivel]}"
+        + (f" — {triage.reason}" if triage.reason else "."),
+        type=DecisionType.person_status_changed,
+        subject_type="person",
+        subject_id=person.id,
+        changes={"triage": triage},
+        actor=Actor.agent,
+        force=True,  # dos llamadas con el mismo veredicto siguen siendo dos llamadas
+    )
+
+
+def _triage_reason(obs: CallObservation, previo: TriageLevel) -> str:
+    """La frase que lee el mando. Nada de score: por qué esa persona está de ese color.
+
+    **Nunca vuelve vacía.** Una ficha que dice «el agente no dejó motivo» se lee como que algo
+    falló, cuando lo normal es justo lo contrario: que la llamada fue bien y no había nada que
+    corrigiera el mapa. Eso también es información —significa no volver a mirar esta ficha— y
+    tiene que estar escrito, no deducirse de un hueco.
+    """
+    # Que nadie descuelgue no es un triaje de nada: sin interlocutor, el resto de campos del
+    # extract son ruido, y «confianza baja» aquí sonaría a que el agente dudó de algo.
+    if (obs.call_result or "").strip().lower() in NO_CONTACT_RESULTS:
+        return "nadie descolgó: no hay triaje, solo el intento"
+
+    partes: list[str] = []
+    if obs.declared_zone:
+        partes.append(f"dice estar en «{obs.declared_zone}»")
+    if obs.place_type:
+        partes.append(f"en {obs.place_type}")
+    if obs.flames:
+        partes.append("VE LLAMAS O HUMO")
+    if (obs.discrepancy or "").strip().lower() == "prior_bajo_obs_alta":
+        partes.append(
+            f"está PEOR de lo que decía el mapa (iba como {TRIAGE_ES[previo].lower()})"
+            if previo != TriageLevel.unknown
+            else "está PEOR de lo que decía el mapa"
+        )
+    elif (obs.discrepancy or "").strip().lower() == "prior_alto_obs_baja":
+        partes.append("está mejor de lo que decía el mapa")
+    if (obs.call_result or "").strip().lower() == "cortada":
+        partes.append("la llamada se cortó a medias")
+    if (obs.confidence or "").strip().lower() == "baja":
+        partes.append("el agente no las tiene todas consigo (confianza baja)")
+    if partes:
+        return "; ".join(partes)
+    if obs.notes:
+        return obs.notes.strip()
+    # Sin nada reseñable. Que el agente haya comparado y no encontrado diferencia es un
+    # resultado, y se dice; si ni siquiera hubo comparación, se dice eso otro.
+    if (obs.discrepancy or "").strip().lower() == "ninguna":
+        return "la llamada confirma lo que traía el mapa"
+    return "la llamada no añadió nada que el mapa no supiera"
 
 
 @router.post("/calls/started", response_model=WriteResponse)

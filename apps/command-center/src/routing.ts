@@ -169,6 +169,7 @@ export async function fetchDrivingRoute(
   signal?: AbortSignal,
   request: typeof fetch = fetch,
   maxAccessM = 100,
+  roadOnly = false,
 ): Promise<{ route?: Route; error?: string }> {
   if (![...origin, ...destination].every(Number.isFinite) || Math.abs(origin[0]) > 180 || Math.abs(destination[0]) > 180 || Math.abs(origin[1]) > 90 || Math.abs(destination[1]) > 90) {
     return { error: 'Origen o destino fuera de rango.' }
@@ -189,7 +190,7 @@ export async function fetchDrivingRoute(
     const startM = haversineMeters(...origin, ...coordinates[0])
     const endM = haversineMeters(...coordinates[coordinates.length - 1], ...destination)
     if (startM > maxAccessM || endM > maxAccessM) return { error: `Directions devuelve un acceso de más de ${maxAccessM} m. Requiere revisión.` }
-    return { route: buildRoute({ id, group: 'dispatch', zoneId: id }, [origin, ...coordinates, destination], result.duration + (startM + endM) / (4000 / 3600)) }
+    return { route: buildRoute({ id, group: 'dispatch', zoneId: id }, roadOnly ? coordinates : [origin, ...coordinates, destination], result.duration + (roadOnly ? 0 : (startM + endM) / (4000 / 3600))) }
   } catch (error) {
     if (signal?.aborted) throw error
     return { error: error instanceof DOMException && error.name === 'TimeoutError' ? 'Directions no respondió en 12 segundos' : 'No se pudo conectar con Mapbox Directions' }

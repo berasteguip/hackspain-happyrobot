@@ -10,6 +10,17 @@ export type CallStateName =
   | 'simulated'
   | 'stale'
 
+/** El color con el que el agente de voz cerró la llamada (`Triage.level` en `api/models.py`). */
+export type TriageLevel = 'red' | 'orange' | 'yellow' | 'green' | 'unknown'
+
+export type Triage = {
+  level: TriageLevel
+  /** La frase en español que explica el color. La redacta la API, no el mapa. */
+  reason: string | null
+  confidence: string | null
+  at: string | null
+}
+
 export type CitizenStatus =
   | 'pending'
   | 'ringing'
@@ -42,6 +53,8 @@ export type Citizen = {
   locationSource?: 'reference' | 'simulation' | 'gps' | 'unknown'
   /** Estado del INTENTO de llamada real (viene de la API), distinto de `status`. */
   callState?: CallStateName
+  /** Lo que el agente concluyó al colgar. Sin llamada atendida no existe. */
+  triage?: Triage
   /** ¿Sonaría el teléfono, o lo pararía el cerrojo de la API? */
   dialable?: boolean
   locationUpdatedAt?: number

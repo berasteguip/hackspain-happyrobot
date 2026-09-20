@@ -98,6 +98,7 @@ rutas en línea recta, escenario `tests/fixtures/test-mini.json`, JSONL de test 
 |---|---|
 | `POST /calls/started` | La llamada está en curso. |
 | `POST /calls/outcome` | Lo que la llamada dejó: datos, negativa, o silencio. Un vecino mencionado se convierte en casa + persona nuevas. |
+| `POST /calls/observation` | **El camino de vuelta**: el nodo `Observación` del workflow postea aquí al colgar. Envuelve a `/calls/outcome` y además guarda el color del triaje (`rojo`/`naranja`/`amarillo`/`verde`), que es lo que colorea a la persona en el mapa. |
 
 ### Humano al mando
 

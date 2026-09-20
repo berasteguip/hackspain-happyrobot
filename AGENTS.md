@@ -111,3 +111,61 @@ Verificación: `npm test && npm run lint && npm run build` en `apps/command-cent
 externos controlados: animación, movimiento reducido, giro/zoom/inclinación, resize móvil y
 encendido/apagado correctos; sin llamadas. Fuente: petición de Mateo y pruebas locales del
 2026-09-19, sobre main `2c7788a`.
+
+## 8. Interfaz mínima sobre main — 2026-09-19
+
+Petición de Mateo: interfaz sencilla y profesional, sin quitar operaciones. Base de esta
+iteración: main `303237b`. Mantener carbón y gris azulado, iconos SVG consistentes, selector
+compacto de escenario y barra de campaña de unos 72 px. Escenarios, propagación/viento,
+centros, avisos/medios, personas, capas/leyenda y campaña viven en un único panel bajo demanda.
+Encuadre agrupa centrar incendio/persona, ver ruta y ver todo. No volver a cajas permanentes
+superpuestas ni al formulario de clave abierto por defecto. Mantener foco visible, Escape,
+contraste de llamadas reales, el tablero de resultados y los bloqueados por la API.
+
+No cambiar `api/`, `crisisApi.ts`, escenarios, dispatch ni Railway para este rediseño.
+El envío de un medio desde una ficha cierra esa selección para mostrar Avisos y medios.
+Verificación: 41 tests, lint y build; comprobación de navegador en 1440, 1024, 390 y 320 px,
+con proveedores controlados, incluyendo envío simulado a `/calls/dispatch`, tablero, exclusiones,
+capas, rutas, medios, avisos, viento, cambio de escenario y foco de teclado. No se ejecutaron
+llamadas reales. El script temporal de comprobación es `/tmp/vigia-minimal-ui.mjs` en este equipo.
+
+Preferencia posterior de Mateo (2026-09-19): los sitios sí usan los emojis solicitados:
+🏥 hospitales y centros de salud, ⛺ puntos de encuentro, 🚒 parques de bomberos. Compartir
+`SITE_EMOJI` de `src/response.ts` entre mapa, listas, capas y leyenda. Mantener un pequeño
+indicador de exposición junto al punto de encuentro, sus nombres y las interacciones.
+La navegación y el resto de controles conservan los iconos SVG.
+
+## 9. Medios en patrullaje — 2026-09-19
+
+Petición de Mateo: dos patrullas y dos ambulancias recorren calles por escenario; pins con
+punta apoyada en la posición y dibujos de vehículos, sin emojis para los medios móviles.
+Los sitios conservan los emojis del apartado anterior. Posiciones y movimiento son simulados,
+no GPS de servicios reales. No implementar todavía decisiones ni integración de agentes.
+
+`units.ts` expone `createPatrolFleet`, `redirectUnit(unit, target, now, requestedBy)` y
+`applyUnitPlan`. El ID y distintivo de cada unidad son estables; `mission` separa patrulla de
+asignación y `revision` impide aplicar rutas antiguas tras una redirección. La ruta nueva sale
+de la posición actual, nunca vuelve a la base. Los botones manuales existentes reutilizan
+primero una unidad sin asignación; no hay órdenes automáticas de HappyRobot.
+
+Los circuitos se calculan con tres tramos dirigidos de Mapbox y se reutilizan en memoria al
+dar vueltas (hasta 12 consultas iniciales por escenario, consumen cuota). Máximo dos unidades
+planificando simultáneamente. Pausa y pestaña oculta detienen el avance; al cambiar de escenario
+se abortan consultas y se sustituyen las unidades. Sin ruta válida, estado `hold` y reintento
+manual: no reintroducir el fallback recto. `fetchDrivingRoute(..., roadOnly=true)` conserva la
+geometría de carretera sin conectores a edificios; llegada al acceso, no a una posición inventada.
+La continuidad del circuito admite hasta 2 m de diferencia de ajuste entre extremos.
+
+Verificación: 48 tests, lint y build; navegador con proveedores controlados para movimiento,
+pausa, clic en pin, redirección, resultado tardío al cambiar de escenario, fallo sin movimiento,
+reintento y móvil. Script temporal: `/tmp/vigia-patrol-ui.mjs`. Se consultó Mapbox Directions
+con el token público aportado: los ocho circuitos Madrid/Gredos devolvieron geometrías válidas;
+esto no valida seguridad operativa frente al incendio. Sin llamadas ni cambios en workflows.
+
+Cambio visual posterior de Mateo: solo la policía pasa de pin a coche azul con volumen.
+`heading` se calcula sobre la carretera con una ventana de 8 m a ambos lados para suavizar
+curvas. El mapa selecciona entre 24 vistas del coche y compensa el giro de cámara; la posición
+permanece sobre la ruta. Ambulancias y bomberos móviles conservan su pin. No usar un emoji
+ni volver a implementar decisiones de agente como parte de este ajuste. 49 tests, lint y build.
+Navegador verificado con `/tmp/vigia-police-car-ui.mjs`: 24 vistas, cambios de rumbo,
+compensación de cámara y clic sobre el coche; proveedores externos controlados.

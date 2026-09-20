@@ -11,8 +11,16 @@ envejece el mismo día.
 
 ## 1. Qué hay desplegado
 
-Workflow **`Triaje incendios — MVP`** (`01a0b74c-0573-7ae5-9206-55a933434ad0`),
-versión 2, **draft: ni publicada ni live**. Cuatro nodos:
+Workflow **`Triaje incendios — MVP`** (`01a0b74c-0573-7ae5-9206-55a933434ad0`).
+
+> **Foto de la v2, obsoleta desde el 19 sep 2026 por la tarde.** Ese día el workflow
+> creció hasta la **v6 (publicada y LIVE)**, con 15 nodos: trigger `Incoming hook`,
+> tres cerrojos de destino en Python Sandbox, tres agentes de voz (la persona, un
+> tercero mencionado y un organismo oficial) y sus tools. La v6 sigue siendo la base;
+> lo único que le falta al contrato es lo que añade la **v7** del §5. La tabla de abajo
+> se conserva porque el nodo `Observación` y el prompt no han cambiado.
+
+Cuatro nodos (v2):
 
 | Nodo | Tipo | Qué hace |
 | --- | --- | --- |
@@ -49,8 +57,8 @@ Tres consecuencias:
    ordena la cola por **minutos hasta que el fuego alcanza a la persona**
    ([`03-contrato-de-datos.md`](03-contrato-de-datos.md) §4). Son dos modelos de
    severidad distintos y nadie los ha mapeado.
-3. **El extract no sale a ningún sitio.** No hay nodo `Webhook` que empuje el
-   resultado a `api/`.
+3. ~~**El extract no sale a ningún sitio.** No hay nodo `Webhook` que empuje el
+   resultado a `api/`.~~ **Resuelto el 2026-09-19** — ver §5.
 
 **Bug, además:** el `Initial Message` del agente tiene las variables sin interpolar.
 Sale por voz *«le llama el asistente automático de ␣ por el incendio en ␣.»*, con los
@@ -136,10 +144,55 @@ Fuentes de esta revisión: solicitud del equipo del 2026-09-19;
 [`../../api/notify.py`](../../api/notify.py) y
 [`../../prompts/07-guion-demo.md`](../../prompts/07-guion-demo.md) (revisados 2026-09-19).
 
+## 5. El camino de vuelta: la observación vuelve a Vigía — 2026-09-19
+
+Hecho, no hipótesis. Versión **7** del workflow `Triaje incendios — MVP`
+(`cmupqukyx4lk`), forkeada de la v6 que estaba en vivo: un nodo **`Webhook POST`
+«Observación → Vigía»** cuelga del nodo `Observación` y postea el extract a
+`{{API_BASE_URL}}/calls/observation` con `x-api-key: {{API_KEY}}`.
+
+En `api/` lo recoge `POST /calls/observation`
+([`api/routers/calls.py`](../../api/routers/calls.py)), que **envuelve** a `/calls/outcome`
+—o sea, no duplica el mecanismo de llamadas— y además escribe un objeto `Triage` sobre la
+`Person`. `GET /api/roster` lo expone y el puesto de mando colorea el punto con él.
+
+Sobre el desajuste del §2, que sigue siendo real: no se ha renombrado nada en la plataforma.
+Los nombres del extract (`nivel`, `zona_declarada`, `discrepancia`…) se aceptan **como alias**
+del contrato en inglés, y `person_id` viaja aparte, desde `{{hook.data.PERSONA_ID}}`, que es el
+mismo id que la API mandó al disparar la llamada. Los puntos 1 y 2 del §2 quedan así:
+
+- **Punto 1 (no hay `person_id`)**: resuelto. No sale del extract, sale del trigger.
+- **Punto 2 (`nivel` vs `minutes_to_front`)**: **no se mapean, y es deliberado.**
+  `minutes_to_front` es geometría y sigue ordenando la cola; `triage.level` es lo que dijo una
+  persona y es lo que tiñe el mapa. Inventar una equivalencia (`rojo = 10 min`) sería fabricar
+  un dato: la persona no dijo minutos. Donde discrepan, el campo `discrepancia` del propio
+  extract lo dice con todas las letras y el mando lo lee en la ficha.
+
+### Verificado con sondas contra la plataforma (2026-09-19)
+
+- La sustitución de variables dentro de un `body.raw` con `contentType: application/json`
+  **escapa las comillas** del texto libre: una `nota_libre` con `Dice: "salgo ya"` llega como
+  JSON válido. Comprobado con `test_node` contra `POST /positions` de la API desplegada, que
+  devolvió el cuerpo parseado en su error de validación.
+- `test_node` sobre un nodo webhook lo ejecuta **sin lanzar la llamada de voz**: es la forma
+  barata de probar este nodo sin que suene ningún teléfono.
+
+### Pendiente antes de publicar la v7
+
+1. **La variable `API_KEY` del workflow no la acepta la API desplegada** (`401 x-api-key
+   inválida o ausente`, sonda del 19 sep 2026). Tiene que valer exactamente lo mismo que
+   `HR_SHARED_SECRET` en Railway. La variable `HR_SHARED_SECRET` del workflow tampoco vale:
+   está comprobado que da 401.
+2. **`/calls/observation` todavía no está desplegado.** Vive en la rama
+   `claude/agent-app-webhook-bidirectional-a8316e`; hasta que llegue a Railway el nodo daría 404.
+
+Con esas dos cosas hechas, publicar la v7 (reemplaza a la v6 en producción) y volver a lanzar la
+sonda: un `501` desde `/sim/run` o un `200` desde `/calls/observation` confirman el circuito.
+
 ## Preguntas abiertas
 
 - [ ] ¿El agente ordena moverse o solo informa la ruta? (§3 — bloquea el resto)
-- [ ] ¿Quién alinea `Observación` con `prompts/05-extraccion.md`, y cuándo?
+- [x] ¿Quién alinea `Observación` con `prompts/05-extraccion.md`, y cuándo? — 2026-09-19: no se alinea en la plataforma; la API acepta los nombres del extract como alias (§5).
 - [ ] ¿De dónde sale el número para los SMS salientes: Twilio propio o compra?
 - [ ] ¿Se retira `/track` en favor de `web/gps`, o al revés?
 

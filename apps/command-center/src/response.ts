@@ -12,6 +12,7 @@ export type ResponseCenter = {
   sources: { label: string; url: string }[]
 }
 
+export const SITE_EMOJI = { hospital: '🏥', health: '🏥', fire: '🚒', meeting: '⛺' } as const
 export const CENTER_LABEL = { hospital: 'Hospital', health: 'Centro de salud', fire: 'Bomberos' }
 export const CENTER_COLOR = { hospital: '#bda7ed', health: '#7aa8c4', fire: '#eea26a' }
 export const RESPONSE_CENTERS: ResponseCenter[] = [
