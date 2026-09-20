@@ -261,12 +261,12 @@ select:focus-visible, textarea:focus-visible { outline: 2px solid var(--move); o
 
 /* Memoria compartida — el log de llamadas, abajo a la izquierda sobre el mapa.
    Lo que una llamada averigua y las otras pueden consultar sin volver a preguntar. */
-.call-log { position: absolute; left: 24px; bottom: 24px; width: 330px; max-height: min(46dvh, 460px); z-index: 4; display: flex; flex-direction: column; background: var(--panel); border: 1px solid #3a484fcc; border-radius: 8px; box-shadow: 0 4px 25px #0003; backdrop-filter: blur(14px); overflow: hidden; }
+.call-log { position: absolute; left: 24px; bottom: 68px; width: 330px; max-height: min(42dvh, 430px); z-index: 4; display: flex; flex-direction: column; background: var(--panel); border: 1px solid #3a484fcc; border-radius: 8px; box-shadow: 0 4px 25px #0003; backdrop-filter: blur(14px); overflow: hidden; }
 .call-log.collapsed { max-height: none; }
 .call-log > header { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .call-log.collapsed > header { border-bottom: 0; }
 .call-log > header strong { font-size: 12px; font-weight: 550; }
-.call-log > header > button { margin-left: auto; display: grid; place-items: center; width: 24px; height: 24px; border: 0; background: transparent; color: #9bafbd; border-radius: 4px; font-size: 11px; }
+.call-log > header > button { margin-left: auto; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); background: transparent; color: #c0cdd6; border-radius: 4px; font-size: 13px; line-height: 1; }
 .call-log > header > button:hover { background: #34434d; color: white; }
 .log-count { font: 10px ui-monospace, monospace; color: #92a6b4; background: #2a353d; border-radius: 3px; padding: 1px 6px; }
 .log-count.open { color: var(--warn); background: #d797701f; }

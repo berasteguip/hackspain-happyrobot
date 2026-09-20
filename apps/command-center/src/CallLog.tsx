@@ -78,7 +78,7 @@ export function CallLog() {
         <span className={`log-dot${pulse ? ' pulsing' : ''}`} aria-hidden="true" />
         <strong>Memoria compartida</strong>
         <span className="log-count">{entries.length}</span>
-        {open > 0 && <span className="log-count open" title="Dudas sin respuesta">{open} abiertas</span>}
+        {open > 0 && <span className="log-count open" title="Dudas sin respuesta">{open} {open === 1 ? 'abierta' : 'abiertas'}</span>}
         <button type="button" aria-expanded={!collapsed} aria-label={collapsed ? 'Desplegar' : 'Plegar'} onClick={() => setCollapsed(v => !v)}>{collapsed ? '▴' : '▾'}</button>
       </header>
 
