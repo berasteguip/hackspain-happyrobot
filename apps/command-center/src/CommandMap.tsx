@@ -367,7 +367,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
   spread: ['fire-smoke'],
   plannedFire: ['planned-fire-fill', 'planned-fire-edge', 'planned-fire-label'],
   thermal: ['thermal-core', 'thermal-satellite'],
-  citizens: ['people-glow', 'people-dot', 'people-escalated', 'people-rerouted', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
+  citizens: ['people-glow', 'people-dot', 'people-no-answer-halo', 'people-no-answer', 'people-escalated', 'people-rerouted', 'people-area-highlight', 'people-selection', 'people-label', 'accuracy-fill', 'accuracy-line'],
   references: [],
   zones: ['zone-area', 'zone-edge', 'zone-point', 'zone-label'],
   hospitals: ['center-hospital', 'center-hospital-label'],
@@ -647,6 +647,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   const visible: mapboxgl.FilterSpecification = layers.references ? ['has', 'id'] : ['==', ['get', 'reference'], false]
   map.setFilter('people-glow', visible)
   map.setFilter('people-dot', visible)
+  for (const id of ['people-no-answer-halo', 'people-no-answer']) map.setFilter(id, ['all', visible, ['==', ['get', 'status'], 'no_answer']])
   map.setFilter('people-area-highlight', ['all', visible, ['in', ['get', 'id'], ['literal', areaIds]]])
   for (const id of ['people-selection', 'people-label']) {
     map.setFilter(id, ['all', visible, ['==', ['get', 'id'], selectedId ?? '']])
@@ -830,7 +831,18 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         'circle-stroke-opacity': 0.85,
       } })
       // Casas escaladas a fuerzas de seguridad: un anillo rojo alrededor del punto hasta que alguien llegue.
-      map.addLayer({ id: 'people-escalated', type: 'circle', source: 'people', filter: ['==', ['get', 'escalated'], true], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 11, 7, 14, 10, 17, 13], 'circle-opacity': 0, 'circle-stroke-color': '#ff3b3b', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.85 } })
+      map.addLayer({ id: 'people-escalated', type: 'circle', source: 'people', filter: ['==', ['get', 'escalated'], true], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 7, 11, 9, 14, 13, 17, 17], 'circle-opacity': 0, 'circle-stroke-color': '#ff3b3b', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.85 } })
+      // La casa que no descuelga es la que hay que ver desde el otro lado de la sala: halo ancho y
+      // punto el doble de grande que los demás, con borde blanco para que no se funda con el fuego.
+      map.addLayer({ id: 'people-no-answer-halo', type: 'circle', source: 'people', filter: ['==', ['get', 'status'], 'no_answer'], paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 9, 11, 12, 14, 18, 17, 24],
+        'circle-color': NO_ANSWER_COLOR, 'circle-opacity': 0.28, 'circle-blur': 0.7,
+      } })
+      map.addLayer({ id: 'people-no-answer', type: 'circle', source: 'people', filter: ['==', ['get', 'status'], 'no_answer'], paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 4, 11, 5.5, 14, 8, 17, 11],
+        'circle-color': NO_ANSWER_COLOR, 'circle-opacity': 1,
+        'circle-stroke-color': '#ffffff', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 1.2, 14, 2, 17, 2.5], 'circle-stroke-opacity': 0.95,
+      } })
       // Personas con destino cambiado por un frente previsto: anillo naranja hasta que llegan.
       map.addLayer({ id: 'people-rerouted', type: 'circle', source: 'people', filter: ['==', ['get', 'rerouted'], true], paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 11, 7, 14, 10, 17, 13], 'circle-opacity': 0, 'circle-stroke-color': '#ffb070', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.9 } })
       map.addLayer({ id: 'people-area-highlight', type: 'circle', source: 'people', paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.3, 11, 3, 14, 4.4, 17, 5.6], 'circle-opacity': 0, 'circle-stroke-color': '#d3f0ff', 'circle-stroke-width': 1, 'circle-stroke-opacity': 0.5 } }, 'people-dot')
@@ -871,7 +883,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
           popup.setLngLat([zone.lng, zone.lat]).setDOMContent(zonePopupContent(zone, dataRef.current.zoneExposure[zone.id], dataRef.current.horizon)).addTo(map)
           return
         }
-        const people = map.queryRenderedFeatures(box, { layers: ['people-dot'] })
+        const people = map.queryRenderedFeatures(box, { layers: ['people-no-answer', 'people-dot'] })
         if (people.length) {
           const nearest = people.reduce((best, feature) => {
             const point = map.project((feature.geometry as Point).coordinates as [number, number])
@@ -914,7 +926,7 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
       })
       map.on('mousemove', (event) => {
         const { x, y } = event.point
-        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'ambulance-vehicle', 'helicopter-unit', 'unit-point', 'unit-label', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
+        const features = map.queryRenderedFeatures([[x - 7, y - 7], [x + 7, y + 7]], { layers: ['police-car', 'ambulance-vehicle', 'helicopter-unit', 'unit-point', 'unit-label', 'people-no-answer', 'people-dot', 'thermal-core', 'thermal-satellite', 'fire-flame', 'fire-ember', 'fire-smoke', 'zone-point', 'zone-label', 'center-hospital', 'center-health', 'center-fire', 'center-hospital-label', 'center-health-label', 'center-fire-label'] })
         map.getCanvas().style.cursor = interactionRef.current.drawingArea || interactionRef.current.drawingFire ? 'crosshair' : features.length ? 'pointer' : ''
       })
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)')
