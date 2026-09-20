@@ -9,6 +9,8 @@ export type FireForecast = {
   cellSizeM: number
   cells: Map<string, Cell>
   initialCells: Cell[]
+  windTowardDeg: number
+  windKmh: number
 }
 export const MAX_FORECAST_MIN = 120
 /** Minutos de simulación que tarda una celda en aparecer o apagarse en el mapa. Solo visual. */
@@ -40,28 +42,36 @@ export function cellVisualHeat(minute: number, horizon: number) {
   return bloom * (0.38 + 0.62 * smoothstep(age / 18))
 }
 
+export function windLeanOffset(forecast: FireForecast, cells = 1): [number, number] {
+  const angle = forecast.windTowardDeg * Math.PI / 180
+  const meters = cells * forecast.cellSizeM * Math.min(1.15, forecast.windKmh / 22)
+  return [Math.sin(angle) * meters / forecast.lngScale, Math.cos(angle) * meters / 111320]
+}
+
 export function forecastHeatPoints(forecast: FireForecast, horizon: number): FeatureCollection<Point> {
   const features: FeatureCollection<Point>['features'] = []
   const jitter = forecast.cellSizeM * 0.28
+  const [leanLng, leanLat] = windLeanOffset(forecast, 0.85)
+  const [stretchLng, stretchLat] = windLeanOffset(forecast, 1.35)
   for (const cell of forecast.cells.values()) {
     if (cell.minute === 0) continue
     const heat = cellVisualHeat(cell.minute, horizon)
     if (heat <= 0.03) continue
-    const lng = forecast.origin[0] + (cell.x + 0.5 + (hash(cell.x, cell.y) - 0.5) * 0.56) * forecast.cellSizeM / forecast.lngScale
-    const lat = forecast.origin[1] + (cell.y + 0.5 + (hash(cell.x + 4.2, cell.y + 1.8) - 0.5) * 0.56) * forecast.cellSizeM / 111320
+    const lng = forecast.origin[0] + (cell.x + 0.5 + (hash(cell.x, cell.y) - 0.5) * 0.56) * forecast.cellSizeM / forecast.lngScale + leanLng * (0.35 + heat * 0.65)
+    const lat = forecast.origin[1] + (cell.y + 0.5 + (hash(cell.x + 4.2, cell.y + 1.8) - 0.5) * 0.56) * forecast.cellSizeM / 111320 + leanLat * (0.35 + heat * 0.65)
     const front = horizon - cell.minute < 16 ? 1 : 0
     features.push({
       type: 'Feature',
       properties: { heat, front },
       geometry: { type: 'Point', coordinates: [lng, lat] },
     })
-    if (heat > 0.55) {
+    if (heat > 0.45) {
       features.push({
         type: 'Feature',
-        properties: { heat: heat * 0.7, front },
+        properties: { heat: heat * 0.68, front },
         geometry: { type: 'Point', coordinates: [
-          lng + (hash(cell.x, cell.y + 9) - 0.5) * 2 * jitter / forecast.lngScale,
-          lat + (hash(cell.x + 8, cell.y) - 0.5) * 2 * jitter / 111320,
+          lng + stretchLng * 0.55 + (hash(cell.x, cell.y + 9) - 0.5) * 2 * jitter / forecast.lngScale,
+          lat + stretchLat * 0.55 + (hash(cell.x + 8, cell.y) - 0.5) * 2 * jitter / 111320,
         ] },
       })
     }
@@ -128,8 +138,9 @@ export function buildFireForecast(footprint: FeatureCollection<Polygon>, setting
     const angle = windTowardDeg * Math.PI / 180
     const steps = [-1, 0, 1].flatMap(y => [-1, 0, 1].filter(x => x || y).map(x => {
       const length = Math.hypot(x, y)
-      const alignment = Math.max(0, (x * Math.sin(angle) + y * Math.cos(angle)) / length)
-      return { x, y, minutes: length * cellSizeM / (spreadMPerMin * (1 + windKmh / 20 * alignment)) }
+      const heading = (x * Math.sin(angle) + y * Math.cos(angle)) / length
+      const factor = Math.max(0.26, 1 + windKmh / 14 * heading)
+      return { x, y, minutes: length * cellSizeM / (spreadMPerMin * factor) }
     }))
     while (queue.items.length) {
       const current = queue.pop()
@@ -147,7 +158,7 @@ export function buildFireForecast(footprint: FeatureCollection<Polygon>, setting
       }
     }
   }
-  return { origin, lngScale, cellSizeM, cells, initialCells }
+  return { origin, lngScale, cellSizeM, cells, initialCells, windTowardDeg, windKmh }
 }
 
 export function forecastGeo(forecast: FireForecast, horizon: number): FeatureCollection<Polygon> {

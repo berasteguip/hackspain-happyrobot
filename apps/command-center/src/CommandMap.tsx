@@ -7,7 +7,7 @@ import { FIRE_CELL_SIZE_M } from './scenario'
 import type { Incident } from './scenario'
 import { destination, haversineMeters } from './geo'
 import type { CallArea, Citizen, FireSpot, MapLayers, SafeZone } from './types'
-import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints } from './fire-model'
+import { EXPOSURE_COLOR, EXPOSURE_LABEL, forecastHeatPoints, windLeanOffset } from './fire-model'
 import type { Exposure, FireForecast } from './fire-model'
 import { CENTER_COLOR, SITE_EMOJI } from './response'
 import type { ResponseCenter } from './response'
@@ -86,6 +86,7 @@ const LAYER_IDS: Record<keyof MapLayers, string[]> = {
 }
 
 type Props = {
+  liveMode?: boolean
   token: string
   citizens: Citizen[]
   fires: FireSpot[]
@@ -130,10 +131,14 @@ function sampleHeat(feature: FeatureCollection<Polygon>['features'][number], hea
 }
 
 function fireHeatPoints(cells: FeatureCollection<Polygon>, forecast: FireForecast, horizon: number): FeatureCollection<Point> {
+  const [leanLng, leanLat] = windLeanOffset(forecast, 0.5)
   return {
     type: 'FeatureCollection',
     features: [
-      ...cells.features.flatMap(feature => sampleHeat(feature, Number(feature.properties?.heat ?? 0.7), Math.max(2, Number(feature.properties?.cellCount) || 1))),
+      ...cells.features.flatMap(feature => sampleHeat(feature, Number(feature.properties?.heat ?? 0.7), Math.max(2, Number(feature.properties?.cellCount) || 1)).map(point => ({
+        ...point,
+        geometry: { type: 'Point' as const, coordinates: [point.geometry.coordinates[0] + leanLng, point.geometry.coordinates[1] + leanLat] },
+      }))),
       ...forecastHeatPoints(forecast, horizon).features,
     ],
   }
@@ -251,7 +256,7 @@ function patchLayers(map: mapboxgl.Map, layers: MapLayers, selectedId: string | 
   }
 }
 
-export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, units, onUnitSelect, fireCells, centers, incident }: Props) {
+export function CommandMap({ token, citizens, fires, zones, selectedId, layers, onSelect, projection, forecast, zoneExposure, horizon, marginM, route, focusTarget, onCenterSelect, showWind, windDirection, windKmh, callArea, areaIds, drawingArea, onAreaChange, onAreaComplete, units, onUnitSelect, fireCells, centers, incident, liveMode = false }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const popupRef = useRef<mapboxgl.Popup | null>(null)
@@ -620,6 +625,13 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
     if (selected) mapRef.current?.flyTo({ center: [selected.lng, selected.lat], zoom: 14, duration: 850 })
   }
 
+  const framePeople = () => {
+    if (!citizens.length) return
+    const bounds = new mapboxgl.LngLatBounds()
+    citizens.forEach(person => bounds.extend([person.lng, person.lat]))
+    mapRef.current?.fitBounds(bounds, { padding: 80, maxZoom: 15, duration: 800 })
+  }
+
   return (
     <>
       <div ref={rootRef} className="map-root" aria-label={`Mapa de situación · ${incident.area}`} />
@@ -631,10 +643,10 @@ export function CommandMap({ token, citizens, fires, zones, selectedId, layers, 
         <details className="view-options" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
           <summary>Encuadre</summary>
           <div onClick={event => { if ((event.target as HTMLElement).closest('button')) { const details = event.currentTarget.closest('details'); if (details) { details.open = false; details.querySelector('summary')?.focus() } } }}>
-            <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>Centrar incendio</button>
+            <button type="button" disabled={liveMode && !citizens.length} onClick={liveMode ? framePeople : () => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: { top: 125, bottom: 165, left: 35, right: 35 }, duration: 800, maxZoom: incident.zoom })}>{liveMode ? 'Centrar censo' : 'Centrar incendio'}</button>
             {selectedId && <button type="button" onClick={locate}>Centrar persona</button>}
             {route && <button type="button" onClick={() => { const bounds = new mapboxgl.LngLatBounds(); route.coordinates.forEach(point => bounds.extend(point)); mapRef.current?.fitBounds(bounds, { padding: rootRef.current && rootRef.current.clientWidth > 900 ? { top: 140, bottom: 170, left: 80, right: 420 } : 90, duration: 800 }) }}>Ver ruta</button>}
-            <button type="button" onClick={() => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
+            <button type="button" disabled={liveMode && !citizens.length} onClick={liveMode ? framePeople : () => mapRef.current?.fitBounds(overviewBounds(fireCells, centers, zones, fires), { padding: overviewPadding(rootRef.current?.clientWidth ?? 1000), duration: 800 })}>Ver todo</button>
           </div>
         </details>
       </div>

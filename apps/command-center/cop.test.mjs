@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
 after(() => server.close())
 const { buildFireForecast, forecastGeo, forecastHeatPoints, cellVisualHeat, exposureAt, routeBlocked } = await server.ssrLoadModule('/src/fire-model.ts')
+const { rankCitizens, silentHouses, planDiff, formConvoys, aerialSectors, formatFrontEta } = await server.ssrLoadModule('/src/priority.ts')
 const { fetchRefugeRoutes, rankRefugeRoutes, planCitizenRoute, fetchDrivingRoute } = await server.ssrLoadModule('/src/routing.ts')
 const { detectAlerts, initialWatch, mergeAlerts, ALERT_ACTION_LABEL } = await server.ssrLoadModule('/src/alerts.ts')
 const { createDispatch, moveUnits, planUnitRoute, unitOrigin, originsFrom } = await server.ssrLoadModule('/src/units.ts')
@@ -21,10 +22,21 @@ const settings = { windTowardDeg: 90, windKmh: 30, spreadMPerMin: 5 }
 const forecast = buildFireForecast(footprint, settings)
 const at = (x, y) => [forecast.origin[0] + (x + 0.5) * forecast.cellSizeM / forecast.lngScale, forecast.origin[1] + (y + 0.5) * forecast.cellSizeM / 111320]
 
-test('el mapa abre despejado y conserva accesos a escenario, campaña y todas las herramientas', async () => {
+test('la entrada explica el escenario y muestra accesos a todas las herramientas', async () => {
   const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
   const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test' }))
   for (const label of ['Cambiar escenario', 'Opciones de campaña', 'Dibujar zona de llamadas', 'Propagación', 'Centros y coordinación', 'Avisos', 'Personas', 'Capas']) assert.ok(html.includes(label), label)
+  assert.ok(html.includes('data-tour="brand"'))
+  assert.ok(html.includes('data-tour="cop-strip"'))
+  assert.ok(html.includes('data-tour="campaign"'))
+  assert.ok(html.includes('data-tour="people-nav"'))
+  assert.ok(html.includes('data-tour="cop-nav"'))
+  assert.ok(html.includes('class="tour-replay"'))
+  assert.ok(html.includes('Evacuación por incendio'))
+  assert.ok(html.includes('Iniciar simulación'))
+  assert.ok(html.includes('Personas y rutas'))
+  assert.ok(html.includes('Fuego y evacuación'))
+  assert.ok(html.includes('workspace-sidebar'))
   assert.ok(html.includes('Simulación local'))
   assert.ok(html.includes('campaign-dock'))
   assert.ok(!html.includes('class="forecast-summary"'))
@@ -32,6 +44,101 @@ test('el mapa abre despejado y conserva accesos a escenario, campaña y todas la
   assert.ok(!html.includes('class="incident-list"'))
   assert.ok(!html.includes('type="password"'))
   assert.ok(!html.includes('class="floating-panel"'))
+})
+
+test('la entrada separa simulación y operación real mediante pestañas accesibles', async () => {
+  const { CommandCenter } = await server.ssrLoadModule('/src/CommandCenter.tsx')
+  const html = renderToStaticMarkup(createElement(CommandCenter, { token: 'test' }))
+  assert.match(html, /role="tab" id="tab-simulation" aria-selected="true"/)
+  assert.match(html, /role="tab" id="tab-live" aria-selected="false"/)
+  assert.match(html, /id="mode-live"[^>]*hidden=""/)
+  assert.ok(!html.includes('Llamar de verdad por HappyRobot'))
+})
+
+test('operación real permite preparar un incendio sin añadir población ficticia', async () => {
+  const { CommandWorkspace } = await server.ssrLoadModule('/src/CommandCenter.tsx')
+  const html = renderToStaticMarkup(createElement(CommandWorkspace, { token: 'test', liveMode: true, active: true }))
+  assert.ok(html.includes('Personas 0'))
+  assert.ok(html.includes('Preparar situación'))
+  assert.ok(html.includes('Situación de prueba'))
+  assert.ok(!html.includes('Fuego simulado. Las llamadas sí son reales.'))
+  assert.ok(html.includes('Conectando con el censo'))
+  for (const simulated of ['Iniciar simulación', 'Fuego y evacuación', 'Avisos y medios', 'Centros y coordinación', 'en &lt;20 min']) assert.ok(!html.includes(simulated), simulated)
+})
+
+test('el ejercicio se sitúa junto al censo sin inventar personas ni centros', async () => {
+  const { liveExerciseScenario, exerciseFireEvent } = await server.ssrLoadModule('/src/liveExercise.ts')
+  const anchor = { lng: -6.3, lat: 41.8 }
+  const exercise = liveExerciseScenario(MADRID_SCENARIO, anchor)
+  assert.ok(Math.abs(haversineMeters(anchor.lng, anchor.lat, ...exercise.incident.center) - 650) < 1)
+  assert.equal(exercise.citizens.length, 0)
+  assert.equal(exercise.centers.length, 0)
+  const payload = exerciseFireEvent(exercise.fireCells, { type: 'FeatureCollection', features: [] }, { windTowardDeg: 45, windKmh: 20, spreadMPerMin: 8 })
+  assert.equal(payload.wind.direction_deg, 225)
+  assert.equal(payload.head_bearing_deg, 45)
+  assert.equal(payload.spread_rate_mh, 480)
+  const ring = payload.perimeter.coordinates[0]
+  assert.deepEqual(ring[0], ring.at(-1))
+  assert.ok(ring.length >= 4)
+  assert.ok(MADRID_SCENARIO.citizens.length > 0)
+})
+
+test('publicar la situación envía solo events/fire, sin invocar dispatch desde el cliente', async (t) => {
+  const { publishExerciseFire } = await server.ssrLoadModule('/src/liveExercise.ts')
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    requests.push({ url, options })
+    return { ok: true, status: 200, json: async () => ({ ok: true, state_version: 2 }) }
+  })
+  const event = { perimeter: { type: 'Polygon', coordinates: [[[-3, 40], [-3, 41], [-2, 40], [-3, 40]]] }, wind: { direction_deg: 225, speed_kmh: 20 }, head_bearing_deg: 45, spread_rate_mh: 480 }
+  await publishExerciseFire('test-operator', event)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].url, '/events/fire')
+  assert.equal(requests[0].options.method, 'POST')
+  assert.equal(requests[0].options.headers['x-api-key'], 'test-operator')
+  assert.deepEqual(JSON.parse(requests[0].options.body), event)
+  await assert.rejects(() => publishExerciseFire('', event), /clave de operador/)
+  assert.equal(requests.length, 1)
+})
+
+test('una respuesta fallida no confirma la publicación del incendio', async (t) => {
+  const { publishExerciseFire } = await server.ssrLoadModule('/src/liveExercise.ts')
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 401 }))
+  await assert.rejects(() => publishExerciseFire('test', {}), /clave de operador no es válida/)
+})
+
+test('el contador de ventana crítica abre su filtro y no el censo completo', async () => {
+  const { CopStrip } = await server.ssrLoadModule('/src/CopPanels.tsx')
+  const opened = []
+  const strip = CopStrip({ total: 110, silent: 3, imminent: 8, onPeople: () => opened.push('all'), onSilent: () => opened.push('no_answer'), onImminent: () => opened.push('imminent') })
+  strip.props.children[2].props.onClick()
+  assert.deepEqual(opened, ['imminent'])
+})
+
+test('la guía recorre las capacidades sin ejecutar operaciones', async () => {
+  const { DEMO_TOUR_STEPS, TOUR_INTRO, TOUR_STORAGE_KEY, shouldAutoStartTour } = await server.ssrLoadModule('/src/demoTour.ts')
+  const ids = DEMO_TOUR_STEPS.map((step) => step.id)
+  assert.equal(DEMO_TOUR_STEPS.length, 10)
+  assert.equal(new Set(ids).size, ids.length)
+  assert.deepEqual(ids, ['context', 'campaign', 'people', 'person', 'routes', 'response', 'alerts', 'wind', 'decisions', 'explore'])
+  for (const step of DEMO_TOUR_STEPS) {
+    assert.ok(step.kicker)
+    assert.ok(step.title)
+    assert.ok(step.description)
+    assert.match(step.element, /^\[data-tour="/)
+  }
+  assert.equal(TOUR_INTRO.checklist.length, 3)
+  assert.equal(TOUR_STORAGE_KEY, 'vigia-tour-seen')
+  assert.equal(typeof shouldAutoStartTour, 'function')
+})
+
+test('la tarjeta de bienvenida ofrece recorrer o explorar', async () => {
+  const { TourIntro } = await server.ssrLoadModule('/src/TourIntro.tsx')
+  const { TOUR_INTRO } = await server.ssrLoadModule('/src/demoTour.ts')
+  const html = renderToStaticMarkup(createElement(TourIntro, { onStart() {}, onDismiss() {} }))
+  assert.ok(html.includes(TOUR_INTRO.title))
+  assert.ok(html.includes(TOUR_INTRO.primary))
+  assert.ok(html.includes(TOUR_INTRO.secondary))
 })
 
 test('los sitios comparten los emojis pedidos y conservan sus nombres accesibles', async () => {
@@ -92,9 +199,56 @@ test('el fuego inicial permanece y el crecimiento aumenta con el horizonte', () 
 })
 
 test('viento hacia el este favorece el este; sin viento la expansión es simétrica', () => {
-  assert.ok(exposureAt(forecast, ...at(3, 0), 120, 0).minute < exposureAt(forecast, ...at(-3, 0), 120, 0).minute)
+  const east = exposureAt(forecast, ...at(3, 0), 120, 0).minute
+  const west = exposureAt(forecast, ...at(-3, 0), 120, 0).minute
+  const north = exposureAt(forecast, ...at(0, 3), 120, 0).minute
+  assert.ok(east < west)
+  assert.ok(east < north)
+  assert.ok(west / east > 2)
   const calm = buildFireForecast(footprint, { ...settings, windKmh: 0 })
   assert.equal(exposureAt(calm, ...at(3, 0), 120, 0).minute, exposureAt(calm, ...at(-3, 0), 120, 0).minute)
+})
+
+test('la cola prioriza minutos al frente y la patrulla solo ve no-respuesta', () => {
+  const east = { ...INITIAL_CITIZENS[0], id: 'e', name: 'Ana', lng: at(3, 0)[0], lat: at(3, 0)[1], status: 'no_answer', locality: 'Este' }
+  const west = { ...INITIAL_CITIZENS[0], id: 'w', name: 'Berta', lng: at(-3, 0)[0], lat: at(-3, 0)[1], status: 'tracking', locality: 'Oeste' }
+  const ranked = rankCitizens([west, east], forecast, 0)
+  assert.equal(ranked[0].id, 'e')
+  assert.ok(ranked[0].minute < ranked[1].minute)
+  assert.equal(silentHouses(ranked).map(citizen => citizen.id).join(), 'e')
+  assert.equal(formatFrontEta(0), 'ahora')
+  assert.equal(formatFrontEta(Infinity), '>2 h')
+})
+
+test('el giro de viento empeora a quien queda a favor y no inventa rutas cortadas', () => {
+  const westWind = buildFireForecast(footprint, { ...settings, windTowardDeg: 270 })
+  const people = [
+    { ...INITIAL_CITIZENS[0], id: 'e', name: 'Este', lng: at(4, 0)[0], lat: at(4, 0)[1], status: 'tracking', locality: 'Este' },
+    { ...INITIAL_CITIZENS[0], id: 'w', name: 'Oeste', lng: at(-4, 0)[0], lat: at(-4, 0)[1], status: 'tracking', locality: 'Oeste' },
+  ]
+  const diff = planDiff({ previous: westWind, next: forecast, fromDeg: 270, toDeg: 90, citizens: people, zones: SAFE_ZONES.slice(0, 1), routes: new Map(), horizon: 60, marginM: 0 })
+  assert.ok(diff.peopleWorse >= 1)
+  assert.equal(diff.routesCut, 0)
+  assert.match(diff.summary, /peor/)
+  const away = planDiff({ previous: forecast, next: westWind, fromDeg: 90, toDeg: 270, citizens: people, zones: SAFE_ZONES.slice(0, 1), routes: new Map(), horizon: 60, marginM: 0 })
+  assert.ok(away.peopleBetter >= 1)
+  assert.match(away.summary, /mejor/)
+})
+
+test('los convoyes piden dos del mismo núcleo y el sector cuenta a quien no está a salvo', () => {
+  const group = [
+    { ...INITIAL_CITIZENS[0], id: 'a', name: 'Guía', status: 'tracking', locality: 'ETSIT', locationSource: 'gps', lng: ETSIT.lng, lat: ETSIT.lat },
+    { ...INITIAL_CITIZENS[0], id: 'b', name: 'Vecina', status: 'evacuating', locality: 'ETSIT', lng: ETSIT.lng + 0.001, lat: ETSIT.lat },
+    { ...INITIAL_CITIZENS[0], id: 'c', name: 'Salvada', status: 'safe', locality: 'ETSIT', lng: ETSIT.lng, lat: ETSIT.lat },
+  ]
+  const ranked = rankCitizens(group, forecast, 150)
+  const convoys = formConvoys(ranked)
+  assert.equal(convoys.length, 1)
+  assert.equal(convoys[0].guide.id, 'a')
+  assert.equal(convoys[0].members.length, 2)
+  const sectors = aerialSectors(ranked, [{ name: 'ETSIT', lng: ETSIT.lng, lat: ETSIT.lat, count: 3, radiusM: 80 }])
+  assert.equal(sectors[0].name, 'ETSIT')
+  assert.equal(sectors[0].count, 2)
 })
 
 test('el frente visual florece antes de la celda y no salta a calor pleno', () => {

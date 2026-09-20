@@ -195,9 +195,119 @@ El equipo elige **simulación configurable** y **avisos solo en interfaz** el
   queda conservada en código, pero ya no es la capa dibujada.
 - **Parámetros ficticios:** viento de 0–60 km/h, dirección **hacia** la que sopla
   (no la procedencia meteorológica), avance base de 0–20 m/min y horizonte
-  0–120 min. El multiplicador direccional es `1 + viento/20 × max(0, cos(ángulo))`.
-  Es una regla gráfica, no una relación física validada entre viento y fuego.
-  No contempla combustible, humedad, pendiente, supresión ni saltos de fuego.
+  0–120 min. ~~El multiplicador direccional es `1 + viento/20 × max(0, cos)`.~~
+  **Ajuste 2026-09-19 noche:** el frente va más rápido a favor del viento y más
+  lento en contra: `max(0.26, 1 + viento/14 × cos)`. El heatmap se desplaza un
+  poco hacia esa dirección para que la elipse se lea. Sigue siendo una regla de
+  demo, no FARSITE ni meteorología real. No contempla combustible, humedad,
+  pendiente, supresión ni saltos de fuego.
+- **Superficie de decisión (2026-09-20):** el CECOP ordena a las personas por minutos
+  hasta el frente (`priority.ts`), lista las casas en no-respuesta para mandar
+  patrulla, y al girar el viento muestra un diff (personas peor, refugios que
+  pasan a ámbar, rutas cortadas). Convoyes por núcleo y prioridad aérea por gente
+  todavía dentro son de demo, no un plan de extinción. Fuente: alcance F3–F5 de
+  [`02-escenario-incendio.md`](02-escenario-incendio.md).
+- **Guía in-app inicial (2026-09-20; sustituida por la revisión siguiente):** tarjeta de bienvenida (`TourIntro.tsx`) y
+  recorrido de cinco pasos con driver.js (`demoTour.ts`). Destaca mapa, tira
+  COP, campaña demo, cola por minutos y giro de viento sin abrir paneles ni
+  HappyRobot. Repetible con «Recorrer demo» o `?guia=1`. No sustituye el guion
+  de 3 minutos de [`02-escenario-incendio.md`](02-escenario-incendio.md) §11.
+  Fuente: driver.js 1.8 — https://driverjs.com/docs/installation (consultado
+  2026-09-20).
+- **Revisión de entrada y guía, antes del ajuste (2026-09-20):** en una sesión nueva de
+  `http://localhost:5173/`, la entrada queda en «Falta el token de Mapbox»; no se
+  pudo verificar visualmente el mapa. El Dockerfile construye el frontend, pero
+  no declara `ARG`/`ENV VITE_MAPBOX_TOKEN`; comprobar su provisión antes de compartir
+  el despliegue. La guía desactiva la interacción con el elemento destacado y no
+  abre paneles: explica controles, no ejecuta una evacuación. Su texto afirma que
+  cada chip abre una cola filtrada, aunque «en <20 min» llama a `onPeople`, igual
+  que el total. Verificación local: 48 tests, lint y build correctos; aviso de
+  bundle grande y error de permisos del WebSocket de Vite durante los tests
+  (sin fallos de tests). Fuentes: [demoTour.ts](../../apps/command-center/src/demoTour.ts),
+  [CopPanels.tsx](../../apps/command-center/src/CopPanels.tsx),
+  [token.ts](../../apps/command-center/src/token.ts), [Dockerfile](../../Dockerfile)
+  y sesión local de revisión del 2026-09-20.
+- **Guía revisada (actualizado 2026-09-20):** se sustituyen los cinco anclajes por
+  diez pasos: situación, campaña, prioridad, ficha personal, rutas, centros,
+  avisos/medios, propagación, convoyes/sectores y primera acción en el mapa. Cada
+  paso abre la vista correspondiente; la ficha usa la persona seleccionada o la
+  primera de la cola. El recorrido no llama, envía medios ni modifica el fuego.
+  Al cerrarlo restaura panel, selección y filtros. El texto distingue llamadas
+  reales de HappyRobot de operaciones simuladas y evita cifras fijas del escenario.
+  Verificación: navegación completa, regreso y finalización en navegador; panel
+  de campaña a 390 × 844. Se usó un token ficticio solo para comprobar la UI: no
+  se verificaron cartografía ni rutas del proveedor. 48 tests, lint y build
+  correctos. Fuentes: [demoTour.ts](../../apps/command-center/src/demoTour.ts),
+  [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx) y pruebas
+  locales del 2026-09-20. Sigue pendiente configurar el token del despliegue.
+- **Entrada y navegación (actualizado 2026-09-20):** petición posterior del usuario:
+  la plataforma no se entiende al abrirla y oculta demasiadas capacidades. Esta
+  revisión da prioridad a esa petición sobre la preferencia anterior de controles
+  mínimos: resumen permanente en escritorio, contexto del escenario, navegación
+  con nombre y descripción, leyenda breve y resultados de campaña visibles.
+  «Iniciar simulación» selecciona el entorno del incendio e inicia únicamente la
+  campaña local existente; se sustituye por «Preparar llamadas» si hay censo de
+  la API o modo real. No pasa por dispatch. El panel de campaña muestra las cinco
+  últimas entradas de actividad y permite abrir sus fichas. El recorrido queda
+  como ayuda opcional; solo `?guia=1` abre su bienvenida automáticamente.
+  En móvil se abre el resumen y «Ver mapa» lo recoge; «Situación y herramientas»
+  permite recuperarlo. El chip «en <20 min» filtra la cola y los resultados de
+  campaña abren sus listas correspondientes. Los estados vacíos explican qué
+  falta en vez de limitarse a un cero.
+  Verificación: 49 tests, lint, build y `git diff --check`; navegador a 1440,
+  390 y 320 px, inicio de campaña local, respuestas, pausa, filtros, navegación
+  móvil y apertura del recorrido. Con token ficticio no se verificaron mapas ni
+  rutas: el proveedor rechazó las consultas y las personas quedaron pendientes
+  de revisión, sin inventar trayectos. No se hicieron llamadas reales ni se
+  desplegó. Fuentes: petición del usuario en esta sesión,
+  [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+  [CopPanels.tsx](../../apps/command-center/src/CopPanels.tsx) y
+  [index.css](../../apps/command-center/src/index.css).
+- **Modos separados (actualizado 2026-09-20):** ante la petición de reducir la carga
+  visual, la cabecera ofrece «Simulación» y «Operación real». Cada pestaña conserva
+  su propio estado. Al salir de simulación se detienen sus temporizadores y al
+  volver continúan desde el estado anterior; cambiar de pestaña no cancela llamadas
+  ya enviadas a HappyRobot. La demo ya no consulta el censo ni las ubicaciones de
+  la API. Operación real parte de un censo vacío, muestra error/reintento si no
+  puede cargarlo y no usa personas, incendio, puntos de encuentro ni medios del
+  escenario ficticio. Mantiene el circuito de dispatch, la clave de operador y
+  los bloqueos del servidor. El selector de llamadas reales sale del panel de
+  campaña: lo sustituye la pestaña. El menú de simulación conserva tres accesos
+  principales y agrupa avisos, centros y capas en «Más herramientas»; el real
+  muestra llamadas y personas. La barra lateral y los textos iniciales se reducen.
+  Verificación: 51 tests, lint, build y diff sin errores; navegación entre modos
+  en escritorio y móvil. Una campaña local se quedó en 4 respuestas mientras se
+  visitaba Operación real y conservó su selección al volver. La API local no estaba
+  disponible: se verificó su estado de error, no un dispatch real. Cartografía y
+  rutas siguen sin validación con token válido. Fuentes: petición del usuario,
+  [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+  [CommandMap.tsx](../../apps/command-center/src/CommandMap.tsx),
+  [cop.test.mjs](../../apps/command-center/cop.test.mjs) y pruebas locales.
+- **Ejercicio con agentes reales (actualizado 2026-09-20):** la petición posterior
+  aclara que Operación real también debe demostrar un incendio. Se sustituye la
+  ausencia de fuego de la revisión anterior por «escenario simulado · llamadas
+  reales». «Preparar situación» permite avanzar el fuego y girar el viento.
+  Al cargar el censo, el foco de prueba se sitúa 650 m al norte de su centro y
+  tiene un radio inicial de 180 m; no se añaden personas, hospitales ni destinos
+  ficticios al censo real. Con clave de operador, «Activar incendio y preparar
+  llamadas» publica en `POST /events/fire` una envolvente aproximada del perímetro
+  y del avance local. Convierte el viento hacia donde sopla a procedencia
+  meteorológica y la propagación de m/min a m/h. Solo tras una respuesta `ok`
+  prepara un círculo de 1 km en torno al censo y habilita la campaña manual de
+  HappyRobot. Los cambios de fuego/viento requieren nueva publicación antes de
+  llamar. La razón del dispatch identifica expresamente el ejercicio.
+  Publicar el evento ejecuta el planner del servidor, que puede emitir llamadas
+  y SMS según su configuración; el panel lo indica. No se presenta como una
+  modificación puramente visual. No se modificaron `api/` ni `crisisApi.ts`.
+  Verificación: 54 tests, lint y build. Pruebas con fetch simulado para payload,
+  autenticación y rechazo de publicación; navegación, avance y giro de viento
+  comprobados en navegador. No se publicaron eventos ni se ejecutaron llamadas
+  reales. La API local no está disponible y falta un token cartográfico válido
+  para verificar el flujo integrado. Fuentes: petición del usuario,
+  [liveExercise.ts](../../apps/command-center/src/liveExercise.ts),
+  [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx),
+  [events.py](../../api/routers/events.py), [models.py](../../api/models.py) y
+  [planner.py](../../api/planner.py).
 - **Exposición:** rojo para huella inicial/proximidad, ámbar si el margen se alcanza
   dentro del horizonte, azul si no hay afectación calculada y gris sin evaluación.
   El margen configurable de 50–500 m y los radios de los recintos son de demo,
@@ -577,6 +687,7 @@ Moncloa-Aravaca, OSM way 319941974 — https://www.openstreetmap.org/way/3199419
 
 ## Fuentes
 
+- driver.js 1.8, recorrido in-app del CECOP — https://driverjs.com/docs/installation (consultado 2026-09-20).
 - FireMap.live, referencia visual de rachas de viento (largo/brillo según intensidad; no se usa su GFS) — https://firemap.live/ (consultado 2026-09-19).
 - OpenStreetMap, Hospital Clínico San Carlos (40.4406324, -3.7199109) — https://www.openstreetmap.org/way/394889274 (Nominatim 2026-09-19).
 - Ayuntamiento de Madrid, catálogo de parques de bomberos — https://datos.madrid.es/egob/catalogo/211642-0-bomberos-parques.json (consultado 2026-09-19; Parque 01 Chamberí, Santa Engracia 118, 40.440221, -3.700819).
@@ -609,3 +720,7 @@ Moncloa-Aravaca, OSM way 319941974 — https://www.openstreetmap.org/way/3199419
 - NASA FIRMS active fire CSV — https://firms.modaps.eosdis.nasa.gov/ (consultado 2026-09-19)
 - FireMap.live como referencia visual de focos — https://firemap.live/ (consultado 2026-09-19)
 - Encaje de producto: [`../03-dominio-crisis/02-encaje-sector-publico.md`](../03-dominio-crisis/02-encaje-sector-publico.md)
+
+### Limpieza de textos de la interfaz
+
+Se eliminan las aclaraciones repetidas sobre simulación y llamadas reales, las introducciones de paneles y los párrafos que describían controles visibles. Las pestañas y los botones identifican el modo; se conservan los estados operativos y una indicación breve junto a publicar, porque esa acción puede iniciar llamadas o SMS automáticos. Validación: 54 pruebas, lint y build.

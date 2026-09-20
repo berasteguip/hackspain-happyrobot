@@ -13,13 +13,15 @@ import type { AlertAction, CommandAlert } from './alerts'
 import { UNIT_LABEL, UNIT_STATUS_LABEL, unitEta } from './units'
 import type { DispatchUnit, UnitKind } from './units'
 import type { Citizen, SafeZone } from './types'
+import { formatFrontEta } from './priority'
+import type { Convoy, PlanDiff, RankedCitizen, SectorPriority } from './priority'
 
 export function FireSimBar({ settings, horizon, playing, windShifted, showWind, onPlay, onShiftWind, onReset, onWind }: {
   settings: FireSettings; horizon: number; playing: boolean; windShifted: boolean; showWind: boolean
   onPlay: () => void; onShiftWind: () => void; onReset: () => void; onWind: () => void
 }) {
   const status = horizon <= 0 ? 'Foco inicial' : `+${Math.round(horizon)} min`
-  return <div className="sim-bar">
+  return <div className="sim-bar" data-tour="fire-sim">
     <p className="sim-readout"><span><strong>{settings.windKmh} km/h</strong><small>Viento hacia {windCardinal(settings.windTowardDeg)} · demo</small></span><span role="status">{status}</span></p>
     <div className="sim-actions">
       <button type="button" className={playing ? 'is-on' : undefined} onClick={onPlay} disabled={!playing && horizon >= 120} aria-label={playing ? 'Pausar propagación' : 'Avanzar propagación'}>{playing ? 'Pausar' : 'Avanzar'}</button>
@@ -30,10 +32,11 @@ export function FireSimBar({ settings, horizon, playing, windShifted, showWind, 
   </div>
 }
 
-export function FireControls({ settings, horizon, playing, onPlay, onReset, showWind, onWind, onShiftWind, windShifted, marginM, forecast, onFocus, zones }: {
+export function FireControls({ settings, horizon, playing, onPlay, onReset, showWind, onWind, onShiftWind, windShifted, marginM, forecast, onFocus, onFocusCitizen, zones, convoys, sectors }: {
   settings: FireSettings; horizon: number; playing: boolean; onPlay: () => void; onReset: () => void
   showWind: boolean; onWind: () => void; onShiftWind: () => void; windShifted: boolean; marginM: number
-  forecast: FireForecast; onFocus: (point: { lng: number; lat: number }) => void; zones: SafeZone[]
+  forecast: FireForecast; onFocus: (point: { lng: number; lat: number }) => void; onFocusCitizen?: (id: string) => void
+  zones: SafeZone[]; convoys?: Convoy[]; sectors?: SectorPriority[]
 }) {
   return <div className="cop-content">
     <FireSimBar settings={settings} horizon={horizon} playing={playing} windShifted={windShifted} showWind={showWind} onPlay={onPlay} onShiftWind={onShiftWind} onReset={onReset} onWind={onWind} />
@@ -43,7 +46,84 @@ export function FireControls({ settings, horizon, playing, onPlay, onReset, show
       return <button type="button" key={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
     })}</div>
     <p className="fine">Ilustrativo. No es un pronóstico.</p>
+    {convoys && sectors && <DecisionBoard convoys={convoys} sectors={sectors} onFocusCitizen={onFocusCitizen} onFocusSector={onFocus} />}
   </div>
+}
+
+export function CopStrip({ total, silent, imminent, lastChange, onPeople, onSilent, onImminent, onDiff }: {
+  total: number; silent: number; imminent: number; lastChange?: string
+  onPeople: () => void; onSilent: () => void; onImminent: () => void; onDiff?: () => void
+}) {
+  return (
+    <div className="cop-strip" data-tour="cop-strip" aria-label="Situación actual">
+      <button type="button" onClick={onPeople}><strong>{total}</strong><small>personas</small></button>
+      <button type="button" className={silent ? 'is-warn' : undefined} onClick={onSilent}><strong>{silent}</strong><small>sin respuesta</small></button>
+      <button type="button" className={imminent ? 'is-hot' : undefined} onClick={onImminent}><strong>{imminent}</strong><small>en &lt;20 min</small></button>
+      {lastChange && <button type="button" className="cop-strip-note" onClick={onDiff}>{lastChange}</button>}
+    </div>
+  )
+}
+
+export function PlanDiffBanner({ diff, onOpen, onDismiss }: { diff: PlanDiff; onOpen: () => void; onDismiss: () => void }) {
+  return (
+    <aside className="plan-diff" aria-live="polite">
+      <button type="button" className="plan-diff-main" onClick={onOpen}>
+        <span className="plan-diff-kicker">Plan invalidado</span>
+        <strong>Viento {Math.round(diff.fromDeg)}° → {Math.round(diff.toDeg)}°</strong>
+        <p>{diff.summary}</p>
+      </button>
+      <button type="button" className="plan-diff-close" aria-label="Cerrar diff" onClick={onDismiss}>Cerrar</button>
+    </aside>
+  )
+}
+
+export function SilentHouses({ houses, disabled, onSelect, onPatrol }: {
+  houses: RankedCitizen[]
+  disabled?: boolean
+  onSelect: (id: string) => void
+  onPatrol: (citizen: RankedCitizen) => void
+}) {
+  return (
+    <section className="silent-houses">
+      <h3>Sin respuesta → patrulla</h3>
+      {!houses.length && <p className="fine">Nadie en no-respuesta todavía. Tras la campaña, esta lista se ordena por minutos hasta el frente.</p>}
+      <div className="cop-list">{houses.map(citizen => (
+        <div className="silent-row" key={citizen.id}>
+          <button type="button" onClick={() => onSelect(citizen.id)}>
+            <span><strong>{citizen.name}</strong><small>{citizen.locality ?? citizen.id} · {formatFrontEta(citizen.minute)}</small></span>
+          </button>
+          <button type="button" className="silent-patrol" disabled={disabled} onClick={() => onPatrol(citizen)}>Patrulla</button>
+        </div>
+      ))}</div>
+    </section>
+  )
+}
+
+function DecisionBoard({ convoys, sectors, onFocusCitizen, onFocusSector }: {
+  convoys: Convoy[]
+  sectors: SectorPriority[]
+  onFocusCitizen?: (id: string) => void
+  onFocusSector: (point: { lng: number; lat: number }) => void
+}) {
+  return (
+    <div className="decision-board" data-tour="decision-board">
+      <h3>Convoyes</h3>
+      {!convoys.length && <p className="fine">Se forman cuando hay al menos dos personas del mismo núcleo en tránsito o localizadas.</p>}
+      <div className="cop-list">{convoys.map(convoy => (
+        <button type="button" key={convoy.id} onClick={() => onFocusCitizen?.(convoy.guide.id)}>
+          <span><strong>{convoy.locality} · {convoy.members.length}</strong><small>Guía {convoy.guide.name} · frente {formatFrontEta(convoy.minute)}</small></span>
+        </button>
+      ))}</div>
+      <h3>Sectores aéreos</h3>
+      {!sectors.length && <p className="fine">Sin personas fuera de un punto de encuentro en los núcleos del escenario.</p>}
+      <div className="cop-list">{sectors.map((sector, index) => (
+        <button type="button" key={sector.name} onClick={() => onFocusSector(sector)}>
+          <span className="route-number">{index + 1}</span>
+          <span><strong>{sector.name} · {sector.count}</strong><small>Personas todavía dentro · frente {formatFrontEta(sector.minute)}</small></span>
+        </button>
+      ))}</div>
+    </div>
+  )
 }
 
 export function RefugeRoutesPanel({ citizen, token, forecast, horizon, marginM, onRoute, zones }: {
@@ -69,7 +149,7 @@ export function RefugeRoutesPanel({ citizen, token, forecast, horizon, marginM, 
     }).catch(() => { if (!controller.signal.aborted) setState('No se pudo consultar el proveedor. No se ha trazado una ruta.') })
     return () => controller.abort()
   }, [request, token, zones])
-  return <section className="cop-content route-planner">
+  return <section className="cop-content route-planner" data-tour="routes">
     <h3>Rutas a puntos de encuentro</h3>
     <p className="fine">Desde la posición de {citizen.name}.</p>
     <div className="segmented-control" role="group" aria-label="Modo de traslado">{(['driving', 'walking'] as const).map(mode => <button type="button" key={mode} aria-pressed={profile === mode} onClick={() => { setProfile(mode); setResult(null); setRequest(null); setState('') }}>{mode === 'driving' ? 'Vehículo' : 'A pie'}</button>)}</div>
@@ -145,7 +225,7 @@ export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFo
   const [sendId, setSendId] = useState(sendable[0]?.id)
   const send = sendable.find(alert => alert.id === sendId) ?? sendable[0]
   return <div className="cop-content">
-    {!alerts.length && <p className="fine" role="status">Sin avisos</p>}
+    {!alerts.length && <p className="fine" role="status">No hay incidencias pendientes. Las llamadas sin respuesta, los cambios del incendio y las personas detenidas generarán avisos aquí.</p>}
     <ol className="alert-list">{alerts.map(alert => (
       <li key={alert.id} className={`alert-card ${alert.severity}`}>
         <button type="button" className="alert-main" aria-pressed={send?.id === alert.id} onClick={() => { setSendId(alert.id); onFocus(alert) }}>
@@ -159,7 +239,7 @@ export function AlertsPanel({ alerts, units, onAction, onDispatch, onFocus, onFo
     <h3>Enviar{send ? ` · ${send.title}` : ''}</h3>
     {send ? <DispatchActions kinds={['ambulance', 'police', 'fire']} onDispatch={kind => onDispatch(send, kind)} /> : <p className="fine">Pulsa un aviso con posición para enviar un medio.</p>}
     <h3>Medios{units.length ? ` · ${units.length}` : ''}</h3>
-    {!units.length && <p className="fine">Ninguno enviado</p>}
+    {!units.length && <p className="fine">Todavía no has enviado medios. Puedes asignar una patrulla, ambulancia o bomberos desde la ficha de una persona o desde un aviso.</p>}
     <div className="cop-list">{units.map(unit => {
       const eta = unitEta(unit)
       return <button type="button" key={unit.id} onClick={() => onFocusUnit(unit.id)}>

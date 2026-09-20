@@ -107,6 +107,9 @@ Dato útil para el marco B2G del pitch: HappyRobot cerró una Serie C de 150 M$ 
 4. Intervención humana: se anula una ruta desde el dashboard, el agente recoloca.
 5. Cierre: la Guardia Civil recibe 6 casas concretas en vez de barrer 300, y el helicóptero recibe el sector con más gente dentro.
 
+En el CECOP desplegado, el botón **Guía** (driver.js) enseña la interfaz a quien se acerque
+al stand sin el pitch. No sustituye este guion de 3 minutos ni lanza llamadas reales.
+
 ## 12. Plan por fases (36 h)
 
 | Fase | Qué | Desbloquea |
