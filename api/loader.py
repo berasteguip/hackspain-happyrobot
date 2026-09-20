@@ -8,7 +8,10 @@ falte un fichero.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import csv
+import io
 import json
 import logging
 from pathlib import Path
@@ -88,8 +91,9 @@ def load_scenario(state, name: str | None = None) -> dict:
                 coll[entity.id] = entity
             resumen[coll_name] = len(coll)
 
-        # El roster primero y `PHONE_OVERRIDES` después: la variable de entorno es la que se
-        # toca a mano en el último minuto, así que tiene que poder pisar al fichero.
+        # Las tres fuentes de datos reales, de menos a más prioridad: `ROSTER_B64`, el fichero
+        # de `data/private/` (las dos las resuelve `_roster_source`) y `PHONE_OVERRIDES`, que va
+        # la última porque es el parche que se teclea en el último minuto y tiene que ganar.
         _apply_roster(state)
         _apply_phone_overrides(state)
 
@@ -152,17 +156,13 @@ ROSTER_ALIAS = {
 }
 
 
-def _apply_roster(state) -> None:
-    """Pone nombres y móviles reales encima del escenario, leyéndolos de un CSV sin versionar.
+def _parse_roster(texto: str) -> tuple[list[tuple[str, str, str]], int]:
+    """El CSV del roster → `[(person_id, nombre, teléfono)]` y cuántas filas venían sin id.
 
-    Es `PHONE_OVERRIDES` crecido. Para cuatro personas una variable de entorno vale; para
-    setenta no se puede editar a mano, y además hace falta el **nombre**, que el agente dice al
-    descolgar ("¿hablo con Marta?") y que `PHONE_OVERRIDES` no sabe tocar.
-
-    El fichero vive en `data/private/`, que está en `.gitignore`: el repo es público y una lista
-    de setenta móviles con nombre y apellido no se sube ni una vez, porque el historial de git
-    no se borra. Si el fichero no está, la API arranca con los nombres genéricos del escenario
-    y los números del rango reservado — que es lo que queremos por defecto.
+    Recibe **texto**, no una ruta, porque el mismo roster llega por dos caminos —el fichero de
+    `data/private/` y la variable `ROSTER_B64` de Railway— y las reglas de qué es una fila
+    válida tienen que ser exactamente las mismas en los dos. Antes esto vivía dentro de la
+    lectura del fichero y el segundo camino habría sido una copia.
 
     Formato (la cabecera admite `id`/`nombre`/`teléfono` además de los nombres en inglés):
 
@@ -170,58 +170,193 @@ def _apply_roster(state) -> None:
         p-005,Marta Ruiz,+34600995001
         p-006,,+34600995002          ← sin nombre: se queda el genérico del escenario
 
+    Una fila con las dos columnas vacías no cuenta: la plantilla de `roster_template.py` sale
+    así y es sitio reservado, no un dato pendiente de nadie. Contarla haría que el log dijera
+    "66 personas con teléfono real" delante de un fichero en blanco.
+    """
+    filas: list[tuple[str, str, str]] = []
+    sin_id = 0
+    for cruda in csv.DictReader(io.StringIO(texto)):
+        datos = {
+            ROSTER_ALIAS[k.strip().lower()]: (v or "").strip()
+            for k, v in cruda.items()
+            if k and k.strip().lower() in ROSTER_ALIAS
+        }
+        nombre = datos.get("name", "")
+        telefono = "".join(ch for ch in datos.get("phone", "") if ch.isdigit() or ch == "+")
+        if not nombre and not telefono:
+            continue
+        person_id = datos.get("person_id", "")
+        if not person_id:
+            sin_id += 1
+            continue
+        filas.append((person_id, nombre, telefono))
+    return filas, sin_id
+
+
+def _decode_roster_b64(crudo: str) -> str | None:
+    """`ROSTER_B64` → el texto del CSV, o `None` si la variable no se puede usar.
+
+    Nunca lanza. Esto corre en el arranque de la API en mitad de un evento en vivo: un secreto
+    mal pegado tiene que costar los nombres del roster —se sigue con los genéricos—, no el
+    despliegue entero.
+
+    Se toleran los espacios y saltos de línea que mete un panel web al pegar un valor largo, y
+    también que falte el relleno `=` del final, que es lo que hacen algunos campos al recortar.
+    Ese caso se avisa: casi siempre significa que el valor viajó mal, y lo que hay que mirar
+    entonces es si el número de personas cargadas es el que se esperaba.
+    """
+    limpio = "".join(crudo.split())
+    if not limpio:
+        return None
+
+    sobra = len(limpio) % 4
+    if sobra == 1:
+        log.error(
+            "ROSTER_B64: no es base64 válido (le sobra un carácter suelto, %d en total). Se "
+            "sigue con los nombres genéricos del escenario. Vuelve a generarlo con "
+            "`python3 data/roster_secret.py` y pégalo entero, sin recortar.",
+            len(limpio),
+        )
+        return None
+    if sobra:
+        log.warning(
+            "ROSTER_B64: le faltaba el relleno '=' del final y se ha rehecho. Comprueba abajo "
+            "que el número de personas cargadas es el que esperabas: si falta gente, el valor "
+            "llegó cortado."
+        )
+        limpio += "=" * (4 - sobra)
+
+    try:
+        crudo_bytes = base64.b64decode(limpio, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        log.error(
+            "ROSTER_B64: no se puede decodificar (%s). Se sigue con los nombres genéricos del "
+            "escenario. Genera el valor con `python3 data/roster_secret.py` y pega SOLO lo que "
+            "va detrás del '=', sin comillas.",
+            exc,
+        )
+        return None
+
+    try:
+        return crudo_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        log.error(
+            "ROSTER_B64: decodifica, pero lo que sale no es texto UTF-8 (%s). Se sigue con los "
+            "nombres genéricos del escenario. ¿Seguro que es el CSV del roster?",
+            exc,
+        )
+        return None
+
+
+def _roster_source() -> tuple[str, str] | None:
+    """El texto del roster y de dónde salió, o `None` si no hay roster que aplicar.
+
+    Hay dos fuentes y **gana el fichero local** cuando existe. El motivo no es de arquitectura:
+    si estás ensayando en tu máquina con el CSV abierto delante, eso es lo que quieres que se
+    cargue, y una `ROSTER_B64` vieja que se quedó olvidada en tu `.env` no puede pisarte la
+    edición sin decir nada. En Railway no hay fichero, así que allí no compiten. Cuando están
+    las dos, se avisa: una fuente ignorada en silencio es de las cosas que cuestan media hora
+    de depuración a las cuatro de la mañana.
+
+    `PHONE_OVERRIDES` gana a las dos, y eso se decide fuera de aquí, en `load_scenario`: es el
+    parche manual de último minuto y tiene que poder corregir a cualquiera de ellas.
+    """
+    ruta = settings.roster_csv
+    crudo_b64 = settings.roster_b64.strip()
+
+    if ruta.is_file():
+        if crudo_b64:
+            log.warning(
+                "ROSTER: hay fichero (%s) y además ROSTER_B64. Manda el fichero; la variable se "
+                "ignora. Si lo que quieres es probar la variable, mueve el fichero de sitio.",
+                ruta,
+            )
+        try:
+            return ruta.read_text(encoding="utf-8-sig"), f"el fichero {ruta}"
+        except OSError as exc:
+            log.error(
+                "ROSTER: %s existe pero no se puede leer (%s)%s",
+                ruta,
+                exc,
+                "; se prueba con ROSTER_B64" if crudo_b64 else "",
+            )
+
+    if not crudo_b64:
+        return None
+    texto = _decode_roster_b64(crudo_b64)
+    if texto is None:
+        return None
+    return texto, "la variable ROSTER_B64 (nada tocó el disco)"
+
+
+def _log_safe_id(person_id: str) -> str:
+    """Un id del roster listo para el log.
+
+    Un id es `p-007` y no hay nada que esconder, pero si alguien desplaza una columna del CSV
+    lo que cae en esa casilla es un teléfono, y de ahí iría derecho al log. Lo que llegue con
+    pinta de número sale enmascarado.
+    """
+    if sum(ch.isdigit() for ch in person_id) >= 6:
+        return f"··· {person_id[-3:]}"
+    return person_id
+
+
+def _apply_roster(state) -> None:
+    """Pone nombres y móviles reales encima del escenario, sin que salgan del repo ni del log.
+
+    Es `PHONE_OVERRIDES` crecido. Para cuatro personas una variable de entorno vale; para
+    setenta no se puede editar a mano, y además hace falta el **nombre**, que el agente dice al
+    descolgar ("¿hablo con Marta?") y que `PHONE_OVERRIDES` no sabe tocar.
+
+    Los datos llegan de `_roster_source`: el fichero de `data/private/` (que está en
+    `.gitignore` — el repo es público y el historial de git no se borra) o `ROSTER_B64` cuando
+    se ensaya desde Railway, donde no hay disco. Si no hay ninguna de las dos, la API arranca
+    con los nombres genéricos del escenario y los números del rango reservado, que es lo que
+    queremos por defecto.
+
+    Del log sale cuánta gente se cargó y de qué fuente, nunca un nombre ni un teléfono.
+
     Como en `_apply_phone_overrides`, la casa hereda el teléfono de quien vive en ella: si no,
     `house_by_phone` seguiría mirando al número falso y una llamada entrante no casaría con la
     ficha.
     """
-    ruta = settings.roster_csv
-    if not ruta.is_file():
+    fuente = _roster_source()
+    if fuente is None:
+        return
+    texto, origen = fuente
+
+    try:
+        filas, sin_id = _parse_roster(texto)
+    except csv.Error as exc:
+        log.error(
+            "ROSTER: %s no se puede leer como CSV (%s); se sigue con los datos del escenario",
+            origen,
+            exc,
+        )
         return
 
-    aplicados, sin_persona, sin_id = 0, [], 0
-    try:
-        with ruta.open(encoding="utf-8-sig", newline="") as fh:
-            filas = csv.DictReader(fh)
-            for fila in filas:
-                datos = {
-                    ROSTER_ALIAS[k.strip().lower()]: (v or "").strip()
-                    for k, v in fila.items()
-                    if k and k.strip().lower() in ROSTER_ALIAS
-                }
-                person_id = datos.get("person_id", "")
-                if not person_id:
-                    sin_id += 1
-                    continue
-                telefono = "".join(
-                    ch for ch in datos.get("phone", "") if ch.isdigit() or ch == "+"
-                )
-                # La plantilla sale con las dos columnas vacías. Una fila así no es un dato
-                # pendiente de nadie: es sitio reservado, y contarla haría que el log dijera
-                # "66 personas con teléfono real" delante de un fichero en blanco.
-                if not datos.get("name") and not telefono:
-                    continue
-                person = state.people.get(person_id)
-                if person is None:
-                    sin_persona.append(person_id)
-                    continue
-                if datos.get("name"):
-                    person.name = datos["name"]
-                if telefono:
-                    person.phone = telefono
-                    casa = state.houses.get(person.house_id or "")
-                    if casa is not None:
-                        casa.phone = telefono
-                aplicados += 1
-    except (OSError, csv.Error) as exc:
-        log.error("roster %s ilegible (%s); se sigue con los datos del escenario", ruta, exc)
-        return
+    aplicados, sin_persona = 0, []
+    for person_id, nombre, telefono in filas:
+        person = state.people.get(person_id)
+        if person is None:
+            sin_persona.append(person_id)
+            continue
+        if nombre:
+            person.name = nombre
+        if telefono:
+            person.phone = telefono
+            casa = state.houses.get(person.house_id or "")
+            if casa is not None:
+                casa.phone = telefono
+        aplicados += 1
 
     if aplicados:
         log.warning(
-            "ROSTER: %d persona(s) con NOMBRE y TELÉFONO REALES desde %s (no versionado). "
-            "Los cerrojos siguen mandando: ALLOW_REAL_CALLS=%s, REGISTER_ONLY_CALLS=%s.",
+            "ROSTER: %d persona(s) con NOMBRE y TELÉFONO REALES desde %s. Los cerrojos siguen "
+            "mandando: ALLOW_REAL_CALLS=%s, REGISTER_ONLY_CALLS=%s.",
             aplicados,
-            ruta,
+            origen,
             settings.allow_real_calls,
             settings.register_only_calls,
         )
@@ -232,7 +367,8 @@ def _apply_roster(state) -> None:
             "ROSTER: %d id(s) que no existen en el escenario '%s': %s",
             len(sin_persona),
             state.scenario,
-            ", ".join(sin_persona[:10]) + ("…" if len(sin_persona) > 10 else ""),
+            ", ".join(_log_safe_id(i) for i in sin_persona[:10])
+            + ("…" if len(sin_persona) > 10 else ""),
         )
 
 

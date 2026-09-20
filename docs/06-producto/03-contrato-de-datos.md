@@ -44,7 +44,7 @@ rúbrica, así que no es opcional.
 | IDs | prefijo + guion + número: `p-001` persona, `h-001` casa, `x-a` salida, `s-1` sector, `c-1` convoy, `pt-1` patrulla, `ev-000001` evento. |
 | Distancias | metros (`_m`). Velocidades: km/h (`_kmh`) para viento/coches, m/h (`_mh`) para avance del fuego. |
 | Tiempos calculados | minutos en float (`minutes_to_front`), segundos en int para rutas (`duration_s`). |
-| Teléfonos | E.164, siempre con prefijo país (`+34600990012`). **Todo teléfono del repo va en el rango reservado `+3460099xxxx`**, incluidos ejemplos, fixtures de test y datos de arranque. Nunca un prefijo geográfico real como `+34980` (Zamora): con `ALLOW_REAL_CALLS=true` eso marca a una persona. **Sin excepciones, tampoco para ensayar con teléfonos reales**: esos se inyectan al arrancar con `PHONE_OVERRIDES=p-001:+34...` desde `.env`, que no se comitea. Para una lista larga (el grupo entero) `PHONE_OVERRIDES` no da más de sí y además hace falta el **nombre**, que el agente dice al descolgar: eso va en `data/private/roster.csv` (`person_id,name,phone`), directorio ignorado por git, que `api/loader.py` aplica al cargar el escenario. Este repo es público y un móvil en un fichero versionado se queda en el historial de git para siempre — y normalmente no es tuyo el móvil que publicas. |
+| Teléfonos | E.164, siempre con prefijo país (`+34600990012`). **Todo teléfono del repo va en el rango reservado `+3460099xxxx`**, incluidos ejemplos, fixtures de test y datos de arranque. Nunca un prefijo geográfico real como `+34980` (Zamora): con `ALLOW_REAL_CALLS=true` eso marca a una persona. **Sin excepciones, tampoco para ensayar con teléfonos reales**: esos se inyectan al arrancar con `PHONE_OVERRIDES=p-001:+34...` desde `.env`, que no se comitea. Para una lista larga (el grupo entero) `PHONE_OVERRIDES` no da más de sí y además hace falta el **nombre**, que el agente dice al descolgar: eso va en `data/private/roster.csv` (`person_id,name,phone`), directorio ignorado por git, que `api/loader.py` aplica al cargar el escenario. Cuando el ensayo corre en Railway no hay disco donde dejar ese fichero: entonces el CSV entero viaja en la variable `ROSTER_B64` y se decodifica en memoria (§5). Este repo es público y un móvil en un fichero versionado se queda en el historial de git para siempre — y normalmente no es tuyo el móvil que publicas. |
 | Nombres de personas | Mismo criterio que los teléfonos: en el repo, genéricos (`Vecino 12`) o inventados. Un nombre y un móvil juntos son un dato personal identificable; el nombre real entra por el roster, no por el escenario. |
 | Nulos | Un campo no calculado todavía es `null`, nunca `0`. `0` significa cero de verdad. |
 | Versión de estado | `state_version` entero que sube en cada mutación. El dashboard hace long-poll con él. |
@@ -476,9 +476,34 @@ ALLOW_REAL_CALLS=false       # ver regla 3 de la sección 6
 SCENARIO=sierra-culebra
 PHONE_OVERRIDES=             # p-001:+34...  teléfonos reales de un ensayo corto
 ROSTER_CSV=                  # por defecto data/private/roster.csv (nombres + móviles de una lista larga)
+ROSTER_B64=                  # el mismo CSV en base64, para Railway: allí no hay disco
 CALL_PARALLELISM=128         # techo de llamadas simultáneas: dimensionado para rodear a ~90
 CALL_MAX_BATCH=150           # tope por ráfaga (sigue evitando que el mapa entero dispare 300 runs)
 ```
+
+**Las tres fuentes de datos reales y quién gana.** De menos a más prioridad:
+`ROSTER_B64` < `data/private/roster.csv` < `PHONE_OVERRIDES`. El fichero local gana a la variable
+porque si estás ensayando en tu máquina con el CSV delante, eso es lo que quieres que se cargue, y
+una `ROSTER_B64` olvidada en tu `.env` no puede pisarte la edición en silencio (cuando están las
+dos, el log lo dice). `PHONE_OVERRIDES` gana a ambas porque es el parche de último minuto. En
+Railway no hay fichero, así que allí manda la variable. El valor lo genera
+`python3 data/roster_secret.py`; se decodifica en memoria y no se escribe nada en el contenedor. Un
+base64 mal pegado **no tumba el arranque**: la API sigue con los nombres genéricos y lo explica en
+el log, que dice cuánta gente cargó y de qué fuente, nunca un nombre ni un teléfono.
+
+⚠️ **Aviso operativo.** Una variable de entorno en Railway la ve **cualquiera con acceso al
+proyecto**, en claro y desde el panel web: meter ahí el roster es publicar los móviles del grupo
+dentro del equipo. Es un intercambio aceptable durante el evento y sólo durante el evento —
+**hay que borrar la variable al acabar**.
+
+**Tamaño medido (20 sep 2026):** un roster de 90 personas con nombre y apellidos ocupa 3.981 bytes
+de CSV y 5.308 caracteres en base64, unos 5 kB.
+
+> HIPÓTESIS (sin verificar, 20 sep 2026): no conocemos el límite que Railway impone al tamaño de
+> una variable de entorno y no lo hemos encontrado documentado, así que no afirmamos que quepa;
+> lo que sabemos es que 5 kB está en el orden de magnitud que admiten estos campos sin problema.
+> `roster_secret.py` avisa si el valor pasa de 16 kB. Si Railway lo rechazara, la salida sería
+> partir el roster o volver al fichero local.
 
 Dos cosas verificadas que se cuelan aquí y no son cosmética:
 

@@ -132,6 +132,14 @@ class Settings:
             or str(REPO_ROOT / "data" / "private" / "roster.csv")
         )
     )
+    # El mismo CSV, pero entero dentro de una variable y en base64. Es la única forma de llevar
+    # el roster a Railway: allí no hay disco donde dejar el fichero y subirlo al repo es
+    # exactamente lo que `data/private/` evita. Se decodifica EN MEMORIA al arrancar; no se
+    # escribe nada en el contenedor. El valor lo genera `python3 data/roster_secret.py`.
+    #
+    # Si además existe el fichero local, gana el fichero: la precedencia y su porqué están en
+    # `loader._roster_source`.
+    roster_b64: str = field(default_factory=lambda: os.getenv("ROSTER_B64", ""))
     # Ensayo con el enlace (`POST /people/register`): con `true`, solo suenan los teléfonos que
     # se registraron ellos mismos desde `/track`. Los del dataset quedan bloqueados aunque
     # `ALLOW_REAL_CALLS` esté encendido. No sustituye a la lista blanca que se quitó: es opt-in.
@@ -246,6 +254,12 @@ class Settings:
                 str(self.roster_csv)
                 if self.roster_csv.is_file()
                 else "sin fichero (nombres genéricos del escenario)"
+            ),
+            # El tamaño, nunca el contenido: esa variable son nombres y móviles de gente real.
+            "roster_b64": (
+                f"{len(self.roster_b64.strip())} caracteres (se decodifica en memoria)"
+                if self.roster_b64.strip()
+                else "sin variable"
             ),
             "demo_org_phone": (
                 self.demo_org_phone

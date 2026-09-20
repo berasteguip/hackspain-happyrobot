@@ -106,6 +106,22 @@ alguien mueve una constante y las manchas se tocan.
 (`person_id,name,phone`), directorio ignorado por git, y `api/loader.py` los aplica al cargar.
 Plantilla con los ids ya puestos: `python3 data/roster_template.py ucm-grupo --grupo`.
 
+**Si el ensayo corre en Railway, el roster viaja en una variable.** En el contenedor no hay disco
+donde dejar el CSV, así que el fichero entero va en base64 dentro de `ROSTER_B64` y se decodifica
+en memoria al arrancar: no se escribe nada en el contenedor ni entra nada en el repo. Se genera con
+`python3 data/roster_secret.py`, que escupe la línea lista para pegar en Railway → servicio →
+Variables. Precedencia completa en `03-contrato-de-datos.md` §5; en corto,
+`ROSTER_B64` < fichero local < `PHONE_OVERRIDES`, y un valor mal pegado deja los nombres genéricos
+pero no impide arrancar.
+
+⚠️ Con el roster en Railway, **los móviles del grupo los ve cualquiera con acceso al proyecto** en
+el panel de variables. Es asumible durante el evento; la variable **se borra al terminar**, junto
+con los datos de posición. La carga del roster no escribe ni un teléfono ni un nombre en el log —
+solo cuántas personas entraron y por qué vía—, pero el log de decisiones del planner sí nombra a
+quien reasigna («p-001 · Marta Ruiz → Nuevos Ministerios»), igual que `/api/roster` devuelve los
+nombres sin enmascarar. Los nombres se tratan como operativos y los teléfonos como secretos; quien
+mire los logs del despliegue verá los primeros.
+
 **El techo de la ráfaga lo pone HappyRobot, no nuestro código.** Rodear a ~90 personas tiene que
 lanzar 90 llamadas a la vez, así que `CALL_PARALLELISM` está en 128 (era 8: convertía la ráfaga
 en once tandas, y se veía en el mapa encendiéndose por grupos) y `CALL_MAX_BATCH` en 150 (era 25:

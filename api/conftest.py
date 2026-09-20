@@ -43,8 +43,10 @@ os.environ.setdefault("PHONE_OVERRIDES", "")
 os.environ["CALL_MAX_BATCH"] = ""
 os.environ["CALL_PARALLELISM"] = ""
 # Un roster de ensayo en data/private/ pisaría los nombres y teléfonos del fixture, y los tests
-# empezarían a depender de qué lista tenga cargada cada uno. Se apunta a un fichero que no existe.
+# empezarían a depender de qué lista tenga cargada cada uno. Se apunta a un fichero que no existe,
+# y se vacía la otra fuente: el secreto de Railway también acaba en el `.env` de quien despliega.
 os.environ["ROSTER_CSV"] = str(API_DIR / "tests" / "fixtures" / "sin-roster.csv")
+os.environ["ROSTER_B64"] = ""
 os.environ["STATE_JSONL"] = str(API_DIR / "tests" / ".state-test.jsonl")
 os.environ["SCENARIOS_DIR"] = str(API_DIR / "tests" / "fixtures")
 os.environ["SCENARIO"] = "test-mini"
