@@ -27,6 +27,9 @@ bloque `.hr-*`.
 - Se enseña u oculta desde el botón **HappyRobot** de la barra de herramientas
   (`data-demo="tool-happyrobot"`); el cabecero la pliega a una sola fila. El estado se recuerda
   por navegador (`localStorage.router.hrCard`).
+- La barra de herramientas es exclusiva: abrir una ficha (Plan, Personas, Centros…) oculta la
+  tarjeta y desmarca HappyRobot; abrir HappyRobot cierra la ficha. Zona de llamadas también
+  entra en ese turno. Así no quedan dos pestañas marcadas a la vez.
 - Por debajo de 1100 px de ancho desaparece mientras haya una ficha abierta; por debajo de
   760 px no se enseña.
 
@@ -55,6 +58,12 @@ lienzo del editor (fondo casi blanco con retícula de puntos) para que quien hay
 workflow reconozca de inmediato dónde está mirando. La paleta vive en tokens `--hr-*` declarados
 en `.hr-card`; **ningún color del CECOP (`--panel`, `--text`, `--move`…) entra dentro de la
 tarjeta**, porque están calculados para fondo oscuro y ahí no contrastan.
+
+El resto del CECOP (paneles flotantes, dock, listas, guía) toma la **anatomía** de
+esta tarjeta —cabecero de 58 px, close 32×32, fila de contexto, pills de estado,
+cajas de icono 32 px a radio 9, sombra `0 16px 48px`— pero **sigue en oscuro** con
+`--panel` / `--text` / `--move`. Los tokens `--hr-*` no salen de `.hr-card`.
+Ajuste 2026-09-20 a petición de producto: el look, no el lienzo blanco.
 
 ## Lenguaje visual de los diagramas
 

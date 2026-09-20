@@ -40,7 +40,7 @@ export function FireControls({ settings, horizon, playing, onPlay, onReset, show
     <h3>Exposición</h3>
     <div className="cop-list">{zones.map(zone => {
       const exposure = exposureAt(forecast, zone.lng, zone.lat, horizon, marginM + zone.radiusM)
-      return <button type="button" key={zone.id} data-demo="fire-zone" data-demo-id={zone.id} onClick={() => onFocus(zone)}><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
+      return <button type="button" key={zone.id} data-demo="fire-zone" data-demo-id={zone.id} onClick={() => onFocus(zone)}><span className="row-mark"><span className="exposure-dot" style={{ background: EXPOSURE_COLOR[exposure.level] }} /></span><span><strong>{zone.code} · {zone.name}</strong><small>{EXPOSURE_LABEL[exposure.level]}</small></span></button>
     })}</div>
     <p className="fine">Ilustrativo. No es un pronóstico.</p>
   </div>
@@ -126,6 +126,7 @@ function windCardinal(deg: number) {
 
 function UnitMark({ kind }: { kind: UnitKind }) {
   if (kind === 'police') return <svg className="unit-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="m5 10 2-5h10l2 5M4 10h16v8H4ZM6 18v3m12-3v3M7 14h2m6 0h2" /><path d="M9 2h3" stroke="#72a9ed" /><path d="M12 2h3" stroke="#e38589" /></svg>
+  if (kind === 'helicopter') return <svg className="unit-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M3 4h18M12 4v4M7 11a5 3 0 0 1 10 0v3a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3Zm10 1h4v4h-4M8 20h8M12 17v3" /></svg>
   const symbol = kind === 'ambulance' ? 'M8 7v6m-3-3h6' : 'M8 5c3 3 4 5 4 6a4 4 0 0 1-8 0c0-2 2-3 4-6Z'
   return <svg className="unit-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d="M2 3h13v14H2Zm13 5h4l3 5v4h-7M6 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm15 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" /><path d={symbol} /></svg>
 }
@@ -193,7 +194,7 @@ export function AlertsPanel({ alerts, units, selectedUnitId, unitsPaused, plan, 
 
   return <div className="cop-content">
     <section className={`plan-hero ${plan.status}`} aria-labelledby="plan-priority">
-      <div className="plan-status-row"><span>Plan {plan.revision}</span><strong>{planLabel}</strong></div>
+      <div className="plan-status-row"><span>Plan {plan.revision}</span><strong className={`status-pill ${plan.status === 'stale' ? 'warn' : plan.status === 'active' ? 'ok' : ''}`}>{planLabel}</strong></div>
       <p className="plan-kicker">Prioridad actual</p>
       <h3 id="plan-priority">{priorityTitle}</h3>
       <p>{priorityDetail}</p>

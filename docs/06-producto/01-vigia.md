@@ -1,6 +1,6 @@
 # Vigía — prevención de incendios con agentes de voz HappyRobot
 
-> **Actualizado:** 2026-09-19 · **Estado:** borrador (tesis inicial, 18-19 sep)
+> **Actualizado:** 2026-09-20 · **Estado:** borrador (tesis inicial, 18-19 sep)
 > **En una frase:** agentes de HappyRobot llaman a la población en zonas de riesgo
 > de incendio, indican zonas seguras y, con consentimiento, el CECOP sigue su
 > movimiento en un mapa junto a los focos.
@@ -591,6 +591,19 @@ es un motor de decisión validado para emergencias reales.
 Fuente: petición del equipo e implementación local en
 [CopPanels.tsx](../../apps/command-center/src/CopPanels.tsx) y
 [CommandCenter.tsx](../../apps/command-center/src/CommandCenter.tsx), 2026-09-20.
+
+## Chrome de los paneles — 2026-09-20
+
+Los paneles del CECOP (Plan, Personas, Campaña, Propagación, Centros, Capas, guía,
+memoria compartida) comparten la anatomía de la tarjeta HappyRobot: cabecero de
+58 px con eyebrow, close 32×32, pills de estado, filas con caja de icono 32 px y
+la misma sombra.
+Siguen en carbón (`--panel`); no heredan `--hr-*` ni el lienzo blanco, que es
+marca de HappyRobot.
+
+Fuente: petición de producto 2026-09-20.
+[index.css](../../apps/command-center/src/index.css),
+[`07-tarjeta-que-hace-happyrobot.md`](./07-tarjeta-que-hace-happyrobot.md).
 
 ## Guía de onboarding — 2026-09-20
 

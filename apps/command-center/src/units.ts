@@ -5,12 +5,18 @@ import type { Route } from './routing'
 import { fetchDrivingRoute, positionAt } from './routing'
 import type { FireScenario } from './scenario'
 
-export type UnitKind = 'ambulance' | 'police' | 'fire'
+export type UnitKind = 'ambulance' | 'police' | 'fire' | 'helicopter'
 export type UnitStatus = 'requested' | 'patrolling' | 'en_route' | 'on_scene' | 'hold'
 export type UnitMission = 'patrol' | 'dispatch'
 
-export const UNIT_LABEL: Record<UnitKind, string> = { ambulance: 'Ambulancia', police: 'Patrulla', fire: 'Bomberos' }
-export const UNIT_COLOR: Record<UnitKind, string> = { ambulance: '#f0a6b4', police: '#8fb6f2', fire: '#eea26a' }
+export const UNIT_LABEL: Record<UnitKind, string> = { ambulance: 'Ambulancia', police: 'Patrulla', fire: 'Bomberos', helicopter: 'Helicóptero' }
+export const UNIT_COLOR: Record<UnitKind, string> = { ambulance: '#f0a6b4', police: '#8fb6f2', fire: '#eea26a', helicopter: '#c9e7ff' }
+/**
+ * Velocidad del helicóptero en la demo. Vuela en línea recta, sin carretera. El reloj del despacho
+ * va x12 (`TIME_SCALE`), así que un valor realista (200 km/h) cruza la ciudad en tres segundos y
+ * no se ve; con este se ve despegar, volar y llegar.
+ */
+const HELICOPTER_KMH = 70
 export const UNIT_STATUS_LABEL: Record<UnitStatus, string> = {
   requested: 'Calculando ruta',
   patrolling: 'Patrullando',
@@ -72,10 +78,13 @@ export function originsFrom(
   centers: ResponseCenter[],
   police: { id: string; name: string; lng: number; lat: number },
 ): Record<UnitKind, UnitOrigin> {
+  const fire = centerOrigin(centers, 'fire')
   return {
     ambulance: centerOrigin(centers, 'hospital'),
-    fire: centerOrigin(centers, 'fire'),
+    fire,
     police: { id: police.id, name: police.name, lng: police.lng, lat: police.lat },
+    // El helicóptero despega del parque de bomberos: en la demo es la base aérea más plausible.
+    helicopter: { ...fire, id: `${fire.id}-heli`, name: `Base aérea · ${fire.name.split(' · ')[0]}` },
   }
 }
 
@@ -102,12 +111,13 @@ function validateTarget(target: DispatchTarget) {
   if (!Number.isFinite(target.lng) || !Number.isFinite(target.lat) || Math.abs(target.lng) > 180 || Math.abs(target.lat) > 90 || !target.label.trim()) throw new Error('Destino de despacho fuera de rango')
 }
 
-export function createDispatch(kind: UnitKind, target: DispatchTarget, now: number, sequence: number, origins: Record<UnitKind, UnitOrigin> = UNIT_ORIGINS): DispatchUnit {
+const CALL_SIGN_PREFIX: Record<UnitKind, string> = { police: 'P', ambulance: 'A', fire: 'B', helicopter: 'H' }
+
+export function createDispatch(kind: UnitKind, target: DispatchTarget, now: number, sequence: number, origins: Record<UnitKind, UnitOrigin> = UNIT_ORIGINS, agent = 'Operador · demo'): DispatchUnit {
   validateTarget(target)
   const origin = unitOrigin(kind, origins)
-  const agent = 'Operador · demo'
   return {
-    id: `u-${sequence + 1}`, callSign: `${kind === 'police' ? 'P' : kind === 'ambulance' ? 'A' : 'B'}-${String(sequence + 1).padStart(2, '0')}`,
+    id: `u-${sequence + 1}`, callSign: `${CALL_SIGN_PREFIX[kind]}-${String(sequence + 1).padStart(2, '0')}`,
     kind, agent, origin, target: { ...target }, mission: 'dispatch', revision: 1,
     status: 'requested', lng: origin.lng, lat: origin.lat, progressM: 0, heading: 0, requestedAt: now,
     summary: dispatchSummary(kind, origin, target, agent),
@@ -216,6 +226,13 @@ async function patrolRoute(token: string, unit: DispatchUnit, signal: AbortSigna
   return { route: { id: `patrol-${unit.id}`, group: 'patrol', zoneId: unit.id, coords, cumulative, lengthM: cumulative[cumulative.length - 1], durationSec } }
 }
 
+/** El helicóptero no pide carretera: vuela recto del origen al destino a velocidad de crucero. */
+function flightRoute(unit: DispatchUnit): Route {
+  const coords: [number, number][] = [[unit.lng, unit.lat], [unit.target.lng, unit.target.lat]]
+  const lengthM = haversineMeters(...coords[0], ...coords[1])
+  return { id: `flight-${unit.id}-${unit.revision}`, group: 'flight', zoneId: unit.id, coords, cumulative: [0, lengthM], lengthM, durationSec: lengthM / (HELICOPTER_KMH * 1000 / 3600) }
+}
+
 /**
  * Consulta una carretera desde el origen del medio hasta el destino. No filtra
  * por exposición: el vehículo va hacia quien está en riesgo, no evacúa.
@@ -227,7 +244,9 @@ export async function planUnitRoute(
   request: typeof fetch = fetch,
 ): Promise<DispatchUnit> {
   signal?.throwIfAborted()
-  const result = unit.mission === 'patrol'
+  const result: { route?: Route; error?: string } = unit.kind === 'helicopter' && unit.mission === 'dispatch'
+    ? { route: flightRoute(unit) }
+    : unit.mission === 'patrol'
     ? await patrolRoute(token, unit, signal, request)
     : await fetchDrivingRoute(token, [unit.lng, unit.lat], [unit.target.lng, unit.target.lat], `unit-${unit.id}-${unit.revision}`, signal, request, 100, true)
   if (!result.route || result.route.lengthM <= 0) return { ...unit, status: 'hold', route: undefined, etaSec: undefined, hold: result.error ?? 'Sin carretera disponible. El medio permanece detenido.' }
